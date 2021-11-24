@@ -1,0 +1,7 @@
+<launch>
+
+<node name="bonet" pkg="dnn_experiment" type="ros_bonet.py" output="screen" required="true">
+  <remap from="~input" to="/cam0/k4a/points2"/>
+</node>
+
+</launch>
