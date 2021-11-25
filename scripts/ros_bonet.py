@@ -11,6 +11,8 @@ import tensorflow as tf
 from bonet import BoNet, Data_Configs
 import os
 
+from helper_data_plot import Plot as Plot
+
 class Sub:
     def __init__(self, topic):
         self.subscriber = rospy.Subscriber(topic, PointCloud2, self.callback, queue_size=1)
@@ -41,7 +43,6 @@ if __name__ == '__main__':
     net.X_pc = tf.placeholder(shape=[None, None, net.points_cc], dtype=tf.float32, name='X_pc')
     net.is_train = tf.placeholder(dtype=tf.bool, name='is_train')
     with tf.variable_scope('backbone'):
-        #net.point_features, net.global_features, net.y_psem_pred = net.backbone_pointnet(net.X_pc, net.is_train)
         net.point_features, net.global_features, net.y_psem_pred = net.backbone_pointnet2(net.X_pc, net.is_train)
     with tf.variable_scope('bbox'):
         net.y_bbvert_pred_raw, net.y_bbscore_pred_raw = net.bbox_net(net.global_features)
@@ -66,11 +67,27 @@ if __name__ == '__main__':
         if sub.bat_pc is None:
             continue
         bat_pc = sub.bat_pc
-        #import pdb; pdb.set_trace()
         print(bat_pc.shape)
-
         [y_psem_pred_sq_raw, y_bbvert_pred_sq_raw, y_bbscore_pred_sq_raw, y_pmask_pred_sq_raw] = \
             net.sess.run([net.y_psem_pred, net.y_bbvert_pred_raw, net.y_bbscore_pred_raw, net.y_pmask_pred_raw],feed_dict={net.X_pc: bat_pc[:, :, 0:9], net.is_train: False})
+
+        #### if you need to visulize, please uncomment the follow lines
+        # class가 뭐지?, Bounding box는 어디?
+        #b = 0
+        #pc = np.asarray(bat_pc[b], dtype=np.float16)
+        #sem_gt = np.asarray(bat_sem_gt[b], dtype=np.int16)
+        #ins_gt = np.asarray(bat_ins_gt[b], dtype=np.int32)
+        #sem_pred_raw = np.asarray(y_psem_pred_sq_raw[b], dtype=np.float16)
+        #bbvert_pred_raw = np.asarray(y_bbvert_pred_sq_raw[b], dtype=np.float16)
+        #bbscore_pred_raw = np.asarray(y_bbscore_pred_sq_raw[b], dtype=np.float16)
+        #pmask_pred_raw = np.asarray(y_pmask_pred_sq_raw[b], dtype=np.float16)
+
+        Plot.draw_pc(np.concatenate([pc[9:12], pc[3:6]], axis=1))
+        Plot.draw_pc_semins(pc_xyz=pc[9:12], pc_semins=ins_gt)
+        Plot.draw_pc_semins(pc_xyz=pc[9:12], pc_semins=ins_pred)
+        Plot.draw_pc_semins(pc_xyz=pc[9:12], pc_semins=sem_gt)
+        Plot.draw_pc_semins(pc_xyz=pc[9:12], pc_semins=sem_pred)
+
         sub.bat_pc = None
-        print "done"
+        print("done")
 

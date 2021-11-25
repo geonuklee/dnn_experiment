@@ -16,3 +16,6 @@ docker run \
 
 # After then,
 # roslaunch dnn_experiment bonet.launch
+
+# To run original 3D-Bonet,
+# cd bonet; python2 main_eval.py
