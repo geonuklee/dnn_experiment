@@ -1,7 +1,27 @@
 <launch>
+<arg name="points" value="k4a/points2"/>
+<arg name="voxel_leaf" value="0.02" />
+<arg name="voxel_minz" value="1.5" />
+<arg name="voxel_maxz" value="8." />
+
+<group ns="/cam0/" >
+  <arg name="nodelet_manager" default="nodelet_manager0"/>
+  <node pkg="nodelet" type="nodelet" name="$(arg nodelet_manager)" args="manager" required="true"/>
+  <node pkg="nodelet" type="nodelet" name="voxel_grid" args="load pcl/VoxelGrid $(arg nodelet_manager)" required="true">
+    <remap from="~input"  to="$(arg points)" />
+    <remap from="~output" to="$(arg points)/voxel" />
+    <rosparam subst_value="True">
+      filter_field_name: z
+      filter_limit_min: $(arg voxel_minz)
+      filter_limit_max: $(arg voxel_maxz)
+      filter_limit_negative: False
+      leaf_size: $(arg voxel_leaf)
+    </rosparam>
+  </node>
+</group>
 
 <node name="bonet" pkg="dnn_experiment" type="ros_bonet.py" output="screen" required="true">
-  <remap from="~input" to="/cam0/k4a/points2"/>
+  <remap from="~input" to="/cam0/k4a/points2/voxel"/>
 </node>
 
 </launch>
