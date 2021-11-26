@@ -83,6 +83,8 @@ if __name__ == '__main__':
         sem_pred_raw = np.asarray(y_psem_pred_sq_raw[b], dtype=np.float16)
         sem_pred = np.argmax(sem_pred_raw, axis=-1)
 
+        unique_sem = np.unique(sem_pred)
+        unique_semnames = [ Data_Configs.sem_names[idx] for idx in unique_sem ]
 
         bbscore_pred_raw = np.asarray(y_bbscore_pred_sq_raw[b], dtype=np.float16)
         pmask_pred_raw = np.asarray(y_pmask_pred_sq_raw[b], dtype=np.float16)
@@ -90,10 +92,12 @@ if __name__ == '__main__':
             = pmask_pred_raw * np.tile(bbscore_pred_raw[:, None], [1, pmask_pred_raw.shape[-1]])
         ins_pred = np.argmax(pmask_pred, axis=-2)
 
-        #Plot.draw_pc( np.concatenate([pc[:,9:12], pc[:,6:9]], axis=1) )
-        #Plot.draw_pc_semins(pc_xyz=pc[:,9:12], pc_semins=sem_pred , fix_color_num=13)
+        print("RGB input")
+        Plot.draw_pc( np.concatenate([pc[:,9:12], pc[:,6:9]], axis=1) )
+        print("Semantic segmentation", unique_semnames)
+        Plot.draw_pc_semins(pc_xyz=pc[:,9:12], pc_semins=sem_pred , fix_color_num=13)
+        print("Instance segmentation")
         Plot.draw_pc_semins(pc_xyz=pc[:,9:12], pc_semins=ins_pred)
-
 
         sub.bat_pc = None
         print("done")
