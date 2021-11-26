@@ -3,6 +3,10 @@
 <arg name="voxel_leaf" value="0.02" />
 <arg name="voxel_minz" value="1.5" />
 <arg name="voxel_maxz" value="8." />
+<arg name="filename" value="$(find dnn_experiment)/rosbag.bag"/>
+
+<node name="rosbag" pkg="rosbag" type="play"
+    args="-r 0.5 --loop $(arg filename) --clock" required="true" unless="$(eval filename=='')"/>
 
 <group ns="/cam0/" >
   <arg name="nodelet_manager" default="nodelet_manager0"/>

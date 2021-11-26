@@ -8,10 +8,8 @@ import ros_numpy
 import numpy as np
 
 import tensorflow as tf
-from bonet import BoNet, Data_Configs
+from bonet import BoNet, Data_Configs, Plot, Eval_Tools
 import os
-
-from helper_data_plot import Plot as Plot
 
 class Sub:
     def __init__(self, topic):
@@ -62,31 +60,40 @@ if __name__ == '__main__':
     tf.train.Saver().restore(net.sess, model_path)
     print('Model restored sucessful!')
 
+    #gap = 5e-3
+    #volume_num = int(1. / gap) + 2
+    #volume = -1 * np.ones([volume_num, volume_num, volume_num]).astype(np.int32)
+    #volume_sem = -1 * np.ones([volume_num, volume_num, volume_num]).astype(np.int32)
+    b = 0
+
     while not rospy.is_shutdown():
         rate.sleep()
         if sub.bat_pc is None:
             continue
         bat_pc = sub.bat_pc
-        print(bat_pc.shape)
-        [y_psem_pred_sq_raw, y_bbvert_pred_sq_raw, y_bbscore_pred_sq_raw, y_pmask_pred_sq_raw] = \
-            net.sess.run([net.y_psem_pred, net.y_bbvert_pred_raw, net.y_bbscore_pred_raw, net.y_pmask_pred_raw],feed_dict={net.X_pc: bat_pc[:, :, 0:9], net.is_train: False})
+        [y_psem_pred_sq_raw, y_bbvert_pred_sq_raw, y_bbscore_pred_sq_raw, y_pmask_pred_sq_raw] \
+            = net.sess.run([net.y_psem_pred,
+                net.y_bbvert_pred_raw,
+                net.y_bbscore_pred_raw,
+                net.y_pmask_pred_raw],
+                feed_dict={net.X_pc: bat_pc[:, :, 0:9], net.is_train: False})
 
-        #### if you need to visulize, please uncomment the follow lines
-        # class가 뭐지?, Bounding box는 어디?
-        #b = 0
-        #pc = np.asarray(bat_pc[b], dtype=np.float16)
-        #sem_gt = np.asarray(bat_sem_gt[b], dtype=np.int16)
-        #ins_gt = np.asarray(bat_ins_gt[b], dtype=np.int32)
-        #sem_pred_raw = np.asarray(y_psem_pred_sq_raw[b], dtype=np.float16)
-        #bbvert_pred_raw = np.asarray(y_bbvert_pred_sq_raw[b], dtype=np.float16)
-        #bbscore_pred_raw = np.asarray(y_bbscore_pred_sq_raw[b], dtype=np.float16)
-        #pmask_pred_raw = np.asarray(y_pmask_pred_sq_raw[b], dtype=np.float16)
+        pc = np.asarray(bat_pc[b], dtype=np.float16)
 
-        Plot.draw_pc(np.concatenate([pc[9:12], pc[3:6]], axis=1))
-        Plot.draw_pc_semins(pc_xyz=pc[9:12], pc_semins=ins_gt)
-        Plot.draw_pc_semins(pc_xyz=pc[9:12], pc_semins=ins_pred)
-        Plot.draw_pc_semins(pc_xyz=pc[9:12], pc_semins=sem_gt)
-        Plot.draw_pc_semins(pc_xyz=pc[9:12], pc_semins=sem_pred)
+        sem_pred_raw = np.asarray(y_psem_pred_sq_raw[b], dtype=np.float16)
+        sem_pred = np.argmax(sem_pred_raw, axis=-1)
+
+
+        bbscore_pred_raw = np.asarray(y_bbscore_pred_sq_raw[b], dtype=np.float16)
+        pmask_pred_raw = np.asarray(y_pmask_pred_sq_raw[b], dtype=np.float16)
+        pmask_pred \
+            = pmask_pred_raw * np.tile(bbscore_pred_raw[:, None], [1, pmask_pred_raw.shape[-1]])
+        ins_pred = np.argmax(pmask_pred, axis=-2)
+
+        #Plot.draw_pc( np.concatenate([pc[:,9:12], pc[:,6:9]], axis=1) )
+        #Plot.draw_pc_semins(pc_xyz=pc[:,9:12], pc_semins=sem_pred , fix_color_num=13)
+        Plot.draw_pc_semins(pc_xyz=pc[:,9:12], pc_semins=ins_pred)
+
 
         sub.bat_pc = None
         print("done")
