@@ -1,4 +1,4 @@
-#docker build -t 3dbonet -f docker/3DBoNet.Dockerfile .
+docker build -t 3dbonet -f docker/3DBoNet.Dockerfile .
 
 # Change 3D-BoNet directory name while linking, due to syntax error for module name.
 docker run \
