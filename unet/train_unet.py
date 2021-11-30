@@ -101,9 +101,7 @@ if __name__ == '__main__':
             optimizer.step()
             niter +=1
             running_loss += loss.item()
-        torch.save(model.state_dict(), 'edgenet_%d.pth'%epoch)
-        torch.save(model.state_dict(), 'edgenet.pth')
+        torch.save(model.state_dict(), 'edge_dataset/edgenet_%d.pth'%epoch)
+        torch.save(model.state_dict(), 'edge_dataset/edgenet.pth')
         print("[%d/%d] loss = %f" % (epoch, n_epoch,running_loss) )
-
-
 
