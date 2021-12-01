@@ -11,47 +11,9 @@ from torchvision import transforms
 
 import cv2
 from unet_model import IterNet
+from util import *
 
 from math import floor
-
-class SplitAdapter:
-    def __init__(self, model=None):
-        self.model = model
-        self.w = 100
-        self.offset = 80
-        self.hw0 = [] # To reconstruct output on original size.
-
-    def put(self, x):
-        if x.dim() == 4:
-            b, c, h0,w0 = x.shape
-        else:
-            b, h0,w0 = x.shape
-
-        if len(self.hw0) == 0:
-            for wmin in range(0, w0, self.offset):
-                for hmin in range(0, h0, self.offset):
-                    self.hw0.append((hmin,wmin))
-
-        if x.dim() == 4:
-            output=torch.zeros((b*len(self.hw0), c, self.w, self.w), dtype=x.dtype)
-        else:
-            output=torch.zeros((b*len(self.hw0), self.w, self.w), dtype=x.dtype)
-
-        n = 0
-        if x.dim() == 4:
-            for ib in range(b):
-                for wmin in range(0, w0-self.w+1, self.offset):
-                    for hmin in range(0, h0-self.w+1, self.offset):
-                        output[n,:,:,:] = x[ib,:,hmin:hmin+self.w,wmin:wmin+self.w]
-                        n+=1
-        else:
-            for ib in range(b):
-                for wmin in range(0, w0-self.w+1, self.offset):
-                    for hmin in range(0, h0-self.w+1, self.offset):
-                        output[n,:,:] = x[ib,hmin:hmin+self.w,wmin:wmin+self.w]
-                        n+=1
-        return output
-
 
 if __name__ == '__main__':
     #parser = argparse.ArgumentParser(description='Description for the program')
@@ -92,7 +54,7 @@ if __name__ == '__main__':
                 print("[%d/%d,%d/%d] loss = %f" % (epoch,n_epoch,i,dataset.__len__(), loss.item()) )
                 niter0 = 0
 
-        torch.save(model.state_dict(), 'edge_dataset/edgenet_%d.pth'%epoch)
-        torch.save(model.state_dict(), 'edge_dataset/edgenet.pth')
+        torch.save(model.state_dict(), 'edge_dataset/iternet_%d.pth'%epoch)
+        torch.save(model.state_dict(), 'edge_dataset/iternet.pth')
 
 

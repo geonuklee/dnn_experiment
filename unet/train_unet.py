@@ -69,7 +69,7 @@ if __name__ == '__main__':
     model = EdgeNet().to(device)
     if args.verbose is not -1:
         dataset = EdgeDataset('test')
-        dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+        dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
         device = "cuda:0"
         if args.verbose is None:
             fn = 'edgenet.pth'
