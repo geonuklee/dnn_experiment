@@ -1,5 +1,5 @@
 [submodule "3D-BoNet"]
-	path = 3D-BoNet
+	path = scripts/3D-BoNet
 	url = https://github.com/geonuklee/3D-BoNet.git
 [submodule "PointGroup"]
 	path = PointGroup

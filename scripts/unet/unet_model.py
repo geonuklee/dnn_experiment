@@ -2,7 +2,10 @@
 
 import torch.nn.functional as F
 
-from unet_parts import *
+if __package__ == 'unet':
+    from .unet_parts import *
+else:
+    from unet_parts import *
 
 class EdgeNet(nn.Module):
     def __init__(self):

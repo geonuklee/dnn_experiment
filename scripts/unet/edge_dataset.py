@@ -16,7 +16,7 @@ from os import listdir
 class EdgeDataset(Dataset):
     def __init__(self, useage='train'):
         script_fn = osp.abspath(__file__)
-        pkg_dir = str('/').join(script_fn.split('/')[:-2])
+        pkg_dir = str('/').join(script_fn.split('/')[:-3])
         self.useage_path = osp.join(pkg_dir, 'edge_dataset', useage)
         im_list = listdir(self.useage_path)
 

@@ -54,5 +54,7 @@ WORKDIR /home/$USERNAME
 RUN mkdir -p catkin_ws/src/ && cd catkin_ws && catkin init
 RUN echo "source ~/catkin_ws/devel/setup.bash" >> /home/$USERNAME/.bashrc  # Must be after expanding PATH
 
+RUN sudo apt-get install -y git && git clone https://github.com/eric-wieser/ros_numpy.git
+RUN cd ros_numpy && python3 setup.py install --user
 
-WORKDIR /home/$USERNAME
+
