@@ -17,34 +17,10 @@ import numpy as np
 from cv_bridge import CvBridge
 from os import makedirs
 
+import subprocess
 
 '''
-TODO
-0) From ground truth list
-0) Ask user to overwrite exist frame, if it is already exist frame.
-Done) Collect all /cam*/k4a/depth/image_raw, and rgb or rgb_to_depth for it.
-Done) Thresholding laplacian of depth
-3) Save edge - rgb. (rgb for reference)
-4) Call ' kolourpaint ground_truth.png'
-5) Convert above to edge.npy
-6) Add 'filename' to filename list.
-
-    script_fn = osp.abspath(__file__)
-    pkg_dir = str('/').join(script_fn.split('/')[:-2])
-    dataset_path = osp.join(pkg_dir, 'edge_dataset')
-    usages = ['train', 'valid', 'test']
-    usage_nframes = {'train':0.8*len(dataset),
-        'valid':0.1*len(dataset),
-        'test':0.1*len(dataset) }
-
-    if not osp.exists(dataset_path):
-        makedirs(dataset_path)
-        for usage in usages:
-            usagepath = osp.join(dataset_path,usage)
-            if not osp.exists(usagepath):
-                makedirs(usagepath)
-
-
+TODO : Torch Dataset from generated files
 
 '''
 
@@ -57,9 +33,9 @@ def get_topic(filename, topic):
     return msg
 
 if __name__ == '__main__':
-    # ref) https://www.notion.so/c-Python-Rosbag-API-88b49f2c413f40e1b3e8d2f09894c6bf
     rosbag_path = '/home/geo/dataset/unloading/**/*.bag' # remove hardcoding .. 
     rosbagfiles = glob2.glob(rosbag_path,recursive=True)
+    dsize = (1280,960)
 
     script_fn = osp.abspath(__file__)
     pkg_dir = str('/').join(script_fn.split('/')[:-3])
@@ -81,24 +57,22 @@ if __name__ == '__main__':
             n_frame = len(glob2.glob(depth_files))
             print(n_frame)
             n_frames[usage] = n_frame
-            import pdb; pdb.set_trace()
 
     bridge = CvBridge()
     fn_rosbag_list = osp.join(dataset_path,'rosbag_list.txt')
     if osp.exists(fn_rosbag_list):
-        closed_set_fp = open(fn_rosbag_list,'r')
-        closed_set = closed_set_fp.read().split("\n")
-        closed_set_fp.close()
+        fp_rosbaglist = open(fn_rosbag_list,'r')
+        closed_set = fp_rosbaglist.read().split("\n")
+        fp_rosbaglist.close()
         closed_set = filter(lambda fn: fn != '', closed_set)
         closed_set = set(closed_set)
     else:
         closed_set = set()
 
-    fp_closed_set = open(fn_rosbag_list,'a')
+    fp_rosbaglist = open(fn_rosbag_list,'a')
 
     for fullfn in rosbagfiles:
         fn = osp.basename(fullfn)
-        #print(fn.split(".")[0])
         if fn in closed_set:
             continue
         closed_set.add(fn)
@@ -109,8 +83,11 @@ if __name__ == '__main__':
         rgb_groups = re.findall("\ (\/(.*)\/(k4a|aligned)\/(rgb|rgb_to_depth)\/image_raw)\ ", infos)
         rgbs = {}
         for topic, cam_id, _, rgb_type in rgb_groups:
-            rgbs[cam_id] = topic
+            if cam_id not in rgbs:
+                rgbs[cam_id] = {}
+            rgbs[cam_id][rgb_type] = topic
 
+        b_results_from_fn = False
         for topic, cam_id, camera_type, depth_type in depth_groups:
             depth_msg = get_topic(fullfn, topic)
             depth = bridge.imgmsg_to_cv2(depth_msg, desired_encoding="32FC1")
@@ -120,14 +97,23 @@ if __name__ == '__main__':
                 depth /= 1000.
             if camera_type == "k4a": # Too poor
                 continue
-            rgb_msg = get_topic(fullfn, rgbs[cam_id])
-            rgb = bridge.imgmsg_to_cv2(rgb_msg,desired_encoding="bgr8" )
-            rgb = cv2.resize(rgb,(400,300))
+            if depth_type == 'depth_to_rgb':
+                rgb_topic = rgbs[cam_id]['rgb']
+            else:
+                rgb_topic = rgbs[cam_id]['rgb_to_depth']
+            rgb_msg = get_topic(fullfn, rgb_topic)
+            orgb = bridge.imgmsg_to_cv2(rgb_msg,desired_encoding="bgr8" )
+            rgb  = cv2.resize(orgb, dsize)
+            minirgb  = cv2.resize(orgb, (400,400) )
 
             lap3 = cv2.Laplacian(depth, cv2.CV_32FC1, ksize=3)
-            lap3 = cv2.resize(lap3,(1280,960))
+            lap3 = cv2.resize(lap3, dsize)
             lap5 = cv2.Laplacian(depth, cv2.CV_32FC1, ksize=5)
-            lap5 = cv2.resize(lap5,(1280,960))
+            lap5 = cv2.resize(lap5, dsize)
+            depth = cv2.resize(depth,dsize,interpolation=cv2.INTER_NEAREST)
+
+            blap3 = (lap3<-0.01).astype(np.uint8)*255
+            blap5 = (lap5<-0.1 ).astype(np.uint8)*255
 
             #print(topic, cam_id, camera_type, depth_type)
             if n_frames['train'] < usages['train']*len(closed_set) :
@@ -136,31 +122,42 @@ if __name__ == '__main__':
                 usage = 'valid'
 
             usagepath = osp.join(dataset_path,usage)
-            fn_depth = osp.join(usagepath,'%d_depth.npy'%n_frames[usage])
-            fn_info  = osp.join(usagepath,'%d_info.txt'%n_frames[usage])
-            fp_info = open(fn_info, 'w')
+            write_format = usagepath+'/%d_%s.%s'
+            fp_info = open(write_format%(n_frames[usage],"info","txt"), 'w')
             line = '\t'.join([fn, topic, cam_id, camera_type, depth_type])
 
             fp_info.write(line+"\n")
             fp_info.flush()
 
-            fp_closed_set.write(fn+"\n")
-            fp_closed_set.flush()
+            dst = np.zeros((blap5.shape[0], blap5.shape[1]+minirgb.shape[1],3), np.uint8)
+            for i in range(3):
+                dst[:,:blap5.shape[1],i] = blap5
+                dst[minirgb.shape[0]:,blap5.shape[1]:,i] = 100
+            dst[:minirgb.shape[0],blap5.shape[1]:,:] = minirgb
 
-            n_frames[usage] += 1
-
-            cv2.imshow("lap3", (lap3<-0.01).astype(np.uint8)*255)
-            cv2.imshow("lap5", (lap5<-0.1 ).astype(np.uint8)*255)
             cv2.imshow("rgb", rgb)
+            cv2.imshow("dst", dst)
             c = cv2.waitKey()
             if c == ord('q'):
                 exit(1)
+            elif c == ord('c'):
+                continue
 
+            fn_truth = osp.join(usagepath,'%d_gt.png'%n_frames[usage])
+            cv2.imwrite(fn_truth, dst)
+            callout = subprocess.call(['kolourpaint', fn_truth] )
 
-            # TODO write image
-            # TODO kolourpaint iamge
-            # TODO update rosbaglist.txt
-            # TODO show instance map with component 
+            np.save(write_format%( n_frames[usage],"depth","npy"), depth)
+            np.save(write_format%( n_frames[usage],"lap3" ,"npy"), lap3)
+            np.save(write_format%( n_frames[usage],"lap5" ,"npy"), lap5)
+            np.save(write_format%( n_frames[usage],"rgb" ,"npy"), rgb)
 
+            n_frames[usage] += 1
+            b_results_from_fn = True
 
+        if b_results_from_fn:
+            # Update rosbaglist.txt
+            fp_rosbaglist.write(fn+"\n")
+            fp_rosbaglist.flush()
 
+    fp_rosbaglist.close()
