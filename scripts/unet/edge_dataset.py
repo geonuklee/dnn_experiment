@@ -36,6 +36,7 @@ class EdgeDataset(Dataset):
         return self.nframe
 
     def __getitem__(self, idx):
+        print("idx = %d"%idx)
         frame = {}
         try:
             for name in self.types:

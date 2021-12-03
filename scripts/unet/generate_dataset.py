@@ -20,9 +20,9 @@ from os import makedirs
 import subprocess
 
 '''
-TODO : Torch Dataset from generated files
 
 '''
+
 
 def get_topic(filename, topic):
     bag = rosbag.Bag(filename)

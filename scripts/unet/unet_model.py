@@ -77,7 +77,7 @@ class IterNet(nn.Module):
     def __init__(self):
         super(IterNet, self).__init__()
         self.in_channels = 1
-        n_cls = 2
+        n_cls = 3
 
         # Refinery module, mini UNet
         self.conv1 = DoubleDown(self.in_channels, 32, kernel_size=3)
@@ -87,11 +87,13 @@ class IterNet(nn.Module):
 
         self.up3 = Up(self.conv3.out_channnels+self.conv4.out_channnels, 128, kernel_size=3)
         self.up2 = Up(self.conv2.out_channnels+self.up3.out_channnels, 64, kernel_size=3)
-        self.up1 = Up(self.conv1.out_channnels+self.up2.out_channnels, 32, kernel_size=3)
-        self.up0 = Up(1                       +self.up1.out_channnels, 2, kernel_size=3)
+        self.up1 = Up(self.conv1.out_channnels+self.up2.out_channnels, n_cls, kernel_size=3)
+        #self.up0 = Up(1                       +self.up1.out_channnels, n_cls, kernel_size=3)
+
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
         self.softmax = nn.Softmax(dim=1) # c of b-c-h-w
-        weights = torch.tensor( [0.1, 2.]) # Improved result with weight.
+        weights = torch.tensor( [0.1, 10., 0.5])
         self.f_loss = nn.CrossEntropyLoss(weight=weights)
 
     def forward(self, x):
@@ -105,7 +107,7 @@ class IterNet(nn.Module):
         x = self.up3(x4, x3)
         x = self.up2(x,  x2)
         x = self.up1(x,  x1)
-        x = self.up0(x,  l0)
+        x = self.up(x)
         x = self.softmax(x)
         return x
 

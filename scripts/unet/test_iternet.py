@@ -7,10 +7,12 @@ import argparse
 import torch
 from torch.utils.data import DataLoader
 
+from segment_dataset import SegmentDataset
 from edge_dataset import EdgeDataset
 from unet_model import IterNet
 from util import *
 
+import time
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Description for the program')
@@ -21,40 +23,38 @@ if __name__ == '__main__':
     model = IterNet()
     model.to(device)
     if args.verbose is None:
-        fn = 'edge_dataset/iternet.pth'
+        fn = 'segment_dataset/iternet.pth'
     else:
-        fn = 'edge_dataset/iternet_%d.pth' % args.verbose
+        fn = 'segment_dataset/iternet_%d.pth' % args.verbose
     state_dict = torch.load(fn)
     model.load_state_dict(state_dict)
 
     spliter = SplitAdapter()
-    dataset = EdgeDataset('test')
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
-    for i in range(dataset.__len__() ):
-        data = next(iter(dataloader))
-        lap = data['lap'].unsqueeze(1).float()
+    dataset = SegmentDataset('train')
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+    for i, data in enumerate(dataloader):
+        lap = data['lap5'].unsqueeze(1).float()
         lap = spliter.put(lap).to(device)
+        orgb = data['rgb'][0,:,:,:]
 
-        orgb = data['rgb']
-        #srgb = spliter.put(torch.moveaxis(orgb,3,1))
-        #rgb = spliter.restore(srgb).moveaxis(1,3).squeeze(0)
-
-        #index = data['edge'].long()
-        #index = spliter.put(index).to(device)
+        t0 = time.time()
         pred = model(lap)
         pred = spliter.restore(pred)
+        edge_pred = pred.moveaxis(1,3).squeeze(0)[:,:,1].detach().numpy()
+        box_pred = pred.moveaxis(1,3).squeeze(0)[:,:,2].detach().numpy()
+        edge_bpred = ( edge_pred> 0.95)#.astype(np.uint8)*255
+        box_bpred = ( box_pred> 0.9)#.astype(np.uint8)*255
+        print("etime=%.2f[ms]", (time.time()-t0) * 1000. )
 
-        npred = pred.moveaxis(1,3).squeeze(0)[:,:,1].detach().numpy()
-        bpred = (npred > 0.5).astype(np.uint8)*255
+        dst = np.zeros_like(orgb.numpy())
+        dst[edge_bpred,:] = 255
+        dst[box_bpred, 2] = 255
 
-        #import pdb;pdb.set_trace()
-
-        cv2.imshow('rgb', orgb.squeeze(0).numpy())
-        cv2.imshow('pred', bpred)
-        #cv2.imshow('rgb_dst', rgb.numpy())
-        c = cv2.waitKey()
+        cv2.imshow('rgb', orgb.numpy())
+        cv2.imshow('dst', dst)
+        #cv2.imshow('edge', edge_bpred)
+        #cv2.imshow('box', box_bpred)
+        c = cv2.waitKey(0)
         if c == ord('q'):
             exit(1)
-
-
 
