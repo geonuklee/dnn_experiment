@@ -5,7 +5,7 @@ docker run \
   --network host \
   --gpus all \
   -v $PWD:/home/docker/catkin_ws/src/dnn_experiment \
-  -v $HOME/dataset/unloading/stc_k4a_2021-11-12-18-20-58.bag:/home/docker/catkin_ws/src/dnn_experiment/rosbag.bag \
+  -v /home/geo/dataset/unloading/stc2021/stc_2021-08-19-11-48-10.bag:/home/docker/catkin_ws/src/dnn_experiment/rosbag.bag \
   -v ~/.ssh:/home/docker/.ssh \
   -it unet
 

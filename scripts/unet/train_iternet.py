@@ -30,7 +30,7 @@ if __name__ == '__main__':
 
     optimizer = optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
     print("Sum running loss for %d frame.."%len(dataset) )
-    n_epoch = 20
+    n_epoch = 2000
     niter0, niter = 0, 0
     for epoch in range(n_epoch):  # loop over the dataset multiple times
         for i in range(dataset.__len__() ):
