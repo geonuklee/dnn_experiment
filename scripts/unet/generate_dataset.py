@@ -18,19 +18,28 @@ from cv_bridge import CvBridge
 from os import makedirs
 
 import subprocess
-
-'''
-
-'''
+from util import *
 
 
 def get_topic(filename, topic):
     bag = rosbag.Bag(filename)
-    msg = None
+    messages = []
     for topic, msg, t in bag.read_messages(topics=[topic]):
-        msg = msg
-        break
-    return msg
+        messages.append(msg)
+    print("len(%s) = %d" % (topic, len(messages))  )
+    return messages
+
+def get_meterdepth_lap35(depth, dsize):
+    if depth.max() > 100.: # Convert [mm] to [m]
+         depth/= 1000.
+    lap3 = cv2.Laplacian(depth, cv2.CV_32FC1, ksize=3)
+    lap3 = cv2.resize(lap3, dsize)
+    lap5 = cv2.Laplacian(depth0, cv2.CV_32FC1, ksize=5)
+    lap5 = cv2.resize(lap5, dsize)
+    depth = cv2.resize(depth,dsize,interpolation=cv2.INTER_NEAREST)
+
+    return depth, lap3, lap5
+
 
 if __name__ == '__main__':
     rosbag_path = '/home/geo/dataset/unloading/**/*.bag' # remove hardcoding .. 
@@ -59,22 +68,12 @@ if __name__ == '__main__':
             n_frames[usage] = n_frame
 
     bridge = CvBridge()
-    fn_rosbag_list = osp.join(dataset_path,'rosbag_list.txt')
-    if osp.exists(fn_rosbag_list):
-        fp_rosbaglist = open(fn_rosbag_list,'r')
-        closed_set = fp_rosbaglist.read().split("\n")
-        fp_rosbaglist.close()
-        closed_set = filter(lambda fn: fn != '', closed_set)
-        closed_set = set(closed_set)
-    else:
-        closed_set = set()
-
-    fp_rosbaglist = open(fn_rosbag_list,'a')
+    closed_set = set()
 
     for fullfn in rosbagfiles:
         fn = osp.basename(fullfn)
-        if fn in closed_set:
-            continue
+        #if fn in closed_set:
+        #    continue
         closed_set.add(fn)
         command  = "rosbag info %s"%fullfn
         command += "| grep image_raw"
@@ -89,45 +88,46 @@ if __name__ == '__main__':
 
         b_results_from_fn = False
         for topic, cam_id, camera_type, depth_type in depth_groups:
-            depth_msg = get_topic(fullfn, topic)
-            depth = bridge.imgmsg_to_cv2(depth_msg, desired_encoding="32FC1")
-            if depth.shape[1] < 600: # Too small image
+            depth_messages = get_topic(fullfn, topic)
+            depth0 = bridge.imgmsg_to_cv2(depth_messages[0], desired_encoding="32FC1")
+
+            if depth0.shape[1] < 600: # Too small image
                 continue
-            if depth.max() > 100.: # Convert [mm] to [m]
-                depth /= 1000.
             if camera_type == "k4a": # Too poor
                 continue
             if depth_type == 'depth_to_rgb':
                 rgb_topic = rgbs[cam_id]['rgb']
             else:
                 rgb_topic = rgbs[cam_id]['rgb_to_depth']
-            rgb_msg = get_topic(fullfn, rgb_topic)
-            orgb = bridge.imgmsg_to_cv2(rgb_msg,desired_encoding="bgr8" )
-            rgb  = cv2.resize(orgb, dsize)
+
+            rgb_messages = get_topic(fullfn, rgb_topic)
+            b_pass = False
+            while True:
+                c = 0
+                for i, msg in enumerate(rgb_messages):
+                    #print(i)
+                    orgb = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8" )
+                    rgb  = cv2.resize(orgb, dsize)
+                    cv2.imshow("rgb", rgb)
+                    c = cv2.waitKey(5)
+                    if c==ord('q'):
+                        exit(1)
+                    elif c == ord('c'):
+                        b_pass = True
+                        break
+                    elif c != 255:
+                        break
+                if c != 255:
+                    break
+            if b_pass:
+                continue
+
             minirgb  = cv2.resize(orgb, (400,400) )
 
-            lap3 = cv2.Laplacian(depth, cv2.CV_32FC1, ksize=3)
-            lap3 = cv2.resize(lap3, dsize)
-            lap5 = cv2.Laplacian(depth, cv2.CV_32FC1, ksize=5)
-            lap5 = cv2.resize(lap5, dsize)
-            depth = cv2.resize(depth,dsize,interpolation=cv2.INTER_NEAREST)
-
+            depth0, lap3, lap5 = get_meterdepth_lap35(depth0, dsize)
             blap3 = (lap3<-0.01).astype(np.uint8)*255
             blap5 = (lap5<-0.1 ).astype(np.uint8)*255
 
-            #print(topic, cam_id, camera_type, depth_type)
-            if n_frames['train'] < usages['train']*len(closed_set) :
-                usage = 'train'
-            else:
-                usage = 'valid'
-
-            usagepath = osp.join(dataset_path,usage)
-            write_format = usagepath+'/%d_%s.%s'
-            fp_info = open(write_format%(n_frames[usage],"info","txt"), 'w')
-            line = '\t'.join([fn, topic, cam_id, camera_type, depth_type])
-
-            fp_info.write(line+"\n")
-            fp_info.flush()
 
             dst = np.zeros((blap5.shape[0], blap5.shape[1]+minirgb.shape[1],3), np.uint8)
             for i in range(3):
@@ -135,29 +135,59 @@ if __name__ == '__main__':
                 dst[minirgb.shape[0]:,blap5.shape[1]:,i] = 100
             dst[:minirgb.shape[0],blap5.shape[1]:,:] = minirgb
 
-            cv2.imshow("rgb", rgb)
-            cv2.imshow("dst", dst)
-            c = cv2.waitKey()
-            if c == ord('q'):
-                exit(1)
-            elif c == ord('c'):
-                continue
+            cv2.imwrite("tmp.png", dst)
+            callout = subprocess.call(['kolourpaint', "tmp.png"] )
+            cv_gt = cv2.imread("tmp.png")[:depth0.shape[0],:depth0.shape[1],:]
+            label = np.zeros((cv_gt.shape[0],cv_gt.shape[1]), np.uint8)
+            # Red == box for bgr
+            label[np.logical_and(cv_gt[:,:,2] > 200, cv_gt[:,:,1] < 50)] = 2
+            dist = cv2.distanceTransform((label!=2).astype(np.uint8)*255, cv2.DIST_L2,3)
 
-            fn_truth = osp.join(usagepath,'%d_gt.png'%n_frames[usage])
-            cv2.imwrite(fn_truth, dst)
-            callout = subprocess.call(['kolourpaint', fn_truth] )
+            # White == Edge
+            edge_range = 10 # [pixel]
+            edge = np.logical_and(cv_gt[:,:,2] > 200, cv_gt[:,:,1] > 200)
+            edge = np.logical_and(edge, dist < edge_range)
+            label[edge] = 1
+            #cv2.imshow("edge", (label==1).astype(np.uint8)*255)
+            #cv2.waitKey()
+            #import pdb;pdb.set_trace()
 
-            np.save(write_format%( n_frames[usage],"depth","npy"), depth)
-            np.save(write_format%( n_frames[usage],"lap3" ,"npy"), lap3)
-            np.save(write_format%( n_frames[usage],"lap5" ,"npy"), lap5)
-            np.save(write_format%( n_frames[usage],"rgb" ,"npy"), rgb)
+            dst_label = np.zeros((blap5.shape[0], blap5.shape[1],3), np.uint8)
+            dst_label[label==1,:] = 255
+            dst_label[label==2,2] = 255
+            dst = np.zeros((blap5.shape[0], blap5.shape[1]+minirgb.shape[1],3), np.uint8)
+            dst[:dst_label.shape[0],:dst_label.shape[1],:] = dst_label
+            dst[:minirgb.shape[0],blap5.shape[1]:,:] = minirgb
+            #cv2.imshow("dst", dst)
+            #cv2.waitKey()
 
-            n_frames[usage] += 1
-            b_results_from_fn = True
+            for depth_msg in depth_messages:
+                depth = bridge.imgmsg_to_cv2(depth_msg, desired_encoding="32FC1")
+                if n_frames['train'] < usages['train']*float(len(closed_set)) :
+                    usage = 'train'
+                else:
+                    usage = 'valid'
 
-        if b_results_from_fn:
-            # Update rosbaglist.txt
-            fp_rosbaglist.write(fn+"\n")
-            fp_rosbaglist.flush()
+                usagepath = osp.join(dataset_path,usage)
+                write_format = usagepath+'/%d_%s.%s'
+                fp_info = open(write_format%(n_frames[usage],"info","txt"), 'w')
+                line = '\t'.join([fn, topic, cam_id, camera_type, depth_type])
+                fp_info.write(line+"\n")
+                fp_info.flush()
+                fp_info.close()
+
+                fn_truth = osp.join(usagepath,'%d_gt.png'%n_frames[usage])
+                cv2.imwrite(fn_truth, dst)
+
+                depth, lap3, lap5 = get_meterdepth_lap35(depth, dsize)
+                np.save(write_format%( n_frames[usage],"depth","npy"), depth)
+                np.save(write_format%( n_frames[usage],"lap3" ,"npy"), lap3)
+                np.save(write_format%( n_frames[usage],"lap5" ,"npy"), lap5)
+                np.save(write_format%( n_frames[usage],"rgb" ,"npy"), rgb)
+
+                n_frames[usage] += 1
+                b_results_from_fn = True
+                print(n_frames)
+
 
     fp_rosbaglist.close()

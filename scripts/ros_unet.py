@@ -49,22 +49,28 @@ if __name__ == '__main__':
         if sub.rgb is None:
             continue
         depth = sub.depth
-        rgb = sub.rgb
+        cv_rgb = sub.rgb
         sub.depth = None
         sub.rgb = None
 
         cvlap = cv2.Laplacian(depth, cv2.CV_32FC1,ksize=5)
         lap = torch.Tensor(cvlap).unsqueeze(0).unsqueeze(0).float()
-        lap = spliter.put(lap).to(device)
+        rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
 
-        pred = model(lap)
+        input_x = torch.cat((lap,rgb),dim=1)
+        input_x = spliter.put(input_x).to(device)
+
+        pred = model(input_x)
         pred = pred.detach()
         pred = spliter.restore(pred)
         dst = spliter.pred2dst(pred)
 
-        cv2.imshow("rgb", rgb)
+        cv2.imshow("rgb", cv_rgb)
         cv2.imshow("lap", cvlap)
         cv2.imshow('pred', dst)
-        cv2.waitKey(1)
+        c = cv2.waitKey(1)
+        if c == ord('q'):
+            exit(1)
+
 
 

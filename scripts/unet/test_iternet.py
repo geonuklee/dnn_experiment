@@ -31,22 +31,25 @@ if __name__ == '__main__':
 
     spliter = SplitAdapter()
     while True:
-        dataset = SegmentDataset('train')
+        dataset = SegmentDataset('valid')
         dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
         for i, data in enumerate(dataloader):
             lap = data['lap5'].unsqueeze(1).float()
-            lap = spliter.put(lap).to(device)
-            orgb = data['rgb'][0,:,:,:]
+            rgb = data['rgb'].float().moveaxis(-1,1)/255
+            input_x = torch.cat((lap,rgb),dim=1)
+            input_x = spliter.put(input_x).to(device)
 
+            orgb = data['rgb'][0,:,:,:]
             t0 = time.time()
-            pred = model(lap)
+            pred = model(input_x)
             pred = spliter.restore(pred)
+            pred = pred.detach()
             dst = spliter.pred2dst(pred)
             print("etime=%.2f[ms]", (time.time()-t0) * 1000. )
 
             cv2.imshow('rgb', orgb.numpy())
             cv2.imshow('dst', dst)
-            c = cv2.waitKey(0)
+            c = cv2.waitKey(1)
             if c == ord('q'):
                 exit(1)
 

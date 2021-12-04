@@ -30,7 +30,7 @@ if __name__ == '__main__':
 
     optimizer = optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
     print("Sum running loss for %d frame.."%len(dataset) )
-    n_epoch = 2000
+    n_epoch = 50
     niter0, niter = 0, 0
     for epoch in range(n_epoch):  # loop over the dataset multiple times
         for i in range(dataset.__len__() ):
@@ -39,11 +39,13 @@ if __name__ == '__main__':
             optimizer.zero_grad(set_to_none=True)
 
             lap = torch.unsqueeze(data['lap5'],1).float()
-            lap = spliter.put(lap).to(device)
+            rgb = data['rgb'].float().moveaxis(-1,1)/255
+            input_x = torch.cat((lap,rgb),dim=1)
+            input_x = spliter.put(input_x).to(device)
+
             index = data['gt'].long()
             index = spliter.put(index).to(device)
-
-            pred = model(lap)
+            pred = model(input_x)
 
             loss = model.loss(pred, index)
             loss.backward()

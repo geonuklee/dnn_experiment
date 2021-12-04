@@ -76,7 +76,7 @@ class EdgeNet(nn.Module):
 class IterNet(nn.Module):
     def __init__(self):
         super(IterNet, self).__init__()
-        self.in_channels = 1
+        self.in_channels = 4
         n_cls = 3
 
         # Refinery module, mini UNet
@@ -93,7 +93,7 @@ class IterNet(nn.Module):
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
         self.softmax = nn.Softmax(dim=1) # c of b-c-h-w
-        weights = torch.tensor( [0.1, 10., 0.5])
+        weights = torch.tensor( [1., 1., 1.])
         self.f_loss = nn.CrossEntropyLoss(weight=weights)
 
     def forward(self, x):
