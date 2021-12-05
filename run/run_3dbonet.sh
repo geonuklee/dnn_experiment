@@ -1,13 +1,11 @@
-docker build -t 3dbonet -f docker/3DBoNet.Dockerfile .
+#docker build -t 3dbonet -f docker/3DBoNet.Dockerfile .
 
 # Change 3D-BoNet directory name while linking, due to syntax error for module name.
 docker run \
   --network host \
   --gpus all \
   -v $PWD:/home/docker/catkin_ws/src/dnn_experiment \
-  -v $PWD/3D-BoNet:/home/docker/catkin_ws/src/dnn_experiment/bonet \
-  -v $HOME/dataset/Data_S3DIS:/home/docker/catkin_ws/src/dnn_experiment/bonet/data_s3dis \
-  -v $HOME/dataset/unloading/stc_k4a_2021-11-12-18-20-58.bag:/home/docker/catkin_ws/src/dnn_experiment/rosbag.bag \
+  -v $HOME/dataset/Data_S3DIS:/home/docker/catkin_ws/src/dnn_experiment/scripts/data_s3dis \
   -it 3dbonet 
 
 # For first execution,

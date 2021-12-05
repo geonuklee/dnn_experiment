@@ -9,7 +9,7 @@ import numpy as np
 
 import tensorflow as tf
 from bonet import BoNet, Data_Configs, Plot, Eval_Tools
-import os
+from os import path as osp
 
 class Sub:
     def __init__(self, topic):
@@ -26,6 +26,10 @@ class Sub:
         rgb = ros_numpy.point_cloud2.split_rgb_field(array)
 
         xyz = np.vstack((array['x'],array['y'],array['z'])).transpose()
+        #import pdb; pdb.set_trace()
+        #for pt_each in xyz:
+        #    print(pt_each)
+
         rgb = np.vstack((rgb['r'], rgb['g'], rgb['b'])).transpose()
         # TODO normalize
         self.bat_pc = np.hstack((xyz, xyz, rgb, xyz)).reshape((1,-1,12) )
@@ -48,8 +52,10 @@ if __name__ == '__main__':
         net.y_pmask_pred_raw = net.pmask_net(net.point_features, net.global_features, net.y_bbvert_pred_raw, net.y_bbscore_pred_raw)
 
     ####### 2. restore trained model
-    model_path ='/home/docker/catkin_ws/src/dnn_experiment/3D-BoNet/model_released/model.cptk'
-    if not os.path.isfile(model_path + '.data-00000-of-00001'):
+    script_fn = osp.abspath(__file__)
+    pkg_dir = str('/').join(script_fn.split('/')[:-2])
+    model_path = osp.join(pkg_dir,'scripts','3D-BoNet','model_released','model.cptk')
+    if not osp.isfile(model_path+'.data-00000-of-00001'):
         print(model_path)
         print ('please download the released model!')
         exit(0)

@@ -71,8 +71,10 @@ if __name__ == '__main__':
         pred = spliter.restore(pred)
         dst = spliter.pred2dst(pred)
 
-        cv2.imshow("rgb", cv_rgb)
-        cv2.imshow("lap", cvlap)
+        dst = cv2.addWeighted(dst,0.5,cv_rgb,0.5,0)
+
+        #cv2.imshow("rgb", cv_rgb)
+        #cv2.imshow("lap", cvlap)
         cv2.imshow('pred', dst)
         c = cv2.waitKey(1)
         if c == ord('q'):
