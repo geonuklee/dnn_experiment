@@ -5,10 +5,9 @@ import torch
 import numpy as np
 
 class SplitAdapter:
-    def __init__(self, model=None):
-        self.model = model
-        self.w = 400
-        self.offset = 399
+    def __init__(self, w=400, offset=399):
+        self.w = w
+        self.offset = offset
         assert self.w >= self.offset
         self.hw_min = [] # To reconstruct output on original size.
 

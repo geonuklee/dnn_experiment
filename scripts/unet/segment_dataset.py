@@ -41,7 +41,7 @@ class SegmentDataset(Dataset):
 
         fn = "%d_gt.png"%idx
         fn = osp.join(self.useage_path, fn)
-        print("fn= %s"%fn)
+        #print("fn= %s"%fn)
         assert osp.exists(fn), "SegementDataset failed to read the file %s" % fn
         cv_gt = cv2.imread(fn)[:rc[0],:rc[1]]
         #frame[name] = np.load(fn)

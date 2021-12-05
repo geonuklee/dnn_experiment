@@ -34,12 +34,15 @@ if __name__ == '__main__':
     rate = rospy.Rate(hz=10)
     sub = Sub(depth='~input_depth', rgb='~input_rgb')
     fn = rospy.get_param('~weight_file')
+    dsize = (1280,960) # TODO remove duplicated dsize
 
     device = "cuda:0"
     model = IterNet()
     model.to(device)
-    state_dict = torch.load(fn)
-    model.load_state_dict(state_dict)
+    checkpoint = torch.load(fn)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    #model.eval()
+
     spliter = SplitAdapter()
 
     while not rospy.is_shutdown():
@@ -53,7 +56,10 @@ if __name__ == '__main__':
         sub.depth = None
         sub.rgb = None
 
+        cv_rgb  = cv2.resize(cv_rgb, dsize)
         cvlap = cv2.Laplacian(depth, cv2.CV_32FC1,ksize=5)
+        cvlap = cv2.resize(cvlap, dsize)
+
         lap = torch.Tensor(cvlap).unsqueeze(0).unsqueeze(0).float()
         rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
 

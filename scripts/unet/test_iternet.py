@@ -26,8 +26,10 @@ if __name__ == '__main__':
         fn = 'segment_dataset/iternet.pth'
     else:
         fn = 'segment_dataset/iternet_%d.pth' % args.verbose
-    state_dict = torch.load(fn)
-    model.load_state_dict(state_dict)
+    checkpoint = torch.load(fn)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    #model.eval()  # TODO More poor result with it? why?
+    print("test with epoch %d" % checkpoint['epoch'] )
 
     spliter = SplitAdapter()
     while True:

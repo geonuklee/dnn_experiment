@@ -34,7 +34,7 @@ def get_meterdepth_lap35(depth, dsize):
          depth/= 1000.
     lap3 = cv2.Laplacian(depth, cv2.CV_32FC1, ksize=3)
     lap3 = cv2.resize(lap3, dsize)
-    lap5 = cv2.Laplacian(depth0, cv2.CV_32FC1, ksize=5)
+    lap5 = cv2.Laplacian(depth, cv2.CV_32FC1, ksize=5)
     lap5 = cv2.resize(lap5, dsize)
     depth = cv2.resize(depth,dsize,interpolation=cv2.INTER_NEAREST)
 
