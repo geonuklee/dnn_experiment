@@ -65,4 +65,5 @@ RUN git clone https://github.com/eric-wieser/ros_numpy.git
 RUN cd ros_numpy && python2 setup.py install --user
 
 RUN pip install tensorflow-gpu==1.4.0 scipy==1.2.3 h5py==2.9 open3d-python==0.3.0
+RUN pip install pybind11
 
