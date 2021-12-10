@@ -42,7 +42,7 @@ if __name__ == '__main__':
     n_epoch = 50
     niter0, niter = 0, 0
     for epoch in range(epoch_last, n_epoch):  # loop over the dataset multiple times
-        for i in range(dataset.__len__() ):
+        for i, data for enumerate(dataset):
             #print("epoch %d/%d, train %d/%d " % (epoch, n_epoch, i, len(dataset) ) )
             data = next(iter(dataloader))
             optimizer.zero_grad(set_to_none=True)
