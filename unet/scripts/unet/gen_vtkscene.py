@@ -17,22 +17,7 @@ import argparse
 import shutil
 
 # TODO Replace it to pybind11 cpp extension
-#import numpy.ctypeslib as npct
-#import ctypes as ct
-## Import module
-#mymodule = npct.load_library('libcextend', './scripts/')
-
-def CallFindEdge(arr_in):
-    arr_out = np.zeros_like(arr_in, dtype=np.uint8)
-    c_intp = ct.POINTER(ct.c_int)                      # ctypes integer pointer 
-    c_uintp = ct.POINTER(ct.c_uint8)                    # ctypes unsigned integer pointer 
-    shape = np.array(arr_in.shape, dtype=np.int32)
-
-    # Call function
-    mymodule.FindEdge(arr_in.ctypes.data_as(c_uintp),   # Cast numpy array to ctypes integer pointer
-                    arr_out.ctypes.data_as(c_uintp),
-                    shape.ctypes.data_as(c_intp))
-    return arr_out
+import unet_cpp_extension as cpp_ext
 
 colors = (
   (0,255,0),
@@ -77,8 +62,7 @@ def AddRounding(org_depth, edge):
 
 
 # https://stackoverflow.com/questions/17659362/get-depth-from-camera-for-each-pixel
-# TODO OldScene  -> Scene
-class OldScene:
+class Scene:
     def __init__(self):
         self.ren = vtk.vtkRenderer()
         self.renwin = vtk.vtkRenderWindow()
@@ -153,7 +137,7 @@ class OldScene:
         dataset_path = osp.join(pkg_dir, 'edge_dataset')
 
         usages = ['train', 'valid', 'test']
-        numbers = [800, 10,10]
+        numbers = [100, 10,10]
         if not verbose:
             if osp.exists(dataset_path):
                 shutil.rmtree(dataset_path)
@@ -179,7 +163,7 @@ class OldScene:
                         self.ren.RemoveActor(actor)
                 self.box_actors = []
 
-                if img_idx < 0.5*numbers[k]:
+                if img_idx < 0.1*numbers[k]:
                     self.MakeAlignedStack()
                 else:
                     self.MakeRandomStack()
@@ -188,8 +172,7 @@ class OldScene:
 
                 rgb = self.GetRgb()
                 vis, mask = self.GetMask()
-
-                edge = CallFindEdge(mask.astype(np.uint8)) # Get instance edge
+                edge = cpp_ext.FindEdge(mask.astype(np.uint8)) # Get instance edge
 
                 org_depth = self.GetDepth()
                 org_depth[ np.sum(vis,axis=2) == 0] = 0.
@@ -322,40 +305,9 @@ class OldScene:
                 actor.RotateX(th0)
                 actor.RotateY(th1)
 
-class Scene:
-    def __init__(self):
-        self.ren = vtk.vtkRenderer()
-        self.renwin = vtk.vtkRenderWindow()
-        self.renwin.AddRenderer(self.ren)
-        self.renwin.SetSize(500,400)
-        vtk_render_window_interactor = vtk.vtkRenderWindowInteractor()
-        vtk_render_window_interactor.SetRenderWindow(self.renwin)
-        vtk_render_window_interactor.Initialize()
-
-class DatasetGenerator:
-    def __init__(self):
-        pass
-
-    def InitDirectory(self):
-        script_fn = osp.abspath(__file__)
-        pkg_dir = str('/').join(script_fn.split('/')[:-2])
-        dataset_path = osp.join(pkg_dir, 'edge_dataset')
-        usages = ['train', 'valid', 'test']
-        numbers = [800, 10,10]
-        if osp.exists(dataset_path):
-            shutil.rmtree(dataset_path)
-
-        makedirs(dataset_path)
-        for usage in usages:
-            usagepath = osp.join(dataset_path,usage)
-            if not osp.exists(usagepath):
-                makedirs(usagepath)
-
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument( "--verbose", "-v", action="count", help="verbose")
     args = parser.parse_args()
     scene = Scene()
-
+    scene.PltShow(args.verbose)
