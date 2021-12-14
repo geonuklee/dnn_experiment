@@ -16,7 +16,6 @@ import glob
 import argparse
 import shutil
 
-# TODO Replace it to pybind11 cpp extension
 import unet_cpp_extension as cpp_ext
 
 colors = (
@@ -183,17 +182,32 @@ class Scene:
                 depth[depth>0] += noise[depth>0]
                 depth[depth==0] = np.random.uniform(0.,0.1,depth.shape)[depth==0]
 
-                lap =cv2.Laplacian(depth, cv2.CV_32FC1, ksize=5)
+                lap3 =cv2.Laplacian(depth, cv2.CV_32FC1, ksize=3)
+                lap5 =cv2.Laplacian(depth, cv2.CV_32FC1, ksize=5)
 
+                dst_label = np.zeros((org_depth.shape[0], org_depth.shape[1],3), np.uint8)
+                dst_label[org_depth>0,2] = 255
+                dst_label[edge>0,:] = 255
+
+                minirgb  = cv2.resize(rgb, (200,200) )
+                dst = np.zeros((dst_label.shape[0],
+                                dst_label.shape[1]+minirgb.shape[1],3), np.uint8)
+                for i in range(3):
+                    dst[minirgb.shape[0]:,dst_label.shape[1]:,i] = 100
+                dst[:,:dst_label.shape[1],:] = dst_label
+                dst[:minirgb.shape[0],dst_label.shape[1]:,:] = minirgb
+
+                fn_form = osp.join(dataset_path, usage,"%d_%s.%s")
                 if not verbose:
-                    fn_form = osp.join(dataset_path, usage,'%d_'%img_idx+'%s')
-                    np.save(fn_form%'edge',edge)
-                    np.save(fn_form%'lap',edge)
-                    np.save(fn_form%'depth',depth)
-                    np.save(fn_form%'rgb',rgb)
-                    #cv2.imwrite(fn_form%'rgb'+'.png', rgb)
-                if not verbose:
+                    np.save(fn_form%(img_idx,"depth","npy"),depth)
+                    np.save(fn_form%(img_idx,"lap3","npy"),lap3)
+                    np.save(fn_form%(img_idx,"lap5","npy"),lap5)
+                    np.save(fn_form%(img_idx,"rgb","npy"),rgb)
+                    cv2.imwrite(fn_form%(img_idx,"gt","png"), edge)
+                    #np.save(fn_form%(img_idx,"gt", "npy"),edge)
                     continue
+
+                cv2.imshow("dst", dst)
 
                 cv2.imshow("faint", faint)
                 r = cv2.normalize(dist,None,255,0,cv2.NORM_MINMAX,cv2.CV_8UC1)
@@ -202,7 +216,7 @@ class Scene:
                 r = cv2.normalize(depth,None,255,0,cv2.NORM_MINMAX,cv2.CV_8UC1)
                 cv2.imshow("depth", r)
 
-                cv2.imshow("lap", 255*(lap < -1.).astype(np.uint8))
+                cv2.imshow("lap5", 255*(lap5 < -1.).astype(np.uint8))
                 cv2.imshow("edge", 255*edge)
 
                 plt.subplot(131).title.set_text('depth map')

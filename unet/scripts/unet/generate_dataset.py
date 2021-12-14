@@ -68,13 +68,9 @@ if __name__ == '__main__':
             n_frames[usage] = n_frame
 
     bridge = CvBridge()
-    closed_set = set()
 
     for fullfn in rosbagfiles:
         fn = osp.basename(fullfn)
-        #if fn in closed_set:
-        #    continue
-        closed_set.add(fn)
         command  = "rosbag info %s"%fullfn
         command += "| grep image_raw"
         infos = os.popen(command).read()
@@ -163,7 +159,8 @@ if __name__ == '__main__':
 
             for depth_msg in depth_messages:
                 depth = bridge.imgmsg_to_cv2(depth_msg, desired_encoding="32FC1")
-                if n_frames['train'] < usages['train']*float(len(closed_set)) :
+                sum_frames = len(n_frames['train']) + len(n_frames['valid'])
+                if n_frames['train'] < usages['train']*float(sum_frames):
                     usage = 'train'
                 else:
                     usage = 'valid'
