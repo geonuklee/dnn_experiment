@@ -33,7 +33,7 @@ if __name__ == '__main__':
 
     spliter = SplitAdapter()
     while True:
-        dataset = SegmentDataset('valid')
+        dataset = SegmentDataset('segment_dataset', 'valid')
         dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
         for i, data in enumerate(dataloader):
             lap = data['lap5'].unsqueeze(1).float()

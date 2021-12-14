@@ -22,7 +22,7 @@ if __name__ == '__main__':
     device = "cuda:0"
     model = IterNet().to(device)
     model.train()
-    dataset = SegmentDataset('train')
+    dataset = SegmentDataset('segment_dataset','train')
 
     # Must be shuffle for train
     #Without shuffle, dataloader return only image of index 0~batch_size only.
@@ -42,7 +42,7 @@ if __name__ == '__main__':
     n_epoch = 50
     niter0, niter = 0, 0
     for epoch in range(epoch_last, n_epoch):  # loop over the dataset multiple times
-        for i, data for enumerate(dataset):
+        for i, data in enumerate(dataset):
             #print("epoch %d/%d, train %d/%d " % (epoch, n_epoch, i, len(dataset) ) )
             data = next(iter(dataloader))
             optimizer.zero_grad(set_to_none=True)

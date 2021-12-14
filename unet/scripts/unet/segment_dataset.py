@@ -8,10 +8,10 @@ from os import listdir
 from torch.utils.data import Dataset
 
 class SegmentDataset(Dataset):
-    def __init__(self, useage='train'):
+    def __init__(self, name, useage):
         script_fn = osp.abspath(__file__)
         pkg_dir = str('/').join(script_fn.split('/')[:-3])
-        self.useage_path = osp.join(pkg_dir, 'segment_dataset', useage)
+        self.useage_path = osp.join(pkg_dir, name, useage)
         im_list = listdir(self.useage_path)
 
         self.nframe = 0

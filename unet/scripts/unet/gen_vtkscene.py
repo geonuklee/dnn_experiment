@@ -51,7 +51,7 @@ def AddRounding(org_depth, edge):
     boundary = np.logical_and(boundary, np.random.uniform(0.,1.,edge.shape) < 0.02)
     faint = 255 * boundary.astype(np.uint8)
 
-    r = 0.002 # rounding depth 1cm
+    r = 0.01 # rounding depth [meter]
     tmp = r**2-np.power(r/dmax*dist[boundary]-r,2) #print np.min(tmp)
     tmp[tmp<0] = 0.
     rounding = r - np.sqrt(tmp)
@@ -66,7 +66,7 @@ class Scene:
         self.ren = vtk.vtkRenderer()
         self.renwin = vtk.vtkRenderWindow()
         self.renwin.AddRenderer(self.ren)
-        self.renwin.SetSize(500,400)
+        self.renwin.SetSize(1280,960)
         vtk_render_window_interactor = vtk.vtkRenderWindowInteractor()
         vtk_render_window_interactor.SetRenderWindow(self.renwin)
         vtk_render_window_interactor.Initialize()
@@ -132,20 +132,19 @@ class Scene:
 
     def PltShow(self,verbose):
         script_fn = osp.abspath(__file__)
-        pkg_dir = str('/').join(script_fn.split('/')[:-2])
-        dataset_path = osp.join(pkg_dir, 'edge_dataset')
+        pkg_dir = str('/').join(script_fn.split('/')[:-3])
+        dataset_path = osp.join(pkg_dir, 'vtk_dataset')
 
-        usages = ['train', 'valid', 'test']
-        numbers = [100, 10,10]
+        usages = ['train', 'valid']
+        numbers = [500, 20]
         if not verbose:
             if osp.exists(dataset_path):
                 shutil.rmtree(dataset_path)
-            if True:
-                makedirs(dataset_path)
-                for usage in usages:
-                    usagepath = osp.join(dataset_path,usage)
-                    if not osp.exists(usagepath):
-                        makedirs(usagepath)
+            makedirs(dataset_path)
+            for usage in usages:
+                usagepath = osp.join(dataset_path,usage)
+                if not osp.exists(usagepath):
+                    makedirs(usagepath)
 
         if verbose:
             fig, ax = plt.subplots()
@@ -180,7 +179,6 @@ class Scene:
 
                 noise = np.random.normal(0.,0.0002,depth.shape)
                 depth[depth>0] += noise[depth>0]
-                depth[depth==0] = np.random.uniform(0.,0.1,depth.shape)[depth==0]
 
                 lap3 =cv2.Laplacian(depth, cv2.CV_32FC1, ksize=3)
                 lap5 =cv2.Laplacian(depth, cv2.CV_32FC1, ksize=5)
@@ -203,8 +201,7 @@ class Scene:
                     np.save(fn_form%(img_idx,"lap3","npy"),lap3)
                     np.save(fn_form%(img_idx,"lap5","npy"),lap5)
                     np.save(fn_form%(img_idx,"rgb","npy"),rgb)
-                    cv2.imwrite(fn_form%(img_idx,"gt","png"), edge)
-                    #np.save(fn_form%(img_idx,"gt", "npy"),edge)
+                    cv2.imwrite(fn_form%(img_idx,"gt","png"), dst)
                     continue
 
                 cv2.imshow("dst", dst)
@@ -216,8 +213,8 @@ class Scene:
                 r = cv2.normalize(depth,None,255,0,cv2.NORM_MINMAX,cv2.CV_8UC1)
                 cv2.imshow("depth", r)
 
-                cv2.imshow("lap5", 255*(lap5 < -1.).astype(np.uint8))
-                cv2.imshow("edge", 255*edge)
+                cv2.imshow("lap5", 255*(lap5 < -0.1).astype(np.uint8))
+                #cv2.imshow("edge", 255*edge)
 
                 plt.subplot(131).title.set_text('depth map')
                 plt.imshow(depth)
