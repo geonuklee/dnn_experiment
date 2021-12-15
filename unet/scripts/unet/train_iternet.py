@@ -40,7 +40,7 @@ if __name__ == '__main__':
     n_epoch = 50
     niter0, niter = 0, 0
     for epoch in range(epoch_last, n_epoch):  # loop over the dataset multiple times
-        for i, data in enumerate(dataset):
+        for i, data in enumerate(dataloader):
             optimizer.zero_grad(set_to_none=True)
             lap = torch.unsqueeze(data['lap5'],1).float()
             rgb = data['rgb'].float().moveaxis(-1,1)/255

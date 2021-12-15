@@ -98,7 +98,6 @@ class IterNet(nn.Module):
 
     def forward(self, x):
         # TODO Adding iteration
-        l0 = torch.unsqueeze(x[:,0,:,:], 1)
         x1 = self.conv1(x)
         x2 = self.conv2(x1)
         x3 = self.conv3(x2)
@@ -114,28 +113,55 @@ class IterNet(nn.Module):
     def loss(self, pred, target):
         return self.f_loss(pred, target)
 
+class DuNet(nn.Module):
 
-class ShallowCNN(nn.Module):
-    def __init__(self, n_channels):
-        super().__init__()
-        n_cls = 2 # non-groove 0, groove 1
-        self.bn = nn.BatchNorm2d(n_channels)
-        n = 16
-        self.bn2 = nn.BatchNorm2d(n)
-        self.conv1 = nn.Conv2d(n_channels, n, kernel_size=5,padding=2)
-        self.conv2 = nn.Conv2d(n, n_cls, kernel_size=5,padding=2)
+    def __init__(self):
+        super(DuNet, self).__init__()
+        # Refinery module, mini UNet
+        self.conv1_rgbd = DoubleDown(4, 32, kernel_size=3)
+        self.conv1_d    = DoubleDown(1, self.conv1_rgbd.out_channnels,
+                                     kernel_size=3)
+
+        self.conv2 = DoubleDown(self.conv1_rgbd.out_channnels, 32)
+        self.conv3 = DoubleDown(self.conv2.out_channnels, 64)
+        self.conv4 = DoubleDown(self.conv3.out_channnels, 256)
+
+        self.up3 = Up(self.conv3.out_channnels+self.conv4.out_channnels, 128, kernel_size=3)
+        self.up2 = Up(self.conv2.out_channnels+self.up3.out_channnels, 64, kernel_size=3)
+
+        self.up1_rgbd = Up(self.conv1_rgbd.out_channnels+self.up2.out_channnels, 3, kernel_size=3)
+        self.up1_d    = Up(   self.conv1_d.out_channnels+self.up2.out_channnels, 2, kernel_size=3)
+
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.softmax = nn.Softmax(dim=1) # c of b-c-h-w
 
-        self.f_loss = nn.CrossEntropyLoss()
+        self.loss_bg_edge_box = nn.CrossEntropyLoss(weight=torch.Tensor([1., 1., 1.]) )
+        self.loss_bg_edge = nn.CrossEntropyLoss(weight=torch.Tensor([1., 1.]) )
+
 
     def forward(self, x):
-        x = self.bn(x)
-        x = self.conv1(x)
-        x = self.bn2(x)
-        x = self.conv2(x)
+        # TODO Adding iteration
+        if x.shape[1] == 4:
+            conv1, up1 = self.conv1_rgbd, self.up1_rgbd
+        else:
+            conv1, up1 = self.conv1_d, self.up1_d
+
+        x1 = conv1(x)
+        x2 = self.conv2(x1)
+        x3 = self.conv3(x2)
+        x4 = self.conv4(x3)
+
+        x = self.up3(x4, x3)
+        x = self.up2(x,  x2)
+        x = up1(x,  x1)
+        x = self.up(x)
         x = self.softmax(x)
         return x
 
     def loss(self, pred, target):
-        return self.f_loss(pred, target)
+        if pred.shape[1] == 3:
+            f_loss = self.loss_bg_edge_box
+        else:
+            f_loss = self.loss_bg_edge
+        return f_loss(pred, target)
 
