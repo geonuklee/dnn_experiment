@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 from os import listdir
 from torch.utils.data import Dataset
+from torch import Tensor
 
 class SegmentDataset(Dataset):
     def __init__(self, name, useage):
@@ -51,6 +52,50 @@ class SegmentDataset(Dataset):
         # Red == box for bgr
         np_gt[np.logical_and(cv_gt[:,:,2] > 200, cv_gt[:,:,1] < 50)] = 2
         frame['gt'] = np_gt
-
+        frame['idx']  = idx
         return frame
+
+from torch.utils.data import DataLoader
+
+class CombinedDatasetLoader:
+    def __init__(self, batch_size):
+        self.dataset = {}
+        self.dataset['labeled'] = SegmentDataset('segment_dataset','train')
+        self.dataset['vtk'] = SegmentDataset('vtk_dataset','train')
+        self.list = []
+        for name, dataset in self.dataset.items():
+            indices = [i for i in range(len(dataset)) ]
+            np.random.shuffle(indices)
+            length = int( len(dataset) / batch_size )
+            for i in range(length):
+                partial = indices[batch_size*i:batch_size*(i+1)]
+                self.list.append( (name, partial) )
+        np.random.shuffle(self.list)
+
+    def __len__(self):
+        return len(self.list)
+
+    def __getitem__(self, idx):
+        source, indices = self.list[idx]
+        frames = {}
+        for i in indices:
+            frame = self.dataset[source][i]
+            if len(frames) == 0:
+                for k in frame.keys():
+                    frames[k] = []
+            for k, v in frame.items():
+                frames[k].append(v)
+        batch = {}
+        for k, l in frames.items():
+            np_batch = np.stack(l)
+            batch[k] = Tensor(np_batch)
+        batch['source'] = source
+        return batch
+
+if __name__ == '__main__':
+    # Shuffle two dataset while keep single source for each batch
+    dataset_loader = CombinedDatasetLoader(batch_size=2)
+    for batch in dataset_loader:
+        print(batch['source'])
+    print(batch)
 

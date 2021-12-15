@@ -24,8 +24,6 @@ if __name__ == '__main__':
     model.train()
     dataset = SegmentDataset('segment_dataset','train')
 
-    # Must be shuffle for train
-    #Without shuffle, dataloader return only image of index 0~batch_size only.
     dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
     optimizer = optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
     try:
@@ -43,10 +41,7 @@ if __name__ == '__main__':
     niter0, niter = 0, 0
     for epoch in range(epoch_last, n_epoch):  # loop over the dataset multiple times
         for i, data in enumerate(dataset):
-            #print("epoch %d/%d, train %d/%d " % (epoch, n_epoch, i, len(dataset) ) )
-            data = next(iter(dataloader))
             optimizer.zero_grad(set_to_none=True)
-
             lap = torch.unsqueeze(data['lap5'],1).float()
             rgb = data['rgb'].float().moveaxis(-1,1)/255
             input_x = torch.cat((lap,rgb), dim=1)
