@@ -29,17 +29,10 @@ def get_topic(filename, topic):
     print("len(%s) = %d" % (topic, len(messages))  )
     return messages
 
-def get_meterdepth_lap35(depth, dsize):
+def get_meterdepth(depth):
     if depth.max() > 100.: # Convert [mm] to [m]
-         depth/= 1000.
-    lap3 = cv2.Laplacian(depth, cv2.CV_32FC1, ksize=3)
-    lap3 = cv2.resize(lap3, dsize)
-    lap5 = cv2.Laplacian(depth, cv2.CV_32FC1, ksize=5)
-    lap5 = cv2.resize(lap5, dsize)
-    depth = cv2.resize(depth,dsize,interpolation=cv2.INTER_NEAREST)
-
-    return depth, lap3, lap5
-
+         return depth/ 1000.
+    return depth
 
 if __name__ == '__main__':
     rosbag_path = '/home/geo/dataset/unloading/**/*.bag' # remove hardcoding .. 
@@ -55,8 +48,9 @@ if __name__ == '__main__':
     n_frames = {}
     if not osp.exists(dataset_path):
         makedirs(dataset_path)
+        makedirs(osp.join(dataset_path,'src') )
         for usage in usages.keys():
-            usagepath = osp.join(dataset_path,usage)
+            usagepath = osp.join(dataset_path,'src',usage)
             makedirs(usagepath)
             n_frames[usage] = 0
     else:
@@ -120,10 +114,9 @@ if __name__ == '__main__':
 
             minirgb  = cv2.resize(orgb, (400,400) )
 
-            depth0, lap3, lap5 = get_meterdepth_lap35(depth0, dsize)
-            blap3 = (lap3<-0.01).astype(np.uint8)*255
+            depth0 = get_meterdepth(depth0)
+            lap5 = cv2.Laplacian(depth0, cv2.CV_32FC1, ksize=5)
             blap5 = (lap5<-0.1 ).astype(np.uint8)*255
-
 
             dst = np.zeros((blap5.shape[0], blap5.shape[1]+minirgb.shape[1],3), np.uint8)
             for i in range(3):
@@ -135,7 +128,6 @@ if __name__ == '__main__':
             callout = subprocess.call(['kolourpaint', "tmp.png"] )
             cv_gt = cv2.imread("tmp.png")[:depth0.shape[0],:depth0.shape[1],:]
             label = np.zeros((cv_gt.shape[0],cv_gt.shape[1]), np.uint8)
-            # Red == box for bgr
             label[np.logical_and(cv_gt[:,:,2] > 200, cv_gt[:,:,1] < 50)] = 2
             dist = cv2.distanceTransform((label!=2).astype(np.uint8)*255, cv2.DIST_L2,3)
 
@@ -144,9 +136,6 @@ if __name__ == '__main__':
             edge = np.logical_and(cv_gt[:,:,2] > 200, cv_gt[:,:,1] > 200)
             edge = np.logical_and(edge, dist < edge_range)
             label[edge] = 1
-            #cv2.imshow("edge", (label==1).astype(np.uint8)*255)
-            #cv2.waitKey()
-            #import pdb;pdb.set_trace()
 
             dst_label = np.zeros((blap5.shape[0], blap5.shape[1],3), np.uint8)
             dst_label[label==1,:] = 255
@@ -154,18 +143,19 @@ if __name__ == '__main__':
             dst = np.zeros((blap5.shape[0], blap5.shape[1]+minirgb.shape[1],3), np.uint8)
             dst[:dst_label.shape[0],:dst_label.shape[1],:] = dst_label
             dst[:minirgb.shape[0],blap5.shape[1]:,:] = minirgb
-            #cv2.imshow("dst", dst)
-            #cv2.waitKey()
 
-            for depth_msg in depth_messages:
+
+            for i, depth_msg in enumerate(depth_messages):
                 depth = bridge.imgmsg_to_cv2(depth_msg, desired_encoding="32FC1")
-                sum_frames = len(n_frames['train']) + len(n_frames['valid'])
+                rgb = bridge.imgmsg_to_cv2(rgb_messages[i%len(rgb_messages)], desired_encoding="bgr8" )
+
+                sum_frames = n_frames['train'] + n_frames['valid']
                 if n_frames['train'] < usages['train']*float(sum_frames):
                     usage = 'train'
                 else:
                     usage = 'valid'
 
-                usagepath = osp.join(dataset_path,usage)
+                usagepath = osp.join(dataset_path,'src',usage)
                 write_format = usagepath+'/%d_%s.%s'
                 fp_info = open(write_format%(n_frames[usage],"info","txt"), 'w')
                 line = '\t'.join([fn, topic, cam_id, camera_type, depth_type])
@@ -176,11 +166,10 @@ if __name__ == '__main__':
                 fn_truth = osp.join(usagepath,'%d_gt.png'%n_frames[usage])
                 cv2.imwrite(fn_truth, dst)
 
-                depth, lap3, lap5 = get_meterdepth_lap35(depth, dsize)
+                depth = get_meterdepth(depth)
                 np.save(write_format%( n_frames[usage],"depth","npy"), depth)
-                np.save(write_format%( n_frames[usage],"lap3" ,"npy"), lap3)
-                np.save(write_format%( n_frames[usage],"lap5" ,"npy"), lap5)
                 np.save(write_format%( n_frames[usage],"rgb" ,"npy"), rgb)
+                #cv2.imwrite(write_format%( n_frames[usage],"rgb" ,"png"), rgb)
 
                 n_frames[usage] += 1
                 b_results_from_fn = True

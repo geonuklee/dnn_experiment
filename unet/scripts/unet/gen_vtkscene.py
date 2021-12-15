@@ -16,8 +16,6 @@ import glob
 import argparse
 import shutil
 
-import unet_cpp_extension as cpp_ext
-
 colors = (
   (0,255,0),
   (0,180,0),
@@ -141,8 +139,9 @@ class Scene:
             if osp.exists(dataset_path):
                 shutil.rmtree(dataset_path)
             makedirs(dataset_path)
+            makedirs(osp.join(dataset_path, 'src') )
             for usage in usages:
-                usagepath = osp.join(dataset_path,usage)
+                usagepath = osp.join(dataset_path,'src',usage)
                 if not osp.exists(usagepath):
                     makedirs(usagepath)
 
@@ -180,9 +179,7 @@ class Scene:
                 noise = np.random.normal(0.,0.0002,depth.shape)
                 depth[depth>0] += noise[depth>0]
 
-                lap3 =cv2.Laplacian(depth, cv2.CV_32FC1, ksize=3)
                 lap5 =cv2.Laplacian(depth, cv2.CV_32FC1, ksize=5)
-
                 dst_label = np.zeros((org_depth.shape[0], org_depth.shape[1],3), np.uint8)
                 dst_label[org_depth>0,2] = 255
                 dst_label[edge>0,:] = 255
@@ -195,11 +192,9 @@ class Scene:
                 dst[:,:dst_label.shape[1],:] = dst_label
                 dst[:minirgb.shape[0],dst_label.shape[1]:,:] = minirgb
 
-                fn_form = osp.join(dataset_path, usage,"%d_%s.%s")
+                fn_form = osp.join(dataset_path, 'src', usage,"%d_%s.%s")
                 if not verbose:
                     np.save(fn_form%(img_idx,"depth","npy"),depth)
-                    np.save(fn_form%(img_idx,"lap3","npy"),lap3)
-                    np.save(fn_form%(img_idx,"lap5","npy"),lap5)
                     np.save(fn_form%(img_idx,"rgb","npy"),rgb)
                     cv2.imwrite(fn_form%(img_idx,"gt","png"), dst)
                     continue
