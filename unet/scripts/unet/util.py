@@ -29,13 +29,19 @@ class SplitAdapter:
         return output
 
     def pred2dst(self, pred):
-        edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
-        box_pred   = pred.moveaxis(1,3).squeeze(0)[:,:,2].numpy()
-        edge_bpred = ( edge_pred> 0.95)#.astype(np.uint8)*255
-        box_bpred  = ( box_pred> 0.9)#.astype(np.uint8)*255
-        dst = np.zeros((pred.shape[-2],pred.shape[-1],3),np.uint8)
-        dst[edge_bpred,:] = 255
-        dst[box_bpred, 2] = 255
+        if pred.shape[1] == 3:
+            edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
+            box_pred   = pred.moveaxis(1,3).squeeze(0)[:,:,2].numpy()
+            edge_bpred = ( edge_pred> 0.95)#.astype(np.uint8)*255
+            box_bpred  = ( box_pred> 0.9)#.astype(np.uint8)*255
+            dst = np.zeros((pred.shape[-2],pred.shape[-1],3),np.uint8)
+            dst[edge_bpred,:] = 255
+            dst[box_bpred, 2] = 255
+        elif pred.shape[1] == 2:
+            edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
+            edge_bpred = ( edge_pred> 0.95)#.astype(np.uint8)*255
+            dst = np.zeros((pred.shape[-2],pred.shape[-1],3),np.uint8)
+            dst[edge_bpred,:] = 255
         return dst
 
     def put(self, x):
@@ -64,13 +70,33 @@ class SplitAdapter:
         if x.dim() == 4:
             for ib in range(b):
                 for hmin, wmin in self.hw_min:
-                    output[n,:,:,:] = x[ib,:,hmin:hmin+self.w,wmin:wmin+self.w]
+                    partial = x[ib,:,hmin:hmin+self.w,wmin:wmin+self.w]
+                    output[n,:,:partial.shape[-2],:partial.shape[-1]] = partial 
                     n+=1
         else:
             for ib in range(b):
                 for hmin, wmin in self.hw_min:
-                    output[n,:,:] = x[ib,hmin:hmin+self.w,wmin:wmin+self.w]
+                    partial = x[ib,hmin:hmin+self.w,wmin:wmin+self.w]
+                    output[n,:partial.shape[-2],:partial.shape[-1]] = partial
                     n+=1
         return output
+
+if __name__ == '__main__':
+    from segment_dataset import CombinedDatasetLoader
+    import cv2
+    dataloader = CombinedDatasetLoader(batch_size=1)
+    spliter = SplitAdapter(w=100, offset=99)
+    for i, data in enumerate(dataloader):
+        source = data['source']
+        if source != 'labeled':
+            continue
+        orgb = data['rgb'].moveaxis(-1,1) #.squeeze(0).numpy().astype(np.uint8)
+        rgb = spliter.put(orgb)
+        drgb = spliter.restore(rgb)
+        drgb = drgb.moveaxis(1,-1).squeeze(0).numpy().astype(np.uint8)
+        cv2.imshow("orgb", orgb.moveaxis(1,-1).squeeze(0).numpy().astype(np.uint8) )
+        cv2.imshow("drgb", drgb)
+        if ord('q')==cv2.waitKey():
+            exit(1)
 
 

@@ -1,13 +1,13 @@
 <launch>
-<arg name="filename" default="$(find dnn_experiment)/rosbag.bag"/>
-<arg name="weight_file" value="$(find dnn_experiment)/segment_dataset/iternet.pth"/>
+<arg name="filename" default="$(find unet)/rosbag.bag"/>
+<arg name="weight_file" value="$(find unet)/segment_dataset/dunet.pth"/>
 <arg name="depth" value="/cam0/helios2/depth/image_raw"/>
 <arg name="rgb" value="/cam0/aligned/rgb_to_depth/image_raw"/>
 
 <node name="rosbag" pkg="rosbag" type="play"
     args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')"/>
 
-<node name="unet" pkg="dnn_experiment" type="ros_unet.py" output="screen" required="true">
+<node name="unet" pkg="unet" type="ros_unet.py" output="screen" required="true">
     <remap from="~input_depth"  to="$(arg depth)" />
     <remap from="~input_rgb"  to="$(arg rgb)" />
     <rosparam subst_value="True">

@@ -8,7 +8,14 @@ import numpy as np
 from os import listdir
 from torch.utils.data import Dataset
 from torch import Tensor
-import unet_cpp_extension as cpp_ext
+import shutil
+
+# Build rospkg 'unet' before use it
+import sys
+if sys.version[0] == '2':
+    import unet_cpp_extension2 as cpp_ext
+else:
+    import unet_cpp_extension3 as cpp_ext
 
 class SegmentDataset(Dataset):
     def __init__(self, name, usage):
@@ -27,7 +34,7 @@ class SegmentDataset(Dataset):
         self.nframe += 1
 
 
-        self.npy_types = ['depth', 'rgb', 'lap5']
+        self.npy_types = ['depth', 'rgb', 'lap5', 'grad']
 
         cache_dir = osp.join(pkg_dir,name,'cache')
         if not osp.exists(cache_dir):
@@ -37,14 +44,12 @@ class SegmentDataset(Dataset):
         if not osp.exists(self.cache_usaage_dir):
             print("Generate %s"%self.cache_usaage_dir)
 
-            # Build rospkg 'unet' and start as python2
-            import unet_cpp_extension as cpp_ext
-
             makedirs(self.cache_usaage_dir)
             fn_form = osp.join(self.cache_usaage_dir,"%d_%s.%s")
             for img_idx in range(self.nframe):
                 fn_depth = osp.join(pkg_dir,name,'src',usage,'%d_depth.npy'%img_idx)
                 fn_rgb = osp.join(pkg_dir,name,'src',usage,'%d_rgb.npy'%img_idx)
+                fn_gt = osp.join(pkg_dir,name,'src',usage,'%d_gt.png'%img_idx)
                 rgb = np.load(fn_rgb)
                 depth = np.load(fn_depth)
                 lap5 = cv2.Laplacian(depth, cv2.CV_32FC1, ksize=5)
@@ -54,6 +59,7 @@ class SegmentDataset(Dataset):
                 np.save(fn_form%(img_idx,"lap5","npy"),lap5)
                 np.save(fn_form%(img_idx,"rgb","npy"),rgb)
                 np.save(fn_form%(img_idx,"grad","npy"),grad)
+                shutil.copy(fn_gt, fn_form%(img_idx,"gt","png"))
 
 
     def __len__(self):
@@ -128,4 +134,7 @@ if __name__ == '__main__':
     #for batch in dataset_loader:
     #    print(batch['source'])
     #print(batch)
+    # Check cache for valid also, 
+    _ = SegmentDataset('segment_dataset','valid')
+    _ = SegmentDataset('vtk_dataset','valid')
 

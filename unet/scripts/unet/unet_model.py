@@ -118,8 +118,8 @@ class DuNet(nn.Module):
     def __init__(self):
         super(DuNet, self).__init__()
         # Refinery module, mini UNet
-        self.conv1_rgbd = DoubleDown(4, 32, kernel_size=3)
-        self.conv1_d    = DoubleDown(1, self.conv1_rgbd.out_channnels,
+        self.conv1_rgbd = DoubleDown(6, 32, kernel_size=3)
+        self.conv1_d    = DoubleDown(3, self.conv1_rgbd.out_channnels,
                                      kernel_size=3)
 
         self.conv2 = DoubleDown(self.conv1_rgbd.out_channnels, 32)
@@ -135,13 +135,13 @@ class DuNet(nn.Module):
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.softmax = nn.Softmax(dim=1) # c of b-c-h-w
 
-        self.loss_bg_edge_box = nn.CrossEntropyLoss(weight=torch.Tensor([1., 1., 1.]) )
-        self.loss_bg_edge = nn.CrossEntropyLoss(weight=torch.Tensor([1., 1.]) )
+        self.loss_bg_edge_box = nn.CrossEntropyLoss(weight=torch.Tensor([0.01, 1., 1.]) )
+        self.loss_bg_edge = nn.CrossEntropyLoss(weight=torch.Tensor([0.01, 1.]) )
 
 
     def forward(self, x):
         # TODO Adding iteration
-        if x.shape[1] == 4:
+        if x.shape[1] == 6:
             conv1, up1 = self.conv1_rgbd, self.up1_rgbd
         else:
             conv1, up1 = self.conv1_d, self.up1_d

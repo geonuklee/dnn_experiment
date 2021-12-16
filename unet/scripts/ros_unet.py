@@ -8,8 +8,9 @@ import cv2
 import ros_numpy
 import torch
 
-from unet.unet_model import IterNet
+from unet.unet_model import DuNet
 from unet.util import SplitAdapter
+import unet_cpp_extension3 as cpp_ext
 
 class Sub:
     def __init__(self, depth, rgb):
@@ -37,7 +38,7 @@ if __name__ == '__main__':
     dsize = (1280,960) # TODO remove duplicated dsize
 
     device = "cuda:0"
-    model = IterNet()
+    model = DuNet()
     model.to(device)
     checkpoint = torch.load(fn)
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -56,25 +57,23 @@ if __name__ == '__main__':
         sub.depth = None
         sub.rgb = None
 
-        cv_rgb  = cv2.resize(cv_rgb, dsize)
         cvlap = cv2.Laplacian(depth, cv2.CV_32FC1,ksize=5)
-        cvlap = cv2.resize(cvlap, dsize)
+        cvgrad = cpp_ext.GetGradient(depth, 2)
 
-        lap = torch.Tensor(cvlap).unsqueeze(0).unsqueeze(0).float()
+        blap = torch.Tensor(cvlap<-0.3).unsqueeze(0).unsqueeze(0).float()
+        grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
         rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
 
-        input_x = torch.cat((lap,rgb),dim=1)
+        input_x = torch.cat((blap,grad),dim=1)
         input_x = spliter.put(input_x).to(device)
-
         pred = model(input_x)
         pred = pred.detach()
         pred = spliter.restore(pred)
         dst = spliter.pred2dst(pred)
-
         dst = cv2.addWeighted(dst,0.5,cv_rgb,0.5,0)
 
-        #cv2.imshow("rgb", cv_rgb)
-        #cv2.imshow("lap", cvlap)
+        ##cv2.imshow("rgb", cv_rgb)
+        ##cv2.imshow("lap", cvlap)
         cv2.imshow('pred', dst)
         c = cv2.waitKey(1)
         if c == ord('q'):

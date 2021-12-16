@@ -103,9 +103,12 @@ py::array_t<float> PyGetGradient(py::array_t<float> inputdepth, int offset) {
   return output;
 }
 
-PYBIND11_MODULE(unet_cpp_extension, m) {
-  m.def("FindEdge", &PyFindEdge);
-  m.def("GetGradient", &PyGetGradient);
+#if PYBIND == 3
+PYBIND11_MODULE(unet_cpp_extension3, m) {
+#else
+PYBIND11_MODULE(unet_cpp_extension2, m) {
+#endif
+  m.def("FindEdge", &PyFindEdge, "find edge");
+  m.def("GetGradient", &PyGetGradient, "get gradient");
 }
-
 
