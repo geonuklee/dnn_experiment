@@ -27,7 +27,7 @@ void normalize_pointcloud(const double* ptr_xyzrgb, int r, double* ptr_output){
 
 
 // ref) https://stackoverflow.com/questions/49582252/pybind-numpy-access-2d-nd-arrays
-py::array_t<double> normalize_pointcloud(py::array_t<double> xyz_rgb) {
+py::array_t<double> py_normalize_pointcloud(py::array_t<double> xyz_rgb) {
   py::buffer_info buf_xyzrgb = xyz_rgb.request();
 
   if (buf_xyzrgb.shape[1] != 6){
@@ -49,6 +49,6 @@ py::array_t<double> normalize_pointcloud(py::array_t<double> xyz_rgb) {
 }
 
 PYBIND11_MODULE(rosbonet_cpp_extension, m) {
-  m.def("normalize_pointcloud", &normalize_pointcloud);
+  m.def("normalize_pointcloud", &py_normalize_pointcloud);
   m.def("square", &square);
 }

@@ -3,7 +3,7 @@
 <arg name="voxel_leaf" value="0.02" />
 <arg name="voxel_minz" value="1.5" />
 <arg name="voxel_maxz" value="8." />
-<arg name="filename" value="$(find dnn_experiment)/stc_k4a_2021-11-12-18-20-58.bag"/>
+<arg name="filename" value="$(find ros_bonet)/stc_k4a_2021-11-12-18-20-58.bag"/>
 
 <node name="rosbag" pkg="rosbag" type="play"
     args="-r 0.5 --loop $(arg filename) --clock" required="true" unless="$(eval filename=='')"/>
@@ -24,7 +24,7 @@
   </node>
 </group>
 
-<node name="bonet" pkg="dnn_experiment" type="ros_bonet.py" output="screen" required="true">
+<node name="ros_bonet" pkg="ros_bonet" type="ros_bonet.py" output="screen" required="true">
   <remap from="~input" to="/cam0/k4a/points2/voxel"/>
 </node>
 

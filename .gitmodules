@@ -1,12 +1,12 @@
 [submodule "3D-BoNet"]
-	path = bonet/scripts/3D-BoNet
+	path = ros_bonet/scripts/bonet
 	url = https://github.com/geonuklee/3D-BoNet.git
 [submodule "PointGroup"]
 	path = PointGroup
 	url = https://github.com/dvlab-research/PointGroup
 [submodule "pybind11"]
-	path = bonet/pybind11
+	path = ros_bonet/pybind11
 	url = https://github.com/pybind/pybind11
 [submodule "unet/pybind11"]
-	path = unet/pybind11
+	path = ros_unet/pybind11
 	url = https://github.com/pybind/pybind11

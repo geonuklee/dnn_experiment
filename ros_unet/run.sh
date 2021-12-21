@@ -31,7 +31,7 @@ do
     echo $filename
     rosbag info $filename | grep "/cam.*/helios2/depth/image_raw"
     rosbag info $filename | grep "/cam.*/aligned/rgb_to_depth/image_raw"
-    roslaunch unet unet.launch filename:=$filename
+    roslaunch ros_unet unet.launch filename:=$filename
     break
 done
 

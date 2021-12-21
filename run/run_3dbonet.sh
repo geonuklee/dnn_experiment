@@ -4,8 +4,8 @@
 docker run \
   --network host \
   --gpus all \
-  -v $PWD:/home/docker/catkin_ws/src/dnn_experiment \
-  -v $HOME/dataset/Data_S3DIS:/home/docker/catkin_ws/src/dnn_experiment/scripts/data_s3dis \
+  -v $PWD/ros_bonet:/home/docker/catkin_ws/src/ros_bonet \
+  -v $HOME/dataset/Data_S3DIS:/home/docker/catkin_ws/src/ros_bonet/scripts/bonet/data_s3dis \
   -it 3dbonet 
 
 # For first execution,

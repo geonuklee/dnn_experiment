@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.4...3.18)
-project(unet)
+project(ros_unet)
 
 # ref : https://github.com/pybind/pybind11/issues/748
 add_subdirectory(py2ext)
@@ -104,7 +104,7 @@ find_package(catkin REQUIRED)
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES unet
+#  LIBRARIES ros_unet
 #  CATKIN_DEPENDS other_catkin_pkg
 #  DEPENDS system_lib
 )
@@ -122,7 +122,7 @@ include_directories(
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/unet.cpp
+#   src/${PROJECT_NAME}/ros_unet.cpp
 # )
 
 ## Declare a C++ executable

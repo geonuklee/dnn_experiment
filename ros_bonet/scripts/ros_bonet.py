@@ -48,7 +48,7 @@ if __name__ == '__main__':
 
     ####### 2. restore trained model
     script_fn = osp.abspath(__file__)
-    model_path = osp.join(osp.dirname(__file__),'3D-BoNet','model_released','model.cptk')
+    model_path = osp.join(osp.dirname(__file__),'bonet','model_released','model.cptk')
     if not osp.isfile(model_path+'.data-00000-of-00001'):
         print(model_path)
         print ('please download the released model!')
