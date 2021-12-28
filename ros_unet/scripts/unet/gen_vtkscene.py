@@ -16,6 +16,8 @@ import glob
 import argparse
 import shutil
 
+import unet_cpp_extension2 as cpp_ext
+
 colors = (
   (0,255,0),
   (0,180,0),
@@ -40,22 +42,99 @@ colors = (
   (0,100,100)
 )
 
-def AddRounding(org_depth, edge):
-    depth = org_depth.copy()
-    dist = cv2.distanceTransform( (edge<1).astype(np.uint8)*255, cv2.DIST_L2,5)
+class RBoxSource:
+    def __init__(self):
+        self.corners = vtk.vtkPoints()
+        self.corners.SetNumberOfPoints(8)
+        polydata = vtk.vtkPolyData()
+        polydata.SetPoints(self.corners)
 
-    dmax = 2. # 3pixel
-    boundary = np.logical_and(dist < dmax, depth > 0.)
-    boundary = np.logical_and(boundary, np.random.uniform(0.,1.,edge.shape) < 0.02)
-    faint = 255 * boundary.astype(np.uint8)
+        self.glyph_filter = vtk.vtkGlyph3D()
+        self.glyph_filter.SetInputData(polydata)
 
-    r = 0.01 # rounding depth [meter]
-    tmp = r**2-np.power(r/dmax*dist[boundary]-r,2) #print np.min(tmp)
-    tmp[tmp<0] = 0.
-    rounding = r - np.sqrt(tmp)
-    #print "max rounding = ", np.max(rounding)
-    depth[boundary] += rounding
-    return depth, dist, faint
+        self.sphere_source = vtk.vtkSphereSource()
+        resol = 20
+        self.sphere_source.SetThetaResolution(resol)
+        self.sphere_source.SetPhiResolution(resol)
+
+        self.glyph_filter.SetSourceConnection(self.sphere_source.GetOutputPort())
+
+        self.hull_filter = vtk.vtkHull()
+        self.hull_filter.SetInputConnection(self.glyph_filter.GetOutputPort())
+        self.hull_filter.AddCubeFacePlanes()
+        self.hull_filter.AddRecursiveSpherePlanes(5);
+
+        reader = vtk.vtkPNGReader()
+        reader.SetFileName("/home/geo/Documents/texture.png")
+
+        self.texture = vtk.vtkTexture()
+        self.texture.InterpolateOn()
+        self.texture.SetInputConnection(reader.GetOutputPort())
+
+        self.texturemap = vtk.vtkTextureMapToPlane()
+        self.texturemap.SetInputConnection(self.hull_filter.GetOutputPort())
+
+        # TODO move below?
+        self.SetRoundRatio(0.05)
+
+
+    def SetRoundRatio(self, radius):
+        hw = 0.5 - radius
+        self.corners.SetPoint(0, hw, hw, hw)
+        self.corners.SetPoint(1, -hw, hw, hw)
+        self.corners.SetPoint(2, -hw, -hw, hw)
+        self.corners.SetPoint(3, hw, -hw, hw)
+        self.corners.SetPoint(4, hw, hw, -hw)
+        self.corners.SetPoint(5, -hw, hw, -hw)
+        self.corners.SetPoint(6, -hw, -hw, -hw)
+        self.corners.SetPoint(7, hw, -hw, -hw)
+        self.sphere_source.SetRadius(radius)
+
+        self.texturemap.Modified()
+        self.texturemap.Update()
+        poly_data=self.texturemap.GetOutput()
+        tcoords = poly_data.GetPointData().GetTCoords()
+
+        k = 0
+        for i in range(poly_data.GetNumberOfCells()):
+            cell = poly_data.GetCell(i)
+            xyz_points = cell.GetPoints()
+            xyz_points = [xyz_points.GetPoint(j) for j in range(xyz_points.GetNumberOfPoints())]
+
+            n_edge = 0
+            for j, pt0 in enumerate(xyz_points):
+                pt0 = np.array(pt0)
+                pt1 = np.array( xyz_points[(j+1)%len(xyz_points)] )
+                d = np.linalg.norm(pt1-pt0)
+                if d > 0.5:
+                    n_edge += 1
+            if n_edge < 4:
+                continue
+
+            np_xyz = np.zeros((len(xyz_points), 3) )
+            for j, pt0 in enumerate(xyz_points):
+                np_xyz[j,:] = np.array(pt0)
+            cp = 0.5 * ( np_xyz.max(axis=0) + np_xyz.min(axis=0) )
+            max_axis = np.abs(cp).argmax()
+            id_lists = cell.GetPointIds()
+            id_lists = [id_lists.GetId(j) for j in range(id_lists.GetNumberOfIds())]
+            n = np.zeros((3,))
+            n[max_axis] = 1.
+            for j, pt in enumerate(xyz_points):
+                delta = pt - cp
+                uv = np.delete(delta, max_axis) + np.array((0.5,0.5))
+                vtk_id = id_lists[j]
+                tcoords.SetTuple(vtk_id, uv.tolist())
+        #self.poly_data = poly_data
+
+    def GetOutputPort(self):
+        return self.texturemap.GetOutputPort()
+
+    def CreateTexturedActor(self):
+        actor = vtk.vtkActor()
+        actor.SetTexture(self.texture)
+        actor.GetProperty().SetLineWidth(20)
+        return actor
 
 
 # https://stackoverflow.com/questions/17659362/get-depth-from-camera-for-each-pixel
@@ -68,6 +147,7 @@ class Scene:
         vtk_render_window_interactor = vtk.vtkRenderWindowInteractor()
         vtk_render_window_interactor.SetRenderWindow(self.renwin)
         vtk_render_window_interactor.Initialize()
+
 
     def GetDepth(self):
         z_buffer = vtk.vtkFloatArray()
@@ -108,6 +188,7 @@ class Scene:
                     color = [float(i+1)/255.,0,0]
                 actor.GetProperty().SetColor(color)
                 actor.GetProperty().LightingOff()
+                actor.SetTexture(None)
 
             vtk_win_im = vtk.vtkWindowToImageFilter()
             vtk_win_im.SetInput(self.renwin)
@@ -174,7 +255,9 @@ class Scene:
                 org_depth = self.GetDepth()
                 org_depth[ np.sum(vis,axis=2) == 0] = 0.
 
-                depth, dist, faint = AddRounding(org_depth, edge)
+                depth = org_depth.copy()
+                dist = cv2.distanceTransform( (edge<1).astype(np.uint8)*255, cv2.DIST_L2,5)
+                #depth, dist, faint = AddRounding(org_depth, edge) # TODO Remove it.
 
                 noise = np.random.normal(0.,0.0002,depth.shape)
                 depth[depth>0] += noise[depth>0]
@@ -185,6 +268,7 @@ class Scene:
                 dst_label[edge>0,:] = 255
 
                 minirgb  = cv2.resize(rgb, (200,200) )
+                minirgb = cv2.cvtColor(minirgb,cv2.COLOR_RGB2BGR)
                 dst = np.zeros((dst_label.shape[0],
                                 dst_label.shape[1]+minirgb.shape[1],3), np.uint8)
                 for i in range(3):
@@ -195,13 +279,13 @@ class Scene:
                 fn_form = osp.join(dataset_path, 'src', usage,"%d_%s.%s")
                 if not verbose:
                     np.save(fn_form%(img_idx,"depth","npy"),depth)
-                    np.save(fn_form%(img_idx,"rgb","npy"),rgb)
+                    np.save(fn_form%(img_idx,"rgb","npy"),cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR))
                     cv2.imwrite(fn_form%(img_idx,"gt","png"), dst)
                     continue
 
                 cv2.imshow("dst", dst)
 
-                cv2.imshow("faint", faint)
+                #cv2.imshow("faint", faint)
                 r = cv2.normalize(dist,None,255,0,cv2.NORM_MINMAX,cv2.CV_8UC1)
                 cv2.imshow("dist", r)
 
@@ -244,19 +328,15 @@ class Scene:
         cy = 0.5*nr*h + np.random.uniform(-0.1,0.1)
         camera.SetPosition(cx, cy, 0.)
 
-        source = vtk.vtkCubeSource()
-        source.SetXLength(1.)
-        source.SetYLength(1.)
-        source.SetZLength(1.)
-
+        rbox_source = RBoxSource()
         box_mapper = vtk.vtkPolyDataMapper()
-        box_mapper.SetInputConnection(source.GetOutputPort())
+        box_mapper.SetInputConnection(rbox_source.GetOutputPort())
 
         for r in range(nr):
             y = h*float(r)
             for c in range(nc):
                 x = w*float(c)
-                actor = vtk.vtkActor()
+                actor = rbox_source.CreateTexturedActor()
                 actor.SetMapper(box_mapper)
                 actor.SetPosition(x, y, z)
                 actor.SetScale(w, h, d)
@@ -280,14 +360,9 @@ class Scene:
         camera.SetFocalPoint(cx, cy, z0);
         camera.SetPosition(tx, ty, 0.);
 
-
-        source = vtk.vtkCubeSource()
-        source.SetXLength(1.)
-        source.SetYLength(1.)
-        source.SetZLength(1.)
+        rbox_source = RBoxSource()
         box_mapper = vtk.vtkPolyDataMapper()
-        box_mapper.SetInputConnection(source.GetOutputPort())
-
+        box_mapper.SetInputConnection(rbox_source.GetOutputPort())
 
         for r in range(nr):
             y0 = 1.2* h0*float(r)
@@ -301,7 +376,7 @@ class Scene:
                 h = np.random.uniform(0.9*h0, 1.2*h0)
                 w = np.random.uniform(0.9*w0, 1.2*w0)
 
-                actor = vtk.vtkActor()
+                actor = rbox_source.CreateTexturedActor()
                 actor.SetMapper(box_mapper)
                 actor.SetPosition(x, y, z)
                 actor.SetScale(w, h, d)
