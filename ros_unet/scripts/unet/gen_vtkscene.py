@@ -1,7 +1,24 @@
 #!/usr/bin/python2
 #-*- coding:utf-8 -*-
 
-# sudo apt-get install libvtk6-qt-dev
+"""!
+@file gen_vtkscene.py
+@brief Generate virtual random scens at vtk_dataset with vtk.
+
+It requires below prebuild dependencies.
+
+```bash
+    sudo apt-get install libvtk6-qt-dev
+
+    # If latest installation of later version is possible, try that.
+    pip2 install -U deepdish==0.2.0
+    pip2 install -U tables numexpr==2.6.2
+    pip3 install -U tables==3.6.1
+
+```
+
+"""
+
 import vtk
 
 import numpy as np
@@ -16,31 +33,11 @@ import glob
 import argparse
 import shutil
 
-import unet_cpp_extension2 as cpp_ext
+import deepdish as dd
 
-colors = (
-  (0,255,0),
-  (0,180,0),
-  (0,100,0),
-  (255,0,255),
-  (100,0,255),
-  (255,0,100),
-  (100,0,100),
-  (0,0,255),
-  (0,0,180),
-  (0,0,100),
-  (255,255,0),
-  (100,255,0),
-  (255,100,0),
-  (100,100,0),
-  (255,0,0),
-  (180,0,0),
-  (100,0,0),
-  (0,255,255),
-  (0,100,255),
-  (0,255,100),
-  (0,100,100)
-)
+import unet_cpp_extension2 as cpp_ext
+from util import colors
+
 
 class RBoxSource:
     def __init__(self):
@@ -143,11 +140,28 @@ class Scene:
         self.ren = vtk.vtkRenderer()
         self.renwin = vtk.vtkRenderWindow()
         self.renwin.AddRenderer(self.ren)
-        self.renwin.SetSize(1280,960)
-        vtk_render_window_interactor = vtk.vtkRenderWindowInteractor()
-        vtk_render_window_interactor.SetRenderWindow(self.renwin)
-        vtk_render_window_interactor.Initialize()
+        self.renwin.SetSize(1280, 960)
+        self.iren = vtk.vtkRenderWindowInteractor()
+        self.iren.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
+        self.iren.SetRenderWindow(self.renwin)
+        self.iren.Initialize()
 
+    def GetIntrinsic(self):
+        cam = self.ren.GetActiveCamera()
+        angle = cam.GetViewAngle()
+        angle = np.deg2rad(angle)
+        w, h = self.renwin.GetSize()
+        fy = 0.5*h/np.tan(0.5*angle) # == fx
+        tf = cam.GetModelTransformMatrix()
+        fx = fy * tf.GetElement(0,0) / tf.GetElement(1,1)
+        wc = cam.GetWindowCenter()
+        assert wc[0]==0 and wc[1]==0
+        cx, cy = 0.5*w, 0.5*h
+        K = np.array( (fx, 0., cx,
+                       0., fy, cy,
+                       0., 0., 1.) ).reshape((3,3))
+        D = np.zeros((4,)) # No distortion at vtk.
+        return K, D
 
     def GetDepth(self):
         z_buffer = vtk.vtkFloatArray()
@@ -235,6 +249,7 @@ class Scene:
             for img_idx in range(numbers[k]):
                 if self.quit:
                     break
+                print("%d/%d"%(img_idx, numbers[k]) )
 
                 if hasattr(self, 'box_actors'):
                     for actor in self.box_actors:
@@ -276,11 +291,18 @@ class Scene:
                 dst[:,:dst_label.shape[1],:] = dst_label
                 dst[:minirgb.shape[0],dst_label.shape[1]:,:] = minirgb
 
+                K, D = self.GetIntrinsic()
+                width, height = self.renwin.GetSize()
+                info = {"K":K, "D":D, "width":width, "height":height}
+
                 fn_form = osp.join(dataset_path, 'src', usage,"%d_%s.%s")
                 if not verbose:
                     np.save(fn_form%(img_idx,"depth","npy"),depth)
                     np.save(fn_form%(img_idx,"rgb","npy"),cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR))
                     cv2.imwrite(fn_form%(img_idx,"gt","png"), dst)
+
+                    # https://stackoverflow.com/questions/18071075/saving-dictionaries-to-file-numpy-and-python-2-3-friendly
+                    dd.io.save(fn_form%(img_idx,"info","h5"), info, compression=('blosc', 9))
                     continue
 
                 cv2.imshow("dst", dst)
@@ -322,6 +344,7 @@ class Scene:
         h = np.random.uniform(0.5,2.)*w
         d=1.
         z = np.random.uniform(2.,6.)
+        margin = 0.01 # To remove gap.
 
         camera.SetFocalPoint(0.5*nc*w,0.5*nr*h,z)
         cx = 0.5*nc*w + np.random.uniform(-0.1,0.1)
@@ -339,7 +362,7 @@ class Scene:
                 actor = rbox_source.CreateTexturedActor()
                 actor.SetMapper(box_mapper)
                 actor.SetPosition(x, y, z)
-                actor.SetScale(w, h, d)
+                actor.SetScale(w+margin, h+margin, d)
                 self.ren.AddActor(actor)
                 self.box_actors.append(actor)
 

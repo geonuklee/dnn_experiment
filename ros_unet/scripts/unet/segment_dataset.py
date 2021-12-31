@@ -1,6 +1,19 @@
 #!/usr/bin/python3
 #-*- coding:utf-8 -*-
 
+"""!
+@file segment_dataset.py
+@brief Provides SegmentDataset which parse output of gen_vtkscene.py, gen_labeling.py - segment_dataset, vtk_dataset.
+
+if unet_cpp_extension** doesn't exists, build rospkg 'ros_unet'
+
+```bash
+    cd ~/catkin_ws # Some where your catkin directory
+    catkin build ros_unet
+```
+
+"""
+
 from os import path as osp
 from os import makedirs
 import cv2
@@ -9,6 +22,7 @@ from os import listdir
 from torch.utils.data import Dataset
 from torch import Tensor
 import shutil
+import deepdish as dd
 
 # Build rospkg 'unet' before use it
 import sys
@@ -61,6 +75,9 @@ class SegmentDataset(Dataset):
                 np.save(fn_form%(img_idx,"grad","npy"),grad)
                 shutil.copy(fn_gt, fn_form%(img_idx,"gt","png"))
 
+                fn_info = osp.join(pkg_dir,name,'src',usage,'%d_info.h5'%img_idx)
+                if osp.exists(fn_info):
+                    shutil.copy(fn_info, fn_form%(img_idx,"info","h5"))
 
     def __len__(self):
         return self.nframe
@@ -75,6 +92,14 @@ class SegmentDataset(Dataset):
             frame[name] = np.load(fn)
             if rc is None:
                 rc = frame[name].shape[:2]
+
+        # Check optional types
+        for name in ['info', ]:
+            fn = "%d_%s.h5"%(idx, name)
+            fn = osp.join(self.cache_usaage_dir, fn)
+            if not osp.exists(fn):
+                continue
+            frame[name] = dd.io.load(fn)
 
         fn = "%d_gt.png"%idx
         fn = osp.join(self.cache_usaage_dir, fn)
