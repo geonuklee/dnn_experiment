@@ -28,6 +28,7 @@ else:
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import deepdish as dd
 
 if __name__ == '__main__':
     dataset = SegmentDataset('vtk_dataset','train')
@@ -35,32 +36,14 @@ if __name__ == '__main__':
     verbose = True
 
     for i, data in enumerate(dataloader):
-        mask = (data['gt'] == 2).squeeze(0)
-        mask = mask.numpy().astype(np.uint8)
-
         rgb = data['rgb'].squeeze(0).numpy()
         rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
-        depth = data['depth'].squeeze(0).numpy()
-
-        info = data['info']
-        K = info['K'].numpy().astype(np.float32)
-        D = info['D'].numpy().astype(np.float32)
-        retval, labels = cv2.connectedComponents(mask)
-
-        xyzrgb, ins_points = cpp_ext.UnprojectPointscloud(rgb, depth, labels, K, D,
-                0.05, 0.01)
+        pointsclouds = data['pointscloud']
+        xyzrgb = pointsclouds['xyzrgb'].squeeze(0).numpy()
+        ins_points = pointsclouds['ins_points'].squeeze(0).numpy()
+        retval = ins_points.max()
 
         if verbose:
-            cv2.imshow("box", mask*255)
-            dst = np.zeros((labels.shape[0], labels.shape[1], 3), np.uint8)
-            for i in range(retval):
-                if i == 0:
-                    continue
-                for j in range(3):
-                    dst[labels==i,j] = colors[i % len(colors)][j]
-            dst = cv2.cvtColor(dst, cv2.COLOR_BGR2RGB)
-            cv2.imshow("labels", dst)
-
             fig = plt.figure(figsize=(14,7))
             ax1 = plt.subplot(1,2,1, projection='3d')
             ax2 = plt.subplot(1,2,2, projection='3d')
@@ -68,7 +51,7 @@ if __name__ == '__main__':
             ax2.axis('equal')
 
             ax1.scatter(xyzrgb[:,0], xyzrgb[:,1], xyzrgb[:,2],
-                    edgecolor=None, c=xyzrgb[:,3:], cmap="BGR", linewidth=0, s=5)
+                    edgecolor=None, c=xyzrgb[:,3:], cmap="RGB", linewidth=0, s=5)
 
             instance_colors = np.zeros((len(ins_points),3))
             for i in range(retval):

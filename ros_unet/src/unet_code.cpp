@@ -230,6 +230,10 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
     ptr[3] = ( (float) pt.r ) / 255.;
     ptr[4] = ( (float) pt.g ) / 255.;
     ptr[5] = ( (float) pt.b ) / 255.;
+    for(int j = 3; j <6; j++){
+      ptr[j] = std::min(1.f, ptr[j]);
+      ptr[j] = std::max(0.f, ptr[j]);
+    }
   }
 
   // ref: https://pybind11.readthedocs.io/en/stable/advanced/pycpp/object.html#instantiating-compound-python-types-from-c

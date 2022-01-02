@@ -75,9 +75,13 @@ class SegmentDataset(Dataset):
                 np.save(fn_form%(img_idx,"grad","npy"),grad)
                 shutil.copy(fn_gt, fn_form%(img_idx,"gt","png"))
 
-                fn_info = osp.join(pkg_dir,name,'src',usage,'%d_info.h5'%img_idx)
-                if osp.exists(fn_info):
-                    shutil.copy(fn_info, fn_form%(img_idx,"info","h5"))
+                fn = osp.join(pkg_dir,name,'src',usage,'%d_info.h5'%img_idx)
+                if osp.exists(fn):
+                    shutil.copy(fn, fn_form%(img_idx,"info","h5"))
+                fn = osp.join(pkg_dir,name,'src',usage,'%d_pointscloud.h5'%img_idx)
+                if osp.exists(fn):
+                    shutil.copy(fn, fn_form%(img_idx,"pointscloud","h5"))
+
 
     def __len__(self):
         return self.nframe
@@ -94,12 +98,16 @@ class SegmentDataset(Dataset):
                 rc = frame[name].shape[:2]
 
         # Check optional types
-        for name in ['info', ]:
-            fn = "%d_%s.h5"%(idx, name)
+        for name in ['info.h5', 'pointscloud.h5' ]:
+            fn = "%d_%s"%(idx, name)
             fn = osp.join(self.cache_usaage_dir, fn)
             if not osp.exists(fn):
                 continue
-            frame[name] = dd.io.load(fn)
+            k, ext = name.split(".")
+            if ext == "h5":
+                frame[k] = dd.io.load(fn)
+            else:
+                frame[k] = np.load(fn)
 
         fn = "%d_gt.png"%idx
         fn = osp.join(self.cache_usaage_dir, fn)

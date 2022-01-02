@@ -24,6 +24,7 @@ import vtk
 import numpy as np
 from vtk.util import numpy_support
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from vtk.util.numpy_support import vtk_to_numpy
 import cv2
 
@@ -241,7 +242,7 @@ class Scene:
                     makedirs(usagepath)
 
         if verbose:
-            fig, ax = plt.subplots()
+            fig, _  = plt.subplots()
             fig.canvas.mpl_connect('key_press_event', self.OnPress)
         self.quit = False
         for k, usage in enumerate(usages):
@@ -266,6 +267,7 @@ class Scene:
                 rgb = self.GetRgb()
                 vis, mask = self.GetMask()
                 edge = cpp_ext.FindEdge(mask.astype(np.uint8)) # Get instance edge
+                mask[edge>0] = 0
 
                 org_depth = self.GetDepth()
                 org_depth[ np.sum(vis,axis=2) == 0] = 0.
@@ -292,8 +294,25 @@ class Scene:
                 dst[:minirgb.shape[0],dst_label.shape[1]:,:] = minirgb
 
                 K, D = self.GetIntrinsic()
+                K = K.astype(np.float32)
+                D = D.astype(np.float32)
+
                 width, height = self.renwin.GetSize()
                 info = {"K":K, "D":D, "width":width, "height":height}
+
+                box_face = np.logical_and(edge==0, mask >0)
+                box_face = box_face.astype(np.uint8)
+                retval, labels = cv2.connectedComponents(box_face)
+
+                # I have no idean reason for need this. but without it, cpp receive wrong rgb.
+                bgr = cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR)
+                rgb = cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB)
+                xyzrgb, ins_points = cpp_ext.UnprojectPointscloud(rgb, depth, labels,
+                        K, D, 0.04, 0.01)
+                sem_points = np.ones_like(ins_points)
+                sem_points[ins_points==0] = 0
+                
+                xyz_rgb_i_s = { 'xyzrgb':xyzrgb, 'ins_points':ins_points, 'sem_points':sem_points }
 
                 fn_form = osp.join(dataset_path, 'src', usage,"%d_%s.%s")
                 if not verbose:
@@ -303,10 +322,10 @@ class Scene:
 
                     # https://stackoverflow.com/questions/18071075/saving-dictionaries-to-file-numpy-and-python-2-3-friendly
                     dd.io.save(fn_form%(img_idx,"info","h5"), info, compression=('blosc', 9))
+                    dd.io.save(fn_form%(img_idx,"pointscloud","h5"), xyz_rgb_i_s, compression=('blosc', 9))
                     continue
 
                 cv2.imshow("dst", dst)
-
                 #cv2.imshow("faint", faint)
                 r = cv2.normalize(dist,None,255,0,cv2.NORM_MINMAX,cv2.CV_8UC1)
                 cv2.imshow("dist", r)
@@ -317,20 +336,26 @@ class Scene:
                 cv2.imshow("lap5", 255*(lap5 < -0.1).astype(np.uint8))
                 #cv2.imshow("edge", 255*edge)
 
-                plt.subplot(131).title.set_text('depth map')
+                plt.subplot(221).title.set_text('depth map')
                 plt.imshow(depth)
 
-                plt.subplot(132).title.set_text('org image')
+                plt.subplot(222).title.set_text('org image')
                 plt.imshow(rgb)
 
-                plt.subplot(133).title.set_text('vis mask')
+                plt.subplot(223).title.set_text('vis mask')
                 plt.imshow(vis)
 
-                plt.suptitle('Move cursor on iamge and see value')
-                plt.draw()
-                plt.waitforbuttonpress(timeout=0.01)
+                ax = plt.subplot(224, projection="3d")
+                ax.title.set_text('xyzrgb')
+                ax.scatter(xyzrgb[:,0], xyzrgb[:,1], xyzrgb[:,2],
+                    edgecolor=None, c=xyzrgb[:,3:], cmap="RGB", linewidth=0, s=5)
+                ax.axis("equal")
 
-                c=cv2.waitKey()
+                plt.suptitle('Move cursor on iamge and see value')
+                #plt.draw()
+                #plt.waitforbuttonpress(timeout=0.01)
+                c=cv2.waitKey(1)
+                plt.show()
                 self.quit=c==ord('q')
 
     def MakeAlignedStack(self):
