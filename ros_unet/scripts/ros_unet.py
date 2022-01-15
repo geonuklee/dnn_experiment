@@ -10,7 +10,7 @@ import torch
 
 from unet.unet_model import DuNet
 from unet.util import SplitAdapter
-import unet_cpp_extension3 as cpp_ext
+import unet_ext as cpp_ext
 
 class Sub:
     def __init__(self, depth, rgb):

@@ -8,20 +8,20 @@ int square(int x) {
   return x * x;
 }
 
-void normalize_pointcloud(const double* ptr_xyzrgb, int r, double* ptr_output){
-  // bat_pc = (xyz, xyz, rgb, xyz)).reshape((1,-1,12)
-  for(size_t i = 0; i < r; i++) {
-    for(size_t j = 0; j < 3; j++)
-      ptr_output[i*12 + j]     = ptr_xyzrgb[i*6+j];
+  auto get_orig = [&block_size](const double* xyz, double* orig){
+  };
 
-    for(size_t j = 0; j < 3; j++)
-      ptr_output[i*12 + j + 3] = ptr_xyzrgb[i*6+j];
+  for(size_t i = 0; i < nr; i++) {
+    const double* ptr_row = ptr_xyzrgb+i;
+    double orig[3] = {0.,};
+    for(size_t j = 0 ; j < 3; j ++)
+      orig[j] = block_size * std::floor(ptr_row[j]/block_size);
 
-    for(size_t j = 0; j < 3; j++)
-      ptr_output[i*12 + j + 6] = ptr_xyzrgb[i*6+3+j];
-
-    for(size_t j = 0; j < 3; j++)
-      ptr_output[i*12 + j + 9] = ptr_xyzrgb[i*6+j];
+    /* TODO
+    1) Get grid cp.
+    2) Put global, local coord
+    3) 
+    */
   }
 }
 

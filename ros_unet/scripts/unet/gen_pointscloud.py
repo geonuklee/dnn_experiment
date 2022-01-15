@@ -20,11 +20,7 @@ from torch.utils.data import DataLoader
 import cv2
 import numpy as np
 
-import sys
-if sys.version[0] == '2':
-    import unet_cpp_extension2 as cpp_ext
-else:
-    import unet_cpp_extension3 as cpp_ext
+import unet_ext as cpp_ext
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D

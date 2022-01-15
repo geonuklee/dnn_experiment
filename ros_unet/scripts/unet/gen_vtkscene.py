@@ -10,11 +10,13 @@ It requires below prebuild dependencies.
 ```bash
     sudo apt-get install libvtk6-qt-dev
 
-    # If latest installation of later version is possible, try that.
-    pip2 install -U deepdish==0.2.0
-    pip2 install -U tables numexpr==2.6.2
-    pip3 install -U tables==3.6.1
+    # pip must be 20.0.1 : https://github.com/pypa/pip/issues/7620
+    python2 -m pip install --user --force-reinstall pip==20.0.1
+    pip2 install --user cython
 
+    # Please see https://github.com/pypa/pip/issues/5599 for advice on fixing the underlying issue.
+    # To avoid this problem you can invoke Python with '-m pip' instead of running pip directly. 
+    python2 -m pip install deepdish==0.2.0 numexpr==2.6.2 tables==3.5.2
 ```
 
 """
@@ -36,7 +38,7 @@ import shutil
 
 import deepdish as dd
 
-import unet_cpp_extension2 as cpp_ext
+import unet_ext as cpp_ext
 from util import colors
 
 

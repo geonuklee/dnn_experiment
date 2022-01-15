@@ -1,6 +1,9 @@
 #include <iostream>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+
+#if 1
+
 #include <opencv2/opencv.hpp>
 #include <memory.h>
 #include <vector>
@@ -241,14 +244,25 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
   return output;
 }
 
-
-#if PYBIND == 3
-PYBIND11_MODULE(unet_cpp_extension3, m) {
-#else
-PYBIND11_MODULE(unet_cpp_extension2, m) {
-#endif
-  m.def("FindEdge", &PyFindEdge, "find edge");
-  m.def("GetGradient", &PyGetGradient, "get gradient");
-  m.def("UnprojectPointscloud", &PyUnprojectPointscloud, "Get rgbxyz and xyzi points cloud");
+PYBIND11_MODULE(unet_ext, m) {
+  m.def("FindEdge", &PyFindEdge, "find edge", py::arg("input_mask") );
+  m.def("GetGradient", &PyGetGradient, "get gradient", py::arg("input_depth"), py::arg("offset") );
+  m.def("UnprojectPointscloud", &PyUnprojectPointscloud, "Get rgbxyz and xyzi points cloud",
+        py::arg("rgb"), py::arg("depth"), py::arg("labels"), py::arg("K"), py::arg("D"), py::arg("leaf_xy"), py::arg("leaf_z"));
 }
 
+#else
+
+int add(int i, int j) {
+    return i + j;
+}
+
+
+PYBIND11_MODULE(unet_ext, m) {
+  // https://developer.lsst.io/v/u-ktl-debug-fix/coding/python_wrappers_for_cpp_with_pybind11.html
+  m.doc() = "Add two vectors using pybind11"; // optional module docstring
+  m.def("add", &add, "A function which adds two numbers", pybind11::arg("i"), pybind11::arg("j")=20);
+
+}
+
+#endif

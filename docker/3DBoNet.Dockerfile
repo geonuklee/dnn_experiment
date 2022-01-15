@@ -67,3 +67,7 @@ RUN cd ros_numpy && python2 setup.py install --user
 RUN pip install tensorflow-gpu==1.4.0 scipy==1.2.3 h5py==2.9 open3d-python==0.3.0
 RUN pip install pybind11
 
+# pip must be 20.0.1 : https://github.com/pypa/pip/issues/7620
+RUN python2 -m pip install --user --force-reinstall pip==20.0.1 &&\
+    python2 -m pip install deepdish==0.2.0 numexpr==2.6.2 tables==3.5.2
+

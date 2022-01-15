@@ -5,11 +5,11 @@
 @file segment_dataset.py
 @brief Provides SegmentDataset which parse output of gen_vtkscene.py, gen_labeling.py - segment_dataset, vtk_dataset.
 
-if unet_cpp_extension** doesn't exists, build rospkg 'ros_unet'
+if unet_ext doesn't exists, build it as below. 
 
 ```bash
-    cd ~/catkin_ws # Some where your catkin directory
-    catkin build ros_unet
+    cd exts
+    source run.sh
 ```
 
 """
@@ -25,11 +25,7 @@ import shutil
 import deepdish as dd
 
 # Build rospkg 'unet' before use it
-import sys
-if sys.version[0] == '2':
-    import unet_cpp_extension2 as cpp_ext
-else:
-    import unet_cpp_extension3 as cpp_ext
+import unet_ext as cpp_ext
 
 class SegmentDataset(Dataset):
     def __init__(self, name, usage):

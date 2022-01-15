@@ -1,10 +1,6 @@
 cmake_minimum_required(VERSION 3.4...3.18)
 project(ros_unet)
 
-# ref : https://github.com/pybind/pybind11/issues/748
-add_subdirectory(py2ext)
-add_subdirectory(py3ext)
-
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
 
@@ -12,6 +8,7 @@ add_subdirectory(py3ext)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED
+  pcl_ros
 )
 
 ## System dependencies are found with CMake's conventions

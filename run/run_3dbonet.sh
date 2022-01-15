@@ -6,6 +6,7 @@ docker run \
   --gpus all \
   -v $PWD/ros_bonet:/home/docker/catkin_ws/src/ros_bonet \
   -v $HOME/dataset/Data_S3DIS:/home/docker/catkin_ws/src/ros_bonet/scripts/bonet/data_s3dis \
+  -v $PWD/ros_unet/vtk_dataset:/home/docker/catkin_ws/src/ros_bonet/vtk_dataset \
   -it 3dbonet 
 
 # For first execution,
