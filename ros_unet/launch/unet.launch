@@ -1,18 +1,70 @@
 <launch>
 <arg name="filename" default="$(find ros_unet)/rosbag.bag"/>
 <arg name="weight_file" value="$(find ros_unet)/segment_dataset/dunet.pth"/>
-<arg name="depth" value="/cam0/helios2/depth/image_raw"/>
-<arg name="rgb" value="/cam0/aligned/rgb_to_depth/image_raw"/>
+
+<arg name="depth" value="helios2/depth/image_raw" />
+<arg name="rgb"   value="aligned/rgb_to_depth/image_raw" />
+<arg name="info"   value="helios2/camera_info" />
+<!--arg name="depth" value="/cam0/k4a/depth/image_raw" />
+<arg name="rgb"   value="/cam0/k4a/rgb_to_depth/image_raw" /-->
+<arg name="cameras" default="[0,]" />
+
 
 <node name="rosbag" pkg="rosbag" type="play"
     args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')"/>
 
-<node name="ros_unet" pkg="ros_unet" type="ros_unet.py" output="screen" required="true">
-    <remap from="~input_depth"  to="$(arg depth)" />
-    <remap from="~input_rgb"  to="$(arg rgb)" />
+<node name="unet_node" pkg="ros_unet" type="ros_unet.py" output="screen" required="true">
+    <remap from="~cam0/rgb"          to="/cam0/$(arg rgb)" />
+    <remap from="~cam0/depth"        to="/cam0/$(arg depth)" />
+    <remap from="~cam1/rgb"          to="/cam1/$(arg rgb)" />
+    <remap from="~cam1/depth"        to="/cam1/$(arg depth)" />
+
     <rosparam subst_value="True">
+      input_ch: 6
+      cameras: $(arg cameras)
       weight_file: "$(arg weight_file)"
     </rosparam>
 </node>
+
+<node name="pipeline" pkg="ros_unet" type="pipeline" output="screen" required="true">
+    <remap from="~cam0/rgb"          to="/cam0/$(arg rgb)" />
+    <remap from="~cam0/depth"        to="/cam0/$(arg depth)" />
+    <remap from="~cam0/camera_info"  to="/cam0/$(arg info)" />
+    <remap from="~cam0/edge"         to="/unet_node/cam0/edge" />
+
+    <remap from="~cam1/rgb"          to="/cam1/$(arg rgb)" />
+    <remap from="~cam1/depth"        to="/cam1/$(arg depth)" />
+    <remap from="~cam1/camera_info"  to="/cam1/$(arg info)" />
+    <remap from="~cam1/edge"         to="/unet_node/cam1/edge" />
+
+    <rosparam subst_value="True">
+      cameras: $(arg cameras)
+      compute_image_size: [640, 480]
+    </rosparam>
+</node>
+
+<node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/unet.rviz" required="true"/>
+
+<arg name="load_config" default="true"/>
+<arg name="side" default="up"/>
+<group if="$(arg load_config)">
+  <node pkg="rostopic" type="rostopic" name="tilt"
+  args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
+  '{header: {seq: 0, stamp: {secs: 0, nsecs: 0}, frame_id: ''},
+    cam0_tilt: true,
+    cam1_tilt: true}' -r 10" required="true" if="$(eval side=='up')"/>
+  <node pkg="rostopic" type="rostopic" name="tilt"
+  args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
+  '{header: {seq: 0, stamp: {secs: 0, nsecs: 0}, frame_id: ''},
+    cam0_tilt: false,
+    cam1_tilt: false}' -r 10" required="true" if="$(eval side=='down')"/>
+  <node pkg="tf2_ros" type="static_transform_publisher" name="link0"
+  args="0 0 0 0 0 0 1 cam0_rgb_link cam0_rgb_camera_link"/>
+  <node pkg="tf2_ros" type="static_transform_publisher" name="link1"
+  args="0 0 0 0 0 0 1 cam1_rgb_link cam1_rgb_camera_link"/>
+</group>
+<include file="$(find unloader_calib)/launch/cam_tf_publisher.launch" if="$(arg load_config)"/>
+
+<rosparam command="load" file="$(find ros_unet)/config/calib_info_for_tf.yaml" if="$(arg load_config)"/>
 
 </launch>

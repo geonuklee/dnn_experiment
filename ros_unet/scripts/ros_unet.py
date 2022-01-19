@@ -5,15 +5,16 @@ import rospy
 import numpy as np
 from sensor_msgs.msg import Image
 import cv2
-import ros_numpy
 import torch
 
 from unet.unet_model import DuNet
 from unet.util import SplitAdapter
 import unet_ext as cpp_ext
 
+import ros_numpy
+
 class Sub:
-    def __init__(self, depth, rgb):
+    def __init__(self, rgb, depth):
         self.sub_depth = rospy.Subscriber(depth, Image, self.cb_depth, queue_size=1)
         self.sub_rgb = rospy.Subscriber(rgb, Image, self.cb_rgb, queue_size=1)
         self.depth = None
@@ -33,9 +34,13 @@ class Sub:
 if __name__ == '__main__':
     rospy.init_node('ros_unet', anonymous=True)
     rate = rospy.Rate(hz=10)
-    sub = Sub(depth='~input_depth', rgb='~input_rgb')
+    cameras = rospy.get_param("~cameras")
+    subs = {}
+    for cam_id in cameras:
+        sub = Sub("~cam%d/rgb"%cam_id, "~cam%d/depth"%cam_id)
+        subs[cam_id] = sub
     fn = rospy.get_param('~weight_file')
-    dsize = (1280,960) # TODO remove duplicated dsize
+    input_ch = rospy.get_param('~input_ch')
 
     device = "cuda:0"
     model = DuNet()
@@ -45,39 +50,55 @@ if __name__ == '__main__':
     #model.eval()
 
     spliter = SplitAdapter()
+    pubs_edge, pubs_vis_edge = {}, {}
+    for cam_id in cameras:
+        pub_edge = rospy.Publisher("~cam%d/edge"%cam_id, Image, queue_size=1)
+        pub_vis_edge = rospy.Publisher("~cam%d/vis_edge"%cam_id, Image, queue_size=1)
+        pubs_edge[cam_id] = pub_edge
+        pubs_vis_edge[cam_id] = pubs_vis_edge
 
     while not rospy.is_shutdown():
         rate.sleep()
-        if sub.depth is None:
-            continue
-        if sub.rgb is None:
-            continue
-        depth = sub.depth
-        cv_rgb = sub.rgb
-        sub.depth = None
-        sub.rgb = None
+        for cam_id in cameras:
+            sub = subs[cam_id]
+            if sub.depth is None:
+                continue
+            if sub.rgb is None:
+                continue
+            depth = sub.depth
+            cv_rgb = sub.rgb
+            sub.depth = None
+            sub.rgb = None
 
-        cvlap = cv2.Laplacian(depth, cv2.CV_32FC1,ksize=5)
-        cvgrad = cpp_ext.GetGradient(depth, 2)
+            cvlap = cv2.Laplacian(depth, cv2.CV_32FC1,ksize=5)
+            cvgrad = cpp_ext.GetGradient(depth, 2)
 
-        blap = torch.Tensor(cvlap<-0.3).unsqueeze(0).unsqueeze(0).float()
-        grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
-        rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
+            blap = torch.Tensor(cvlap<-0.3).unsqueeze(0).unsqueeze(0).float()
+            grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
+            rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
 
-        input_x = torch.cat((blap,grad),dim=1)
-        input_x = spliter.put(input_x).to(device)
-        pred = model(input_x)
-        pred = pred.detach()
-        pred = spliter.restore(pred)
-        dst = spliter.pred2dst(pred)
-        dst = cv2.addWeighted(dst,0.5,cv_rgb,0.5,0)
+            if input_ch == 3: # If edge detection only
+                input_x = torch.cat((blap,grad),dim=1)
+            elif input_ch == 6: # If try to detect edge and box, both of them.
+                input_x = torch.cat((blap,grad,rgb),dim=1)
+            else:
+                assert(False)
 
-        ##cv2.imshow("rgb", cv_rgb)
-        ##cv2.imshow("lap", cvlap)
-        cv2.imshow('pred', dst)
-        c = cv2.waitKey(1)
-        if c == ord('q'):
-            exit(1)
+            input_x = spliter.put(input_x).to(device)
+            pred = model(input_x)
+            pred = pred.detach()
+            pred = spliter.restore(pred)
 
+            pub_edge, pubs_vis_edge = pubs_edge[cam_id], pubs_vis_edge[cam_id]
 
+            edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
+            edge_bpred = ( edge_pred> 0.95).astype(np.uint8)*255
+            msg = ros_numpy.msgify(Image, edge_bpred, encoding='8UC1')
+            pub_edge.publish(msg)
+
+            if pub_vis_edge.get_num_connections() > 0:
+                dst = spliter.pred2dst(pred)
+                dst = cv2.addWeighted(dst,0.5,cv_rgb,0.5,0)
+                msg = ros_numpy.msgify(Image, dst, encoding='8UC3')
+                pub_vis_edge.publish(msg)
 
