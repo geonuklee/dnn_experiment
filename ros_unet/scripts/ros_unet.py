@@ -31,6 +31,7 @@ class Sub:
         self.rgb = ros_numpy.numpify(topic)
 
 
+
 if __name__ == '__main__':
     rospy.init_node('ros_unet', anonymous=True)
     rate = rospy.Rate(hz=10)
@@ -91,13 +92,12 @@ if __name__ == '__main__':
 
             pub_edge, pubs_vis_edge = pubs_edge[cam_id], pubs_vis_edge[cam_id]
 
-            edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
-            edge_bpred = ( edge_pred> 0.95).astype(np.uint8)*255
-            msg = ros_numpy.msgify(Image, edge_bpred, encoding='8UC1')
+            mask = spliter.pred2mask(pred)
+            msg = ros_numpy.msgify(Image, mask, encoding='8UC1')
             pub_edge.publish(msg)
 
             if pub_vis_edge.get_num_connections() > 0:
-                dst = spliter.pred2dst(pred)
+                dst = spliter.mask2dst(mask)
                 dst = cv2.addWeighted(dst,0.5,cv_rgb,0.5,0)
                 msg = ros_numpy.msgify(Image, dst, encoding='8UC3')
                 pub_vis_edge.publish(msg)

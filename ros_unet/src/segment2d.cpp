@@ -23,10 +23,8 @@ void Segment2DAbstract::Rectify(sensor_msgs::Image::ConstPtr given_rgb,
                                ) const {
   cv::Mat cv_rgb = cv_bridge::toCvCopy(given_rgb, sensor_msgs::image_encodings::BGR8)->image;
   cv::Mat cv_depth = cv_bridge::toCvCopy(given_depth, sensor_msgs::image_encodings::TYPE_32FC1)->image;
-  //cv::remap(cv_rgb, rectified_rgb, map1_, map2_, cv::INTER_NEAREST);
-  //cv::remap(cv_depth, depthmap, map1_, map2_, cv::INTER_NEAREST);
-  rectified_rgb = cv_rgb.clone();
-  depthmap = cv_depth.clone();
+  cv::remap(cv_rgb, rectified_rgb, map1_, map2_, cv::INTER_NEAREST);
+  cv::remap(cv_depth, depthmap, map1_, map2_, cv::INTER_NEAREST);
 }
 
 int Convert(const std::map<int,int>& convert_lists,
@@ -295,7 +293,7 @@ cv::Mat GetDepthMask(const cv::Mat depth) {
   return depthmask;
 }
 
-cv::Mat GetEdgeMask(const cv::Mat depthmask) {
+cv::Mat GetValidMask(const cv::Mat depthmask) {
     const int mode   = cv::RETR_EXTERNAL; // RETR_CCOMP -> RETR_EXTERNAL
     const int method = cv::CHAIN_APPROX_SIMPLE;
     std::vector<std::vector<cv::Point> > contours;
@@ -334,10 +332,21 @@ bool Segment2DEdgeBased::Process(cv::Mat rgb,
                         std::map<int,int>& instance2class,
                         bool verbose){
   cv::Mat depthmask = GetDepthMask(depth);
-  cv::Mat validmask = GetEdgeMask(depthmask);
-  cv::Mat edge = GetEdge(rgb, depth, validmask, verbose);
+  cv::Mat validmask = GetValidMask(depthmask);
+  cv::Mat edge, surebox_mask;
+  GetEdge(rgb, depth, validmask, edge, surebox_mask, verbose);
   if(edge.empty())
     return false;
+
+  if(!surebox_mask.empty()) { // pre-filtering for surebox
+    cv::Mat sureground;
+    cv::bitwise_or(edge > 0, surebox_mask > 0, sureground);
+    cv::Mat element5(3, 3, CV_8U, cv::Scalar(1));
+    cv::morphologyEx(sureground, sureground, cv::MORPH_CLOSE, element5);
+
+    cv::bitwise_and(validmask, sureground,  validmask);
+    //cv::imshow("sureground", sureground*255);
+  }
 
   if(! vignett32S_.empty() )
     cv::bitwise_and(edge, vignett8U_, edge);
@@ -351,8 +360,6 @@ bool Segment2DEdgeBased::Process(cv::Mat rgb,
     if(divided.type()!=CV_8UC1)
       divided.convertTo(divided, CV_8UC1); // distanceTransform asks CV_8UC1 input.
 
-    //const cv::Mat erode_kernel = cv::Mat::ones(3,3, CV_8UC1);
-    //cv::dilate(divided, divided, erode_kernel);
     cv::distanceTransform(divided, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
   }
 
@@ -510,9 +517,9 @@ bool Segment2DEdgeBased::Process(cv::Mat rgb,
   if(verbose){
     cv::Mat dst = Overlap(rgb, marker);
 
-    //cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
+    cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
     //cv::imshow(name_+"seed", GetColoredLabel(seed) );
-    //cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
+    cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
     //cv::imshow(name_+"final_marker", GetColoredLabel(marker) );
     // cv::imshow(name_+"groove", 255*groove );
     //cv::flip(dst,dst,0);
@@ -536,7 +543,12 @@ bool Segment2DEdgeBased::Process(cv::Mat rgb,
   return true;
 }
 
-cv::Mat Segment2Dthreshold::GetEdge(const cv::Mat rgb, const cv::Mat depth, const cv::Mat validmask, bool verbose) {
+void Segment2Dthreshold::GetEdge(const cv::Mat rgb,
+                                 const cv::Mat depth,
+                                 const cv::Mat validmask,
+                                 cv::Mat& edge,
+                                 cv::Mat& surebox_mask,
+                                 bool verbose){
   cv::Mat cosmap = EstimateNormal(camera_.K_, depth);
   cv::Mat blap_depth; {
     const int ksize = 7;
@@ -559,7 +571,7 @@ cv::Mat Segment2Dthreshold::GetEdge(const cv::Mat rgb, const cv::Mat depth, cons
     }
   }
 
-  cv::Mat edge; {
+  {
     cv::Mat hkernel, vkernel; // TODO Add diagnoal
     if(camera_.image_size_.width > 500){
       hkernel = cv::Mat::zeros(7,7, CV_32F);
@@ -582,6 +594,7 @@ cv::Mat Segment2Dthreshold::GetEdge(const cv::Mat rgb, const cv::Mat depth, cons
     cv::threshold(b, b, 4, 1, cv::THRESH_BINARY);
     cv::bitwise_or(a, b, edge);
     edge.convertTo(edge, CV_8UC1);
+    surebox_mask = cv::Mat();
   }
 
   if(verbose){
@@ -589,7 +602,7 @@ cv::Mat Segment2Dthreshold::GetEdge(const cv::Mat rgb, const cv::Mat depth, cons
     cv::imshow(name_+"filtered_edge", edge*255);
   }
 
-  return edge;
+  return;
 }
 
 Segment2Dthreshold::Segment2Dthreshold(const sensor_msgs::CameraInfo& camerainfo,

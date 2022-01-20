@@ -10,7 +10,8 @@ Segment2DEdgeSubscribe::Segment2DEdgeSubscribe(const sensor_msgs::CameraInfo& ca
 {
 
   auto img_callback = [this](const sensor_msgs::ImageConstPtr& msg){
-    this->edge_ = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_8UC1)->image;
+    if(this->mask_.empty())
+      this->mask_ = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_8UC1)->image;
   };
 
   std::string img_name = name+"/edge";
@@ -23,23 +24,29 @@ Segment2DEdgeSubscribe::~Segment2DEdgeSubscribe() {
 
 }
 
-cv::Mat Segment2DEdgeSubscribe::GetEdge(const cv::Mat rgb, const cv::Mat depth, const cv::Mat validmask,
-                          bool verbose)
+void Segment2DEdgeSubscribe::GetEdge(const cv::Mat rgb,
+                                     const cv::Mat depth,
+                                     const cv::Mat validmask,
+                                     cv::Mat& edge,
+                                     cv::Mat& surebox_mask,
+                                     bool verbose)
 {
-  cv::Mat edge;
   ros::Rate rate(100);
   int ntry = 0;
   while(!ros::isShuttingDown()){
-    if(!edge_.empty())
+    if(!mask_.empty())
       break;
     if(++ntry%100 == 0){
-      std::cout << edge_subscriber_.getTopic()  << std::endl;
       ROS_WARN("No topic for %s", edge_subscriber_.getTopic().c_str() );
     }
     rate.sleep();
     ros::spinOnce();
   }
-  edge = edge_.clone();
-  edge_ = cv::Mat();
-  return edge;
+
+  cv::Mat rectified_mask;
+  cv::remap(mask_, rectified_mask, map1_, map2_, cv::INTER_NEAREST);
+  edge = rectified_mask==1;
+  surebox_mask = rectified_mask==2;
+  mask_ = cv::Mat();
+  return;
 }

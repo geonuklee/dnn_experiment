@@ -53,20 +53,19 @@ class SplitAdapter:
 
         return output
 
-    def pred2dst(self, pred):
+    def pred2mask(self, pred):
+        mask = np.zeros((pred.shape[-2],pred.shape[-1]),np.uint8)
+        edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
+        mask[edge_pred> 0.95] = 1
         if pred.shape[1] == 3:
-            edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
             box_pred   = pred.moveaxis(1,3).squeeze(0)[:,:,2].numpy()
-            edge_bpred = ( edge_pred> 0.95)#.astype(np.uint8)*255
-            box_bpred  = ( box_pred> 0.9)#.astype(np.uint8)*255
-            dst = np.zeros((pred.shape[-2],pred.shape[-1],3),np.uint8)
-            dst[edge_bpred,:] = 255
-            dst[box_bpred, 2] = 255
-        elif pred.shape[1] == 2:
-            edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
-            edge_bpred = ( edge_pred> 0.95)#.astype(np.uint8)*255
-            dst = np.zeros((pred.shape[-2],pred.shape[-1],3),np.uint8)
-            dst[edge_bpred,:] = 255
+            mask[box_pred> 0.9] = 2
+        return mask
+
+    def mask2dst(self, mask):
+        dst = np.zeros((mask.shape[0], mask.shape[1],3),np.uint8)
+        dst[mask==1,:] = 255
+        dst[mask==2, 2] = 255
         return dst
 
     def put(self, x):

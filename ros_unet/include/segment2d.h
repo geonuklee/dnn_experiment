@@ -59,8 +59,12 @@ public:
                std::map<int,int>& instance2class,
                bool verbose=false);
 
-  virtual cv::Mat GetEdge(const cv::Mat rgb, const cv::Mat depth, const cv::Mat validmask,
-                          bool verbose) = 0;
+  virtual void GetEdge(const cv::Mat rgb,
+                       const cv::Mat depth,
+                       const cv::Mat validmask,
+                       cv::Mat& edge,
+                       cv::Mat& surebox_mask,
+                       bool verbose) = 0;
 protected:
 
   cv::Mat vignett32S_;
@@ -75,8 +79,12 @@ public:
                      double lap_depth_threshold
                     );
 protected:
-  virtual cv::Mat GetEdge(const cv::Mat rgb, const cv::Mat depth, const cv::Mat validmask,
-                          bool verbose);
+  virtual void GetEdge(const cv::Mat rgb,
+                       const cv::Mat depth,
+                       const cv::Mat validmask,
+                       cv::Mat& edge,
+                       cv::Mat& surebox_mask,
+                       bool verbose);
 
   const double lap_depth_threshold_;
 };
@@ -93,11 +101,15 @@ public:
 
   virtual ~Segment2DEdgeSubscribe();
 protected:
-  virtual cv::Mat GetEdge(const cv::Mat rgb, const cv::Mat depth, const cv::Mat validmask,
-                          bool verbose);
+  virtual void GetEdge(const cv::Mat rgb,
+                       const cv::Mat depth,
+                       const cv::Mat validmask,
+                       cv::Mat& edge,
+                       cv::Mat& surebox_mask,
+                       bool verbose);
 
   ros::Subscriber edge_subscriber_;
-  cv::Mat edge_;
+  cv::Mat mask_;
 };
 
 
