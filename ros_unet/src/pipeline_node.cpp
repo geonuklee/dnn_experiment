@@ -1,42 +1,51 @@
 #include "ros_util.h"
 #include "segment2d.h"
+#include "mask2obb.h"
 
 #include <vector>
 #include <map>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <cv_bridge/cv_bridge.h>
 
 #include <g2o/types/slam3d/se3quat.h>
 
 void SubscribeTopic(const std::vector<int>& cameras,
                     ros::NodeHandle& nh,
                     std::map<std::string, ros::Subscriber>& subs,
-                    std::map<int, sensor_msgs::ImageConstPtr>& rgb_ptr,
-                    std::map<int, sensor_msgs::ImageConstPtr>& depth_ptr,
-                    std::map<int, sensor_msgs::CameraInfo>& camera_info
+                    std::map<int, cv::Mat>& rgbs,
+                    std::map<int, cv::Mat>& depths,
+                    std::map<int, sensor_msgs::CameraInfo>& camerainfos
                    ){
   for(int cam_id : cameras){
     std::string img_name   = "cam"+ std::to_string(cam_id) +"/rgb";
     std::string depth_name = "cam"+ std::to_string(cam_id) +"/depth";
     std::string info_name  = "cam"+ std::to_string(cam_id) +"/camera_info";
 
-    auto img_callback = [cam_id, &rgb_ptr](const sensor_msgs::ImageConstPtr& msg){
-      rgb_ptr[cam_id] = msg;
+    auto img_callback = [cam_id, &rgbs](const sensor_msgs::ImageConstPtr& msg){
+      rgbs[cam_id] = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8)->image;
     };
     subs[img_name] = nh.subscribe<sensor_msgs::ImageConstPtr, const sensor_msgs::ImageConstPtr& >(img_name, 1, img_callback);
 
     ROS_INFO("Subscribe %s",subs[img_name].getTopic().c_str());
 
-    auto depth_callback = [cam_id, &depth_ptr](const sensor_msgs::ImageConstPtr& msg){
-      depth_ptr[cam_id] = msg;
+    auto depth_callback = [cam_id, &depths](const sensor_msgs::ImageConstPtr& msg){
+      cv::Mat depth = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_32FC1)->image;
+      double minVal, maxVal;
+      cv::minMaxLoc( depth, &minVal, &maxVal);
+      // Convert unit to [meter]
+      if(maxVal > 1000.)
+        depth /= 1000.;
+      depths[cam_id] = depth;
+
     };
 
     ROS_INFO("Subscribe %s",subs[depth_name].getTopic().c_str());
     subs[depth_name] = nh.subscribe<sensor_msgs::ImageConstPtr, const sensor_msgs::ImageConstPtr& >(depth_name, 1, depth_callback);
 
-    auto info_callback = [cam_id, &camera_info](const sensor_msgs::CameraInfoConstPtr& msg){
-      camera_info[cam_id] = *msg;
+    auto info_callback = [cam_id, &camerainfos](const sensor_msgs::CameraInfoConstPtr& msg){
+      camerainfos[cam_id] = *msg;
     };
 
     ROS_INFO("Subscribe %s",subs[info_name].getTopic().c_str());
@@ -79,25 +88,25 @@ void UpdateTcws(const std::vector<int>& cameras,
 
 void UpdateTopics(const std::vector<int>& cameras,
                   ros::NodeHandle& nh,
-                  std::map<int, sensor_msgs::ImageConstPtr>& rgb_ptr,
-                  std::map<int, sensor_msgs::ImageConstPtr>& depth_ptr,
-                  std::map<int, sensor_msgs::CameraInfo>& camerainfo_ptr
+                  std::map<int, cv::Mat>& rgbs,
+                  std::map<int, cv::Mat>& depths,
+                  std::map<int, sensor_msgs::CameraInfo>& camerainfos
                   ){
-  rgb_ptr.clear();
-  depth_ptr.clear();
+  rgbs.clear();
+  depths.clear();
   ros::Rate rate(10);
   while( !ros::isShuttingDown() ){
     bool ready = true;
     for(int cam_id : cameras){
-      if(!rgb_ptr.count(cam_id)){
+      if(!rgbs.count(cam_id)){
         ROS_DEBUG("No rgb for cam %d", cam_id );
         ready = false;
       }
-      else if(!depth_ptr.count(cam_id)){
+      else if(!depths.count(cam_id)){
         ROS_DEBUG("No depth for cam %d", cam_id );
         ready = false;
       }
-      else if(!camerainfo_ptr.count(cam_id)){
+      else if(!camerainfos.count(cam_id)){
         ROS_DEBUG("No camera_info for cam %d", cam_id );
         ready = false;
       }
@@ -114,6 +123,48 @@ void UpdateTopics(const std::vector<int>& cameras,
   return;
 }
 
+
+ObbParam GetObbParam(ros::NodeHandle& nh){
+  // Get rosparams.
+  ObbParam param;
+  std::vector<int> cameras = GetRequiredParamVector<int>(nh, "cameras");
+  param.min_z_floor = GetRequiredParam<double>(nh, "min_z_floor");
+  param.min_points_of_cluster = GetRequiredParam<double>(nh, "min_points_of_cluster");
+  param.voxel_leaf = GetRequiredParam<double>(nh, "voxel_leaf");
+  param.verbose = GetRequiredParam<bool>(nh, "verbose");
+
+  {
+    int match_mode = GetRequiredParam<int>(nh, "match_mode");
+    if(match_mode < 0 || match_mode > 2){
+      ROS_FATAL("match_mode of mask2obb is out of range");
+      exit(1);
+    }
+    param.match_mode = static_cast<ObbParam::MATCHMODE>( match_mode );
+  }
+
+  {
+    int match_method = GetRequiredParam<int>(nh, "match_method");
+    if(match_method < 0 || match_method > 1){
+      ROS_FATAL("match_method of mask2obb is out of range");
+      exit(1);
+    }
+    param.match_method = static_cast<ObbParam::MATCHMETHOD>( match_method );
+  }
+
+  {
+    std::string sensor_model = GetRequiredParam<std::string>(nh, "sensor_model");
+    if(sensor_model == "helios")
+      param.sensor_model = ObbParam::SENSORMODEL::HELIOS;
+    else if(sensor_model == "k4a")
+      param.sensor_model = ObbParam::SENSORMODEL::K4A;
+    else{
+      ROS_ERROR_ONCE("Unexpected sensor model for mask2obb");
+      throw 1;
+    }
+  }
+  return param;
+}
+
 int main(int argc, char **argv) {
   ros::init(argc, argv, "pipeline");
   ros::NodeHandle nh("~");
@@ -123,31 +174,35 @@ int main(int argc, char **argv) {
     compute_size.width = compute_image_size[0];
     compute_size.height = compute_image_size[1];
   }
+  bool generate_points = GetRequiredParam<bool>(nh, "generate_points");
 
+  ObbParam param = GetObbParam(nh);
   const bool verbose_segment2d = true;
 
   std::map<std::string, ros::Subscriber> subs;
-  std::map<int, sensor_msgs::ImageConstPtr> rgb_ptr;
-  std::map<int, sensor_msgs::ImageConstPtr> depth_ptr;
-  std::map<int, sensor_msgs::CameraInfo> camerainfo_ptr;
-  SubscribeTopic(cameras, nh, subs, rgb_ptr,depth_ptr,camerainfo_ptr);
+  std::map<int, cv::Mat> rgbs;
+  std::map<int, cv::Mat> depths;
+  std::map<int, sensor_msgs::CameraInfo> camerainfos;
+  SubscribeTopic(cameras, nh, subs, rgbs, depths, camerainfos);
   std::map<int, std::shared_ptr<Segment2DAbstract > > segment2d;
+  std::map<int, std::shared_ptr<ObbEstimator> > obb_estimators;
 
-  UpdateTopics(cameras, nh, rgb_ptr, depth_ptr, camerainfo_ptr);
+  std::map<int, ros::Publisher> pub_clouds, pub_boundary;
+  ros::Publisher pub_xyzrgb;
+  if(generate_points)
+    pub_xyzrgb = nh.advertise<sensor_msgs::PointCloud2>("xyzrgb",1);
+
+  UpdateTopics(cameras, nh, rgbs, depths, camerainfos);
   for(int cam_id : cameras){
     std::string cam_name = "cam"+std::to_string(cam_id);
-#if 1
-    segment2d[cam_id] = std::make_shared<Segment2DEdgeSubscribe>(camerainfo_ptr.at(cam_id),
+    segment2d[cam_id] = std::make_shared<Segment2DEdgeSubscribe>(camerainfos.at(cam_id),
                                                                  compute_size,
                                                                  cam_name,
                                                                  nh
                                                                 );
-#else
-    segment2d[cam_id] = std::make_shared<Segment2Dthreshold>(camerainfo_ptr.at(cam_id),
-                                                             compute_size,
-                                                             cam_name,
-                                                             -0.06);
-#endif
+    obb_estimators[cam_id] = std::make_shared<ObbEstimator>(camerainfos.at(cam_id) );
+    pub_clouds[cam_id]   = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"/clouds",1);
+    pub_boundary[cam_id] = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"/boundary",1);
   }
 
   std::map<int, MarkerCamera > marker_cameras;
@@ -156,22 +211,55 @@ int main(int argc, char **argv) {
   ros::Rate rate(2);
   while(!ros::isShuttingDown()){
     UpdateTcws(cameras, nh, Tcws);
-    UpdateTopics(cameras, nh, rgb_ptr, depth_ptr, camerainfo_ptr);
+    UpdateTopics(cameras, nh, rgbs, depths, camerainfos);
 
-    bool segment_is_done = true;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb;
+    if(generate_points){
+      xyzrgb = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>() );
+      xyzrgb->points.reserve( cameras.size() * compute_size.width* compute_size.height);
+    }
+
     for(int cam_id : cameras){
       std::map<int,int> ins2cls;
       cv::Mat instance_marker, edge_distance, depthmap;
-      segment_is_done &= segment2d.at(cam_id)->Process(rgb_ptr.at(cam_id),
-                                                       depth_ptr.at(cam_id),
-                                                       instance_marker, edge_distance, depthmap,
-                                                       ins2cls, verbose_segment2d
-                                                      );
-    }
-    if(!segment_is_done)
-      continue;
+      auto segmenter = segment2d.at(cam_id);
+      bool b = segmenter->Process(rgbs.at(cam_id),
+                                  depths.at(cam_id),
+                                  instance_marker, edge_distance, depthmap,
+                                  ins2cls, verbose_segment2d
+                                 );
+      if(!b)
+        break;
+      // TODO mask2obb 
+      std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr> segmented_clouds, boundary_clouds;
+      obb_estimators.at(cam_id)->GetSegmentedCloud(Tcws.at(cam_id),
+                                                   segmenter->GetRectifiedRgb(),
+                                                   segmenter->GetRectifiedDepth(),
+                                                   instance_marker,
+                                                   param,
+                                                   segmented_clouds, boundary_clouds, xyzrgb);
 
-    ROS_INFO("Segment");
+      if(pub_clouds.at(cam_id).getNumSubscribers()){
+        sensor_msgs::PointCloud2 msg;
+        ColorizeSegmentation(segmented_clouds, msg);
+        pub_clouds.at(cam_id).publish(msg);
+      }
+      if(pub_boundary.at(cam_id).getNumSubscribers()){
+        sensor_msgs::PointCloud2 msg;
+        ColorizeSegmentation(boundary_clouds, msg);
+        pub_boundary.at(cam_id).publish(msg);
+      }
+
+
+    }
+
+    if(generate_points) {
+      sensor_msgs::PointCloud2 msg;
+      pcl::toROSMsg(*xyzrgb, msg);
+      msg.header.frame_id = "robot";
+      pub_xyzrgb.publish(msg);
+    }
+
     if(verbose_segment2d){
       char c = cv::waitKey(1);
       if(c == 'q')

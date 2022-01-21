@@ -6,7 +6,6 @@
 #include <opencv2/core/base.hpp>
 #include <opencv2/core/matx.hpp>
 #include <opencv2/imgproc.hpp>
-#include <cv_bridge/cv_bridge.h>
 #include <numeric>
 
 MarkerCamera::MarkerCamera(const cv::Mat& K,
@@ -16,15 +15,27 @@ MarkerCamera::MarkerCamera(const cv::Mat& K,
 {
 }
 
-void Segment2DAbstract::Rectify(sensor_msgs::Image::ConstPtr given_rgb,
-                                sensor_msgs::Image::ConstPtr given_depth,
-                                cv::Mat& rectified_rgb,
-                                cv::Mat& depthmap
-                               ) const {
-  cv::Mat cv_rgb = cv_bridge::toCvCopy(given_rgb, sensor_msgs::image_encodings::BGR8)->image;
-  cv::Mat cv_depth = cv_bridge::toCvCopy(given_depth, sensor_msgs::image_encodings::TYPE_32FC1)->image;
-  cv::remap(cv_rgb, rectified_rgb, map1_, map2_, cv::INTER_NEAREST);
-  cv::remap(cv_depth, depthmap, map1_, map2_, cv::INTER_NEAREST);
+
+sensor_msgs::CameraInfo MarkerCamera::AsCameraInfo() const {
+  sensor_msgs::CameraInfo info;
+  //info.K.reserve(9);
+  int i = 0;
+  for(int r = 0; r < 3; r++)
+    for(int c = 0; c < 3; c++)
+      info.K[i++] = K_.at<float>(r,c);
+  info.D.reserve(D_.rows);
+  for(int r = 0; r < D_.rows; r++)
+    info.D.push_back(D_.at<float>(r,0));
+  info.height = image_size_.height;
+  info.width = image_size_.width;
+  return info;
+}
+
+void Segment2DAbstract::Rectify(cv::Mat given_rgb,
+                                cv::Mat given_depth
+                               ) {
+  cv::remap(given_rgb, rectified_rgb_, map1_, map2_, cv::INTER_NEAREST);
+  cv::remap(given_depth, rectified_depth_, map1_, map2_, cv::INTER_NEAREST);
 }
 
 int Convert(const std::map<int,int>& convert_lists,
@@ -309,23 +320,27 @@ cv::Mat GetValidMask(const cv::Mat depthmask) {
     return edge_mask;
 }
 
-bool Segment2DEdgeBased::Process(sensor_msgs::Image::ConstPtr rgb, sensor_msgs::Image::ConstPtr given_depth,
-                           cv::Mat& marker, cv::Mat& groove_distance, cv::Mat& depthmap,
-                           std::map<int,int>& instance2class,
-                           bool verbose){
-  cv::Mat rectified_rgb;
-  Rectify(rgb, given_depth, rectified_rgb, depthmap);
+bool Segment2DEdgeBased::Process(const cv::Mat rgb,
+                                 const cv::Mat given_depth,
+                                 cv::Mat& marker,
+                                 cv::Mat& groove_distance,
+                                 cv::Mat& depthmap,
+                                 std::map<int,int>& instance2class,
+                                 bool verbose){
+  Rectify(rgb, given_depth);
+  depthmap = GetRectifiedDepth();
+  cv::Mat rectified_rgb = GetRectifiedRgb();
 
   if(vignett32S_.empty() ){
     vignett32S_ = 255*cv::Mat::ones(rectified_rgb.size(), CV_32SC1);
     vignett8U_  = 255*cv::Mat::ones(rectified_rgb.size(), CV_8UC1);
   }
 
-  return Process(rectified_rgb, depthmap, marker, groove_distance, instance2class, verbose);
+  return _Process(rectified_rgb, depthmap, marker, groove_distance, instance2class, verbose);
 }
 
 
-bool Segment2DEdgeBased::Process(cv::Mat rgb,
+bool Segment2DEdgeBased::_Process(cv::Mat rgb,
                         cv::Mat depth,
                         cv::Mat& marker,
                         cv::Mat& groove_distance,
@@ -517,9 +532,9 @@ bool Segment2DEdgeBased::Process(cv::Mat rgb,
   if(verbose){
     cv::Mat dst = Overlap(rgb, marker);
 
-    cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
+    //cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
     //cv::imshow(name_+"seed", GetColoredLabel(seed) );
-    cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
+    //cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
     //cv::imshow(name_+"final_marker", GetColoredLabel(marker) );
     // cv::imshow(name_+"groove", 255*groove );
     //cv::flip(dst,dst,0);

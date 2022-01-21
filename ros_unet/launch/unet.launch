@@ -7,8 +7,27 @@
 <arg name="info"   value="helios2/camera_info" />
 <!--arg name="depth" value="/cam0/k4a/depth/image_raw" />
 <arg name="rgb"   value="/cam0/k4a/rgb_to_depth/image_raw" /-->
-<arg name="cameras" default="[0,]" />
 
+<arg name="verbose" default="false"/>
+<arg name="generate_points" default="true"/>
+<arg name="cameras" default="[0,]" />
+<arg name="sensor_model" default="helios"/>
+<arg name="voxel_leaf" value="0.02" />
+
+<!--
+  match_mode
+  0 = NO_MATCH     : Return unsynced, duplicated instances on topic $(arg output_topic)
+  1 = CURRENT_ONLY : Remove duplicated instance between two cameras.
+  2 = TRACKING     : Make instance id be consistent over frames.
+-->
+<arg name="match_mode" value="2"/>
+
+<!--
+  match_method
+  0 = WITHOUT_IOU : Compare only distance of center for matcihng instance
+  1 = WITH_IOU    : Compare IoU also for matching instance. More accurate but more slow.
+-->
+<arg name="match_method" default="0"/>
 
 <node name="rosbag" pkg="rosbag" type="play"
     args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')"/>
@@ -20,7 +39,7 @@
     <remap from="~cam1/depth"        to="/cam1/$(arg depth)" />
 
     <rosparam subst_value="True">
-      input_ch: 6
+      input_ch: 3
       cameras: $(arg cameras)
       weight_file: "$(arg weight_file)"
     </rosparam>
@@ -38,8 +57,16 @@
     <remap from="~cam1/edge"         to="/unet_node/cam1/edge" />
 
     <rosparam subst_value="True">
-      cameras: $(arg cameras)
       compute_image_size: [640, 480]
+      cameras: $(arg cameras)
+      verbose: $(arg verbose)
+      match_mode: $(arg match_mode)
+      match_method: $(arg match_method)
+      min_z_floor: -0.83
+      min_points_of_cluster: 5
+      sensor_model: $(arg sensor_model)
+      voxel_leaf: $(arg voxel_leaf)
+      generate_points: $(arg generate_points)
     </rosparam>
 </node>
 

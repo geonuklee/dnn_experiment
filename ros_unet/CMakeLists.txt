@@ -33,5 +33,11 @@ include_directories(
   ${OpenCV_INCLUDE_DIRS}
   ${G2O_INCLUDE_DIR}
 )
-add_executable(pipeline src/pipeline_node.cpp src/segment2d.cpp src/segment2d_ml.cpp src/ros_util.cpp)
+
+add_executable(pipeline
+  src/pipeline_node.cpp
+  src/segment2d.cpp
+  src/segment2d_ml.cpp
+  src/ros_util.cpp
+  src/mask2obb.cpp)
 target_link_libraries(pipeline ${catkin_LIBRARIES} ${OpenCV_LIBS})
