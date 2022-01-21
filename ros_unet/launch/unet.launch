@@ -12,7 +12,7 @@
 <arg name="generate_points" default="true"/>
 <arg name="cameras" default="[0,]" />
 <arg name="sensor_model" default="helios"/>
-<arg name="voxel_leaf" value="0.02" />
+<arg name="voxel_leaf" value="0.05" />
 
 <!--
   match_mode

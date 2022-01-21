@@ -16,12 +16,13 @@ find_package(catkin REQUIRED
   std_msgs
   pcl_conversions
   pcl_ros
+  unloader_msgs
 )
 
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES ros_unet
-    CATKIN_DEPENDS geometry_msgs roscpp rospy sensor_msgs std_msgs pcl_conversions pcl_ros visualization_msgs
+CATKIN_DEPENDS geometry_msgs roscpp rospy sensor_msgs std_msgs pcl_conversions pcl_ros visualization_msgs unloader_msgs
 )
 
 ###########

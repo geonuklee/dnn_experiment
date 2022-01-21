@@ -208,6 +208,14 @@ int main(int argc, char **argv) {
   std::map<int, MarkerCamera > marker_cameras;
   EigenMap<int, g2o::SE3Quat > Tcws;
 
+  // Publishers for process visualization.
+  std::map<int, std::shared_ptr<ObbProcessVisualizer> > obb_process_visualizers;
+  for(int cam_id : cameras){
+    auto visualizer = std::make_shared<ObbProcessVisualizer>(cam_id, nh);
+    obb_process_visualizers[cam_id] = visualizer;
+  }
+
+
   ros::Rate rate(2);
   while(!ros::isShuttingDown()){
     UpdateTcws(cameras, nh, Tcws);
@@ -230,7 +238,6 @@ int main(int argc, char **argv) {
                                  );
       if(!b)
         break;
-      // TODO mask2obb 
       std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr> segmented_clouds, boundary_clouds;
       obb_estimators.at(cam_id)->GetSegmentedCloud(Tcws.at(cam_id),
                                                    segmenter->GetRectifiedRgb(),
@@ -238,6 +245,19 @@ int main(int argc, char **argv) {
                                                    instance_marker,
                                                    param,
                                                    segmented_clouds, boundary_clouds, xyzrgb);
+      // TODO Compute OBB for each instance
+      obb_estimators.at(cam_id)->ComputeObbs(segmented_clouds,
+                                             boundary_clouds,
+                                             param,
+                                             Tcws.at(cam_id),
+                                             cam_id,
+                                             obb_process_visualizers.at(cam_id)
+                                             );
+
+      for(auto it_visualizer : obb_process_visualizers)
+        it_visualizer.second->Visualize();
+
+      // TODO matching???
 
       if(pub_clouds.at(cam_id).getNumSubscribers()){
         sensor_msgs::PointCloud2 msg;
@@ -249,8 +269,6 @@ int main(int argc, char **argv) {
         ColorizeSegmentation(boundary_clouds, msg);
         pub_boundary.at(cam_id).publish(msg);
       }
-
-
     }
 
     if(generate_points) {
