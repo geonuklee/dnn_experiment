@@ -48,7 +48,16 @@ class SplitAdapter:
         for ib in range(b):
             for i, (hmin, wmin) in enumerate(self.hw_min):
                 #print(k, hmin, wmin, '/', nb, h, w)
-                output[ib, :, hmin:hmin+self.w, wmin:wmin+self.w] = x[k,:,:,:]
+                if hmin+self.w > output.shape[2]:
+                    output_hmax = output.shape[2]
+                else:
+                    output_hmax = hmin+self.w
+                if wmin+self.w > output.shape[3]:
+                    output_wmax = output.shape[3]
+                else:
+                    output_wmax = wmin+self.w
+                output[ib, :, hmin:output_hmax, wmin:output_wmax] \
+                        = x[k,:,:output_hmax-hmin,:output_wmax-wmin]
                 k += 1
 
         return output
@@ -80,9 +89,13 @@ class SplitAdapter:
                 if wmin + self.w >= w0:
                     wmin = w0 - self.w
 
+                if wmin < 0:
+                    wmin = 0
                 for hmin in range(0, h0, self.offset):
                     if hmin +self.w >= h0:
                         hmin = h0 - self.w
+                    if hmin < 0:
+                        hmin = 0
                     self.hw_min.append((hmin,wmin))
 
         if x.dim() == 4:

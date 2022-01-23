@@ -28,7 +28,7 @@ class Sub:
     def cb_rgb(self, topic):
         if self.rgb is not None:
             return
-        self.rgb = ros_numpy.numpify(topic)
+        self.rgb = ros_numpy.numpify(topic)[:,:,:3]
 
 
 
