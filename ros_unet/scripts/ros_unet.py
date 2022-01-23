@@ -34,7 +34,7 @@ class Sub:
 
 if __name__ == '__main__':
     rospy.init_node('ros_unet', anonymous=True)
-    rate = rospy.Rate(hz=10)
+    rate = rospy.Rate(hz=100)
     cameras = rospy.get_param("~cameras")
     subs = {}
     for cam_id in cameras:
@@ -51,21 +51,36 @@ if __name__ == '__main__':
     #model.eval()
 
     spliter = SplitAdapter()
-    pubs_edge, pubs_vis_edge = {}, {}
+    pubs_blap, pubs_vis_edge = {}, {}
     for cam_id in cameras:
-        pub_edge = rospy.Publisher("~cam%d/edge"%cam_id, Image, queue_size=1)
+        pub_blap = rospy.Publisher("~cam%d/blap"%cam_id, Image, queue_size=1)
         pub_vis_edge = rospy.Publisher("~cam%d/vis_edge"%cam_id, Image, queue_size=1)
-        pubs_edge[cam_id] = pub_edge
-        pubs_vis_edge[cam_id] = pubs_vis_edge
+        pubs_blap[cam_id] = pub_blap
+        pubs_vis_edge[cam_id] = pub_vis_edge
 
+    irgb, idepth = 0, 0
     while not rospy.is_shutdown():
         rate.sleep()
         for cam_id in cameras:
             sub = subs[cam_id]
-            if sub.depth is None:
-                continue
-            if sub.rgb is None:
-                continue
+            while True:
+                if sub.depth is None:
+                    rate.sleep()
+                    idepth += 1
+                    if idepth % (100*len(cameras)) == 0:
+                        print("No depth for camea %d" % cam_id)
+                    continue
+                else:
+                    idepth = 0
+                if sub.rgb is None:
+                    rate.sleep()
+                    irgb += 1
+                    if irgb % (100*len(cameras)) == 0:
+                        print("No rgb for camea %d" % cam_id)
+                    continue
+                else:
+                    irgb = 0
+                break
             depth = sub.depth
             cv_rgb = sub.rgb
             sub.depth = None
@@ -74,7 +89,7 @@ if __name__ == '__main__':
             cvlap = cv2.Laplacian(depth, cv2.CV_32FC1,ksize=5)
             cvgrad = cpp_ext.GetGradient(depth, 2)
 
-            blap = torch.Tensor(cvlap<-0.3).unsqueeze(0).unsqueeze(0).float()
+            blap = torch.Tensor(cvlap<-0.05).unsqueeze(0).unsqueeze(0).float()
             grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
             rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
 
@@ -90,15 +105,17 @@ if __name__ == '__main__':
             pred = pred.detach()
             pred = spliter.restore(pred)
 
-            pub_edge, pubs_vis_edge = pubs_edge[cam_id], pubs_vis_edge[cam_id]
-
+            pub_blap, pub_vis_edge = pubs_blap[cam_id], pubs_vis_edge[cam_id]
             mask = spliter.pred2mask(pred)
-            msg = ros_numpy.msgify(Image, mask, encoding='8UC1')
-            pub_edge.publish(msg)
 
             if pub_vis_edge.get_num_connections() > 0:
                 dst = spliter.mask2dst(mask)
                 dst = cv2.addWeighted(dst,0.5,cv_rgb,0.5,0)
                 msg = ros_numpy.msgify(Image, dst, encoding='8UC3')
                 pub_vis_edge.publish(msg)
+            if pub_blap.get_num_connections() > 0:
+                blap = blap.moveaxis(0,-1).squeeze(0).numpy().astype(np.uint8)
+                msg = ros_numpy.msgify(Image, 255*blap, encoding='8UC1')
+                pub_blap.publish(msg)
+
 
