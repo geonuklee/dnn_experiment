@@ -59,7 +59,7 @@ struct ObbParam{
   /**
   @brief The tolerance[meter] for the euclidean filter.
   */
-  double euclidean_filter_tolerance = 0.05;
+  double euclidean_filter_tolerance;
 
   /**
   @brief The minumum number of points for each cluster.

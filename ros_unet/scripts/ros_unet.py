@@ -31,12 +31,12 @@ class Sub:
         self.rgb = ros_numpy.numpify(topic)[:,:,:3]
 
 
-def GetDifferential(depth, ksize, compute_size):
+def GetDifferential(depth, ksize, gradient_interval, compute_size):
     org_size = (depth.shape[1],depth.shape[0])
     # TODO Parameterize
     ddepth = cv2.resize(depth, compute_size, interpolation=cv2.INTER_CUBIC)
     cvlap = cv2.Laplacian(ddepth, cv2.CV_32FC1,ksize=ksize)
-    cvgrad = cpp_ext.GetGradient(ddepth, 2)
+    cvgrad = cpp_ext.GetGradient(ddepth, gradient_interval)
     # Restore size
     cvlap = cv2.resize(cvlap, org_size, interpolation=cv2.INTER_NEAREST)
     cvgrad = cv2.resize(cvgrad, org_size, interpolation=cv2.INTER_NEAREST)
@@ -75,12 +75,12 @@ if __name__ == '__main__':
         rate.sleep()
         for cam_id in cameras:
             sub = subs[cam_id]
-            while True:
+            while not rospy.is_shutdown():
                 if sub.depth is None:
                     rate.sleep()
                     idepth += 1
                     if idepth % (100*len(cameras)) == 0:
-                        print("No depth for camea %d" % cam_id)
+                        rospy.loginfo("No depth for camea %d" % cam_id)
                     continue
                 else:
                     idepth = 0
@@ -88,7 +88,7 @@ if __name__ == '__main__':
                     rate.sleep()
                     irgb += 1
                     if irgb % (100*len(cameras)) == 0:
-                        print("No rgb for camea %d" % cam_id)
+                        rospy.loginfo("No rgb for camea %d" % cam_id)
                     continue
                 else:
                     irgb = 0
@@ -97,10 +97,15 @@ if __name__ == '__main__':
             cv_rgb = sub.rgb
             sub.depth = None
             sub.rgb = None
+            if depth is None:
+                break
+            if cv_rgb is None:
+                break
+
 
             #cvlap = cv2.Laplacian(depth, cv2.CV_32FC1,ksize=5)
             #cvgrad = cpp_ext.GetGradient(depth, 2)
-            cvlap, cvgrad = GetDifferential(depth, ksize=5, compute_size=(1280,960))
+            cvlap, cvgrad = GetDifferential(depth, ksize=5, gradient_interval=10, compute_size=(1280,960))
             blap_th = -0.2
 
 

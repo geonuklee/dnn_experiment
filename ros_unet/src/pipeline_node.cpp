@@ -62,7 +62,7 @@ void UpdateTcws(const std::vector<int>& cameras,
   Tcws.clear();
 
   ros::Rate rate(10);
-  while(true){
+  while(!ros::isShuttingDown()){
     for(int i : cameras){
       std::string name = "/cam"+std::to_string(i)+"/base_T_cam";
       std::vector<double> vec;
@@ -99,6 +99,8 @@ void UpdateTopics(const std::vector<int>& cameras,
   while( !ros::isShuttingDown() ){
     bool ready = true;
     for(int cam_id : cameras){
+      if(ros::isShuttingDown())
+        break;
       if(!rgbs.count(cam_id)){
         std::string img_name   = "cam"+ std::to_string(cam_id) +"/rgb";
         ROS_DEBUG("No topic for %s", subs.at(img_name).getTopic().c_str() );
@@ -135,6 +137,7 @@ ObbParam GetObbParam(ros::NodeHandle& nh){
   param.min_z_floor = GetRequiredParam<double>(nh, "min_z_floor");
   param.min_points_of_cluster = GetRequiredParam<double>(nh, "min_points_of_cluster");
   param.voxel_leaf = GetRequiredParam<double>(nh, "voxel_leaf");
+  param.euclidean_filter_tolerance = 2.* param.voxel_leaf;
   param.verbose = GetRequiredParam<bool>(nh, "verbose");
 
   {
@@ -225,6 +228,8 @@ int main(int argc, char **argv) {
   while(!ros::isShuttingDown()){
     UpdateTcws(cameras, nh, Tcws);
     UpdateTopics(cameras, nh, subs, rgbs, depths, camerainfos);
+    if(ros::isShuttingDown())
+      break;
 
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb;
     if(generate_points){

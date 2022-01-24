@@ -71,10 +71,12 @@ void ColorizeSegmentation(const std::map<int, pcl::PointCloud<pcl::PointXYZ>::Pt
   return;
 }
 
-pcl::PointIndices EuclideanFilterXYZ(pcl::PointCloud<pcl::PointXYZ>::Ptr given_cloud,
+pcl::PointIndices::Ptr EuclideanFilterXYZ(pcl::PointCloud<pcl::PointXYZ>::Ptr given_cloud,
                   const ObbParam& param,
                   bool reserve_best_only
                   ){
+  pcl::PointIndices::Ptr results(new pcl::PointIndices);
+
   // Creating the KdTree object for the search method of the extraction
   pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ>);
   tree->setInputCloud (given_cloud);
@@ -87,7 +89,7 @@ pcl::PointIndices EuclideanFilterXYZ(pcl::PointCloud<pcl::PointXYZ>::Ptr given_c
   ec.setInputCloud(given_cloud);
   ec.extract(cluster_indices);
   if(cluster_indices.empty())
-    return pcl::PointIndices();
+    return results;
 
   std::sort(std::begin(cluster_indices),
             std::end(cluster_indices),
@@ -103,14 +105,13 @@ pcl::PointIndices EuclideanFilterXYZ(pcl::PointCloud<pcl::PointXYZ>::Ptr given_c
       break;
   }
 
-  pcl::PointIndices results;
-  results.indices.reserve(n);
+  results->indices.reserve(n);
 
   for(const pcl::PointIndices& indices : cluster_indices){
     if(indices.indices.size() < param.min_points_of_cluster)
       break;
     for(const int& index : indices.indices)
-      results.indices.push_back(index);
+      results->indices.push_back(index);
     if(reserve_best_only)
       break;
   }
@@ -218,15 +219,18 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
     sor.setLeafSize (param.voxel_leaf, param.voxel_leaf, param.voxel_leaf);
     sor.filter(*it_cloud.second);
 
-    pcl::PointIndices indices = EuclideanFilterXYZ(it_cloud.second, param, true);
-    if(indices.indices.empty()){
+    pcl::PointIndices::Ptr indices = EuclideanFilterXYZ(it_cloud.second, param, true);
+    if(indices->indices.empty()){
       erase_list.insert(it_cloud.first);
       continue;
     }
+
     pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZ>);
-    filtered_cloud->reserve(indices.indices.size());
-    for(int idx : indices.indices)
-      filtered_cloud->push_back(it_cloud.second->at(idx));
+    pcl::ExtractIndices<pcl::PointXYZ> extract;
+    extract.setInputCloud(it_cloud.second);
+    extract.setIndices(indices);
+    extract.setNegative(false);
+    extract.filter(*filtered_cloud);
     clouds[it_cloud.first] = filtered_cloud;
   }
 
@@ -246,7 +250,6 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
     if(boundary_clouds.count(idx))
       boundary_clouds.erase(idx);
   }
-
 
   if(xyzrgb.get()){
     for(int r = 0; r < depth.rows; r++){
@@ -448,6 +451,41 @@ visualization_msgs::Marker GetMarker(const std::shared_ptr<unloader_msgs::Object
   return marker;
 }
 
+pcl::PointCloud<pcl::PointXYZ>::Ptr FilterEuclideanOnPlane(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
+                                                           const Eigen::Vector4f& plane,
+                                                           const ObbParam& param
+                                                           ){
+  pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZ>());
+  {
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    inliers->indices.reserve(cloud->points.size());
+    for(size_t i = 0; i < cloud->points.size(); i++){
+      const pcl::PointXYZ& pt = cloud->points[i];
+      float e = Eigen::Vector4f(pt.x, pt.y, pt.z, 1.).dot(plane);
+      if(std::abs(e) < param.max_surface_error_)
+        inliers->indices.push_back(i);
+    }
+
+    // Reserve the inliner points of champion as input of RANSAC plane detection.
+    pcl::ExtractIndices<pcl::PointXYZ> extract;
+    extract.setInputCloud(cloud);
+    extract.setIndices(inliers);
+    extract.setNegative(false);
+    extract.filter(*filtered_cloud);
+  }
+
+  // Euclidean filter after plane filter for cloud points.
+  {
+    pcl::PointIndices::Ptr inliers = EuclideanFilterXYZ(filtered_cloud, param, true);
+    pcl::ExtractIndices<pcl::PointXYZ> extract;
+    extract.setInputCloud(filtered_cloud);
+    extract.setIndices(inliers);
+    extract.setNegative(false);
+    extract.filter(*filtered_cloud);
+  }
+  return filtered_cloud;
+}
+
 
 bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
                 pcl::PointCloud<pcl::PointXYZ>::Ptr boundary,
@@ -495,7 +533,6 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
       Eigen::Vector3f n0_candi = u0_candi.cross(v0_candi).normalized();
       double cos_dir = std::abs( n0_candi.dot(depth_dir) );
 
-      // TODO  param tune?
       if(cos_dir < param.min_cos_dir)
         continue;
 
@@ -530,7 +567,6 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
     {
       // Reserve the inliner points of champion as input of RANSAC plane detection.
       pcl::ExtractIndices<pcl::PointXYZ> extract;
-      pcl::PointCloud<pcl::PointXYZ> tmp_inliers;
       pcl::PointCloud<pcl::PointXYZ>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZ>() );
       extract.setInputCloud(cloud);
       extract.setIndices(surface);
@@ -573,6 +609,9 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
       n0 = plane.head<3>();
     }
 
+    // Exclude boundary points departed from plane.
+    *boundary =  * FilterEuclideanOnPlane(boundary, plane, param);
+
     /*
     Calculate SE(3) transformation to {w}orld coordinate from {0} coordinate.
     Denote that 
@@ -607,7 +646,11 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
     std::vector<cv::Point2f> projected_points, contour;
     projected_points.reserve(boundary->size()+cloud->size() );
 
-    for(pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ptr : {boundary, cloud} ) {
+    pcl::PointCloud<pcl::PointXYZ>::Ptr surf_cloud = FilterEuclideanOnPlane(cloud, plane, param);
+    //*cloud = * FilterEuclideanOnPlane(cloud, plane, param);
+
+    for(pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ptr : {boundary, surf_cloud} ) {
+    //for(pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ptr : {boundary, cloud} ) {
     for(const pcl::PointXYZ& pt : *pc_ptr){
       Eigen::Vector3d x0 = Tw0.inverse() * cvt2eigen(pt);
       projected_points.push_back(cv::Point2f(x0[0],x0[1]) );
@@ -682,8 +725,8 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
       for(const pcl::PointXYZ& pt : *pc_ptr) {
         Eigen::Vector3d x1 = T1w * cvt2eigen(pt);
         // Get bounding box considering bended front plane by using points close to front plane only.
-        // 깊이 5cm 이하, 표면의 points만 사용해서, 강인한 결과값 획득하기 위한 조건문.
-        if(x1[2] > -0.05){
+        // 표면의 points만 사용해서, 강인한 결과값 획득하기 위한 조건문.
+        if(x1[2] > - param.max_surface_error_){
           for(size_t k=0; k<2; k++){
             min_x1[k] = std::min<double>(min_x1[k], x1[k]);
             max_x1[k] = std::max<double>(max_x1[k], x1[k]);
