@@ -31,6 +31,16 @@ class Sub:
         self.rgb = ros_numpy.numpify(topic)[:,:,:3]
 
 
+def GetDifferential(depth, ksize, compute_size):
+    org_size = (depth.shape[1],depth.shape[0])
+    # TODO Parameterize
+    ddepth = cv2.resize(depth, compute_size, interpolation=cv2.INTER_CUBIC)
+    cvlap = cv2.Laplacian(ddepth, cv2.CV_32FC1,ksize=ksize)
+    cvgrad = cpp_ext.GetGradient(ddepth, 2)
+    # Restore size
+    cvlap = cv2.resize(cvlap, org_size, interpolation=cv2.INTER_NEAREST)
+    cvgrad = cv2.resize(cvgrad, org_size, interpolation=cv2.INTER_NEAREST)
+    return cvlap, cvgrad
 
 if __name__ == '__main__':
     rospy.init_node('ros_unet', anonymous=True)
@@ -51,10 +61,12 @@ if __name__ == '__main__':
     #model.eval()
 
     spliter = SplitAdapter()
-    pubs_blap, pubs_vis_edge = {}, {}
+    pubs_mask, pubs_blap, pubs_vis_edge, pubs_vis_masks = {}, {}, {}, {}
     for cam_id in cameras:
+        pub_mask = rospy.Publisher("~cam%d/mask"%cam_id, Image, queue_size=1)
         pub_blap = rospy.Publisher("~cam%d/blap"%cam_id, Image, queue_size=1)
         pub_vis_edge = rospy.Publisher("~cam%d/vis_edge"%cam_id, Image, queue_size=1)
+        pubs_mask[cam_id] = pub_mask
         pubs_blap[cam_id] = pub_blap
         pubs_vis_edge[cam_id] = pub_vis_edge
 
@@ -86,10 +98,13 @@ if __name__ == '__main__':
             sub.depth = None
             sub.rgb = None
 
-            cvlap = cv2.Laplacian(depth, cv2.CV_32FC1,ksize=5)
-            cvgrad = cpp_ext.GetGradient(depth, 2)
+            #cvlap = cv2.Laplacian(depth, cv2.CV_32FC1,ksize=5)
+            #cvgrad = cpp_ext.GetGradient(depth, 2)
+            cvlap, cvgrad = GetDifferential(depth, ksize=5, compute_size=(1280,960))
+            blap_th = -0.2
 
-            blap = torch.Tensor(cvlap<-0.05).unsqueeze(0).unsqueeze(0).float()
+
+            blap = torch.Tensor(cvlap<blap_th).unsqueeze(0).unsqueeze(0).float()
             grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
             rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
 
@@ -105,8 +120,12 @@ if __name__ == '__main__':
             pred = pred.detach()
             pred = spliter.restore(pred)
 
+            pub_mask = pubs_mask[cam_id]
             pub_blap, pub_vis_edge = pubs_blap[cam_id], pubs_vis_edge[cam_id]
             mask = spliter.pred2mask(pred)
+
+            msg = ros_numpy.msgify(Image, mask, encoding='8UC1')
+            pub_mask.publish(msg)
 
             if pub_vis_edge.get_num_connections() > 0:
                 dst = spliter.mask2dst(mask)

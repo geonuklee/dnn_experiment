@@ -14,7 +14,7 @@ Segment2DEdgeSubscribe::Segment2DEdgeSubscribe(const sensor_msgs::CameraInfo& ca
       this->mask_ = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_8UC1)->image;
   };
 
-  std::string img_name = name+"/edge";
+  std::string img_name = name+"/mask";
   edge_subscriber_ = nh.subscribe<sensor_msgs::ImageConstPtr,
                    const sensor_msgs::ImageConstPtr& >(img_name, 1, img_callback);
 

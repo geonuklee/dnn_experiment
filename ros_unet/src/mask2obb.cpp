@@ -211,22 +211,42 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
   } // for r in rows
 
 
-  // Create the filtering object
+  std::set<int> erase_list;
   for(auto it_cloud : clouds){
     pcl::VoxelGrid<pcl::PointXYZ> sor;
     sor.setInputCloud(it_cloud.second);
     sor.setLeafSize (param.voxel_leaf, param.voxel_leaf, param.voxel_leaf);
     sor.filter(*it_cloud.second);
+
+    pcl::PointIndices indices = EuclideanFilterXYZ(it_cloud.second, param, true);
+    if(indices.indices.empty()){
+      erase_list.insert(it_cloud.first);
+      continue;
+    }
+    pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    filtered_cloud->reserve(indices.indices.size());
+    for(int idx : indices.indices)
+      filtered_cloud->push_back(it_cloud.second->at(idx));
+    clouds[it_cloud.first] = filtered_cloud;
   }
+
   for(auto it_cloud : boundary_clouds){
+    if(erase_list.count(it_cloud.first) )
+      continue;
     pcl::VoxelGrid<pcl::PointXYZ> sor;
     sor.setInputCloud(it_cloud.second);
     sor.setLeafSize (param.voxel_leaf, param.voxel_leaf, param.voxel_leaf);
     sor.filter(*it_cloud.second);
   }
 
-  // EdgeSegmentation 에는 Euclidean cluster 이 필요없다. 
-  // Yolact 와 달리 edge boundary에 민감해서 넘치지 않음.
+  // Remove instance without enough number of points at cluster output.
+  for(int idx : erase_list){
+    if(clouds.count(idx))
+      clouds.erase(idx);
+    if(boundary_clouds.count(idx))
+      boundary_clouds.erase(idx);
+  }
+
 
   if(xyzrgb.get()){
     for(int r = 0; r < depth.rows; r++){
@@ -433,6 +453,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
                 pcl::PointCloud<pcl::PointXYZ>::Ptr boundary,
                 const ObbParam& param,
                 const Eigen::Vector3f& depth_dir,
+                const Eigen::Vector3f& t_wc,
                 int cam_id,
                 std::shared_ptr<unloader_msgs::Object> obj,
                 std::shared_ptr<ObbProcessVisualizer> visualizer
@@ -545,8 +566,9 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
         plane[i] /= norm;
 
       // If normal vector is inverted, correct it.
-      if(plane.head<3>().dot(depth_dir) > 0.)
-        plane = -plane;
+      Eigen::Vector4f a(t_wc[0],t_wc[1],t_wc[2],1.);
+      if(plane.dot(a) < 0.)
+         plane = -plane;
 
       n0 = plane.head<3>();
     }
@@ -853,9 +875,11 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
                    std::shared_ptr<ObbProcessVisualizer> visualizer
                    ) {
 
-  Eigen::Vector3f depth_dir;{
+  Eigen::Vector3f depth_dir, t_wc;
+  {
     const Eigen::Vector3d& dir_d = Tcw.rotation().matrix().row(2);
     depth_dir = dir_d.cast<float>();
+    t_wc = Tcw.inverse().translation().cast<float>();
   }
 
   // The loop for each instance.
@@ -882,7 +906,7 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
       obj->visible_plane[i] = false;
     obj->point_cloud.header.frame_id = "robot";
 
-    if(! ComputeBoxOBB(cloud, boundary, param, depth_dir, cam_id,  obj, visualizer) )
+    if(! ComputeBoxOBB(cloud, boundary, param, depth_dir, t_wc, cam_id,  obj, visualizer) )
       continue;
 
     // Collect unsynced obb before matching.

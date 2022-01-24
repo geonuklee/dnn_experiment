@@ -88,6 +88,7 @@ void UpdateTcws(const std::vector<int>& cameras,
 
 void UpdateTopics(const std::vector<int>& cameras,
                   ros::NodeHandle& nh,
+                  const std::map<std::string, ros::Subscriber>& subs,
                   std::map<int, cv::Mat>& rgbs,
                   std::map<int, cv::Mat>& depths,
                   std::map<int, sensor_msgs::CameraInfo>& camerainfos
@@ -99,15 +100,18 @@ void UpdateTopics(const std::vector<int>& cameras,
     bool ready = true;
     for(int cam_id : cameras){
       if(!rgbs.count(cam_id)){
-        ROS_DEBUG("No rgb for cam %d", cam_id );
+        std::string img_name   = "cam"+ std::to_string(cam_id) +"/rgb";
+        ROS_DEBUG("No topic for %s", subs.at(img_name).getTopic().c_str() );
         ready = false;
       }
       else if(!depths.count(cam_id)){
-        ROS_DEBUG("No depth for cam %d", cam_id );
+        std::string depth_name = "cam"+ std::to_string(cam_id) +"/depth";
+        ROS_DEBUG("No topic for %s", subs.at(depth_name).getTopic().c_str() );
         ready = false;
       }
       else if(!camerainfos.count(cam_id)){
-        ROS_DEBUG("No camera_info for cam %d", cam_id );
+        std::string info_name  = "cam"+ std::to_string(cam_id) +"/camera_info";
+        ROS_DEBUG("No topic for %s", subs.at(info_name).getTopic().c_str() );
         ready = false;
       }
       if(!ready)
@@ -187,12 +191,12 @@ int main(int argc, char **argv) {
   std::map<int, std::shared_ptr<Segment2DAbstract > > segment2d;
   std::map<int, std::shared_ptr<ObbEstimator> > obb_estimators;
 
-  std::map<int, ros::Publisher> pub_clouds, pub_boundary;
+  std::map<int, ros::Publisher> pub_clouds, pub_boundary, pub_vis_mask;
   ros::Publisher pub_xyzrgb;
   if(generate_points)
     pub_xyzrgb = nh.advertise<sensor_msgs::PointCloud2>("xyzrgb",1);
 
-  UpdateTopics(cameras, nh, rgbs, depths, camerainfos);
+  UpdateTopics(cameras, nh, subs, rgbs, depths, camerainfos);
   for(int cam_id : cameras){
     std::string cam_name = "cam"+std::to_string(cam_id);
     segment2d[cam_id] = std::make_shared<Segment2DEdgeSubscribe>(camerainfos.at(cam_id),
@@ -203,6 +207,7 @@ int main(int argc, char **argv) {
     obb_estimators[cam_id] = std::make_shared<ObbEstimator>(camerainfos.at(cam_id) );
     pub_clouds[cam_id]   = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"/clouds",1);
     pub_boundary[cam_id] = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"/boundary",1);
+    pub_vis_mask[cam_id] = nh.advertise<sensor_msgs::Image>(cam_name+"/vis_mask",1);
   }
 
   std::map<int, MarkerCamera > marker_cameras;
@@ -219,7 +224,7 @@ int main(int argc, char **argv) {
   ros::Rate rate(2);
   while(!ros::isShuttingDown()){
     UpdateTcws(cameras, nh, Tcws);
-    UpdateTopics(cameras, nh, rgbs, depths, camerainfos);
+    UpdateTopics(cameras, nh, subs, rgbs, depths, camerainfos);
 
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb;
     if(generate_points){
@@ -259,12 +264,20 @@ int main(int argc, char **argv) {
 
       // TODO matching???
 
-      if(pub_clouds.at(cam_id).getNumSubscribers()){
+      if(pub_vis_mask.at(cam_id).getNumSubscribers() > 0){
+        cv::Mat rect_rgb = segmenter->GetRectifiedRgb();
+        cv::Mat dst = Overlap(rect_rgb, instance_marker);
+        cv_bridge::CvImage msg;
+        msg.encoding = sensor_msgs::image_encodings::TYPE_8UC3;
+        msg.image    = dst;
+        pub_vis_mask[cam_id].publish(msg.toImageMsg());
+      }
+      if(pub_clouds.at(cam_id).getNumSubscribers() > 0){
         sensor_msgs::PointCloud2 msg;
         ColorizeSegmentation(segmented_clouds, msg);
         pub_clouds.at(cam_id).publish(msg);
       }
-      if(pub_boundary.at(cam_id).getNumSubscribers()){
+      if(pub_boundary.at(cam_id).getNumSubscribers() > 0){
         sensor_msgs::PointCloud2 msg;
         ColorizeSegmentation(boundary_clouds, msg);
         pub_boundary.at(cam_id).publish(msg);

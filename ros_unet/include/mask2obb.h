@@ -71,7 +71,7 @@ struct ObbParam{
   /**
   @brief The minimum inner product between noraml direction of front plane and depth direction.
   */
-  double min_cos_dir = std::cos( (90.-50.) /180. * M_PI);
+  double min_cos_dir = std::cos( 110. /180. * M_PI);
 
   /**
   */
@@ -144,15 +144,6 @@ public:
   /**
   @brief It collects pose0 marker which will be published by Visualize().
   Denote that Pose0 is not a final pose of OBB.
-  See detail at ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
-                pcl::PointCloud<pcl::PointXYZ>::Ptr boundary,
-                const ObbParam& param,
-                const Eigen::Vector3f& depth_dir,
-                int cam_id,
-                std::shared_ptr<unloader_msgs::Object> obj,
-                std::shared_ptr<ObbProcessVisualizer> visualizer
-               ).
-
   */
   void PutPose0(const geometry_msgs::Pose& pose0);
   /**

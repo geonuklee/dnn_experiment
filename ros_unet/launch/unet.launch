@@ -30,7 +30,7 @@
 <arg name="match_method" default="0"/>
 
 <node name="rosbag" pkg="rosbag" type="play"
-    args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')"/>
+    args="-r 0.05 --loop $(arg filename)" required="true" unless="$(eval filename=='')"/>
 
 <node name="unet_node" pkg="ros_unet" type="ros_unet.py" output="screen" required="true">
     <remap from="~cam0/rgb"          to="/cam0/$(arg rgb)" />
@@ -49,12 +49,12 @@
     <remap from="~cam0/rgb"          to="/cam0/$(arg rgb)" />
     <remap from="~cam0/depth"        to="/cam0/$(arg depth)" />
     <remap from="~cam0/camera_info"  to="/cam0/$(arg info)" />
-    <remap from="~cam0/edge"         to="/unet_node/cam0/edge" />
+    <remap from="~cam0/mask"         to="/unet_node/cam0/mask" />
 
     <remap from="~cam1/rgb"          to="/cam1/$(arg rgb)" />
     <remap from="~cam1/depth"        to="/cam1/$(arg depth)" />
     <remap from="~cam1/camera_info"  to="/cam1/$(arg info)" />
-    <remap from="~cam1/edge"         to="/unet_node/cam1/edge" />
+    <remap from="~cam1/mask"         to="/unet_node/cam1/mask" />
 
     <rosparam subst_value="True">
       compute_image_size: [640, 480]

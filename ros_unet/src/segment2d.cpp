@@ -339,7 +339,6 @@ bool Segment2DEdgeBased::Process(const cv::Mat rgb,
   return _Process(rectified_rgb, depthmap, marker, groove_distance, instance2class, verbose);
 }
 
-
 bool Segment2DEdgeBased::_Process(cv::Mat rgb,
                         cv::Mat depth,
                         cv::Mat& marker,
@@ -531,7 +530,6 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
 
   if(verbose){
     cv::Mat dst = Overlap(rgb, marker);
-
     //cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
     //cv::imshow(name_+"seed", GetColoredLabel(seed) );
     //cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
@@ -539,7 +537,7 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
     // cv::imshow(name_+"groove", 255*groove );
     //cv::flip(dst,dst,0);
     //cv::flip(dst,dst,1);
-    cv::imshow(name_+"dst", dst);
+    //cv::imshow(name_+"dst", dst);
 
     cv::Mat norm_depth, norm_dist;
     cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
