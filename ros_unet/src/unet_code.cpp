@@ -2,8 +2,6 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 
-#if 1
-
 #include <opencv2/opencv.hpp>
 #include <memory.h>
 #include <vector>
@@ -52,10 +50,55 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
   const int rows = (int)shape.at(0);
   const int cols = (int)shape.at(1);
   const int size = 2*rows*cols;
-
   for (int i=0; i < size; i++)
     grad[i] = 0.;
+#if 1
+  const int hk = 3;
+  std::vector<float> samples0, samples;
+  samples0.reserve(2*hk+1);
+  samples.reserve(2*hk+1);
 
+  for (int r0=hk; r0<rows-hk-1; r0++) {
+    for (int c0=hk; c0<cols-hk-1; c0++) {
+      samples0.clear();   
+      samples.clear();   
+      { // Compute gx
+        int c = c0 + offset;
+        for(int r=r0-hk; r <= r0+hk; r++){
+          const float& d0 = depth[r*cols+c0];
+          samples0.push_back(d0);
+
+          const float& sample = depth[r*cols+c];
+          samples.push_back(sample);
+        }
+      }
+      // Differentitate from median sample.
+      std::sort(samples0.begin(), samples0.end());
+      std::sort(samples.begin(), samples.end());
+      float gx = (samples[hk] - samples0[hk] ) / offset;
+
+      samples0.clear();   
+      samples.clear();   
+      { // Compute gy
+        int r = r0 + offset;
+        for(int c=c0-hk; c <= c0+hk; c++){
+          const float& d0 = depth[r0*cols+c];
+          samples0.push_back(d0);
+
+          float sample = depth[r*cols+c];
+          samples.push_back(sample);
+        }
+      }
+      // Differentitate from median sample.
+      std::sort(samples0.begin(), samples0.end());
+      std::sort(samples.begin(), samples.end());
+      float gy = (samples[hk] - samples0[hk] ) / offset;
+      int idx0 = 2*(r0*cols + c0);
+      grad[idx0 ] = gx;
+      grad[idx0+1] = gy;
+    }
+  }
+#else
   for (int r0=0; r0<rows; r0++) {
     for (int c0=0; c0<cols; c0++) {
       const float& d0 = depth[r0*cols+c0];
@@ -71,6 +114,39 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
       int idx0 = 2*(r0*cols + c0);
       grad[idx0 ] = gx;
       grad[idx0+1] = gy;
+    }
+  }
+#endif
+  return;
+}
+
+void GetLaplacian(const float* depth,
+                  const std::vector<long int>& shape,
+                  float* lap
+                  ){
+  const int rows = (int)shape.at(0);
+  const int cols = (int)shape.at(1);
+  const int size = rows*cols;
+
+  const int goffset = 10;
+  float* grad = new float[2*size];
+  GetGradient(depth, shape, goffset, grad);
+
+  for (int i=0; i < size; i++)
+    lap[i] = 0.;
+
+  for (int r0=0; r0<rows; r0++) {
+    for (int c0=0; c0<cols; c0++) {
+      int idx = r0*cols + c0;
+      const float& gx0 = grad[2*idx];
+      const float& gy0 = grad[2*idx+1];
+
+      float gx = grad[2*(r0*cols+c0+1) ];
+      float gy = grad[2*((r0+1)*cols+c0) +1];
+
+      float lx = gx - gx0;
+      float ly = gy - gy0;
+      lap[idx] = std::min(lx,ly);
     }
   }
   return;
@@ -244,25 +320,26 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
   return output;
 }
 
+py::array_t<float> PyGetLaplacian(py::array_t<float> inputdepth) {
+  py::buffer_info buf_inputdepth = inputdepth.request();
+  /*  allocate the buffer */
+  py::array_t<float> output = py::array_t<float>(buf_inputdepth.size);
+  py::buffer_info buf_output = output.request();
+
+  const float* ptr_inputdepth = (const float*) buf_inputdepth.ptr;
+  float* ptr_output = (float*) buf_output.ptr;
+  GetLaplacian(ptr_inputdepth, buf_inputdepth.shape, ptr_output);
+
+  // reshape array to match input shape
+  output.resize({buf_inputdepth.shape[0], buf_inputdepth.shape[1]});
+  return output;
+}
+
 PYBIND11_MODULE(unet_ext, m) {
   m.def("FindEdge", &PyFindEdge, "find edge", py::arg("input_mask") );
   m.def("GetGradient", &PyGetGradient, "get gradient", py::arg("input_depth"), py::arg("offset") );
+  m.def("GetLaplacian", &PyGetLaplacian, "get laplacian", py::arg("depth"));
+
   m.def("UnprojectPointscloud", &PyUnprojectPointscloud, "Get rgbxyz and xyzi points cloud",
         py::arg("rgb"), py::arg("depth"), py::arg("labels"), py::arg("K"), py::arg("D"), py::arg("leaf_xy"), py::arg("leaf_z"));
 }
-
-#else
-
-int add(int i, int j) {
-    return i + j;
-}
-
-
-PYBIND11_MODULE(unet_ext, m) {
-  // https://developer.lsst.io/v/u-ktl-debug-fix/coding/python_wrappers_for_cpp_with_pybind11.html
-  m.doc() = "Add two vectors using pybind11"; // optional module docstring
-  m.def("add", &add, "A function which adds two numbers", pybind11::arg("i"), pybind11::arg("j")=20);
-
-}
-
-#endif

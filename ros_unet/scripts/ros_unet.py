@@ -34,13 +34,19 @@ class Sub:
 def GetDifferential(depth, ksize, gradient_interval, compute_size):
     org_size = (depth.shape[1],depth.shape[0])
     # TODO Parameterize
-    ddepth = cv2.resize(depth, compute_size, interpolation=cv2.INTER_CUBIC)
-    cvlap = cv2.Laplacian(ddepth, cv2.CV_32FC1,ksize=ksize)
-    cvgrad = cpp_ext.GetGradient(ddepth, gradient_interval)
-    # Restore size
-    cvlap = cv2.resize(cvlap, org_size, interpolation=cv2.INTER_NEAREST)
-    cvgrad = cv2.resize(cvgrad, org_size, interpolation=cv2.INTER_NEAREST)
+    #ddepth = cv2.resize(depth, compute_size, interpolation=cv2.INTER_CUBIC)
+    #cvgrad = cpp_ext.GetGradient(ddepth, gradient_interval)
+    #cvlap = cpp_ext.GetLaplacian(ddepth)
+
+    ## Restore size
+    #cvlap = cv2.resize(cvlap, org_size, interpolation=cv2.INTER_NEAREST)
+    #cvgrad = cv2.resize(cvgrad, org_size, interpolation=cv2.INTER_NEAREST)
+
+    cvgrad = cpp_ext.GetGradient(depth, gradient_interval)
+    cvlap = cpp_ext.GetLaplacian(depth)
+
     return cvlap, cvgrad
+
 
 if __name__ == '__main__':
     rospy.init_node('ros_unet', anonymous=True)
@@ -102,21 +108,21 @@ if __name__ == '__main__':
             if cv_rgb is None:
                 break
 
+            cvlap, cvgrad = GetDifferential(depth, ksize=5, gradient_interval=1, compute_size=(1280,960))
 
-            #cvlap = cv2.Laplacian(depth, cv2.CV_32FC1,ksize=5)
-            #cvgrad = cpp_ext.GetGradient(depth, 2)
-            cvlap, cvgrad = GetDifferential(depth, ksize=5, gradient_interval=10, compute_size=(1280,960))
-            blap_th = -0.2
+            max_grad = 1.
+            cvgrad[cvgrad > max_grad] = max_grad
+            cvgrad[cvgrad < -max_grad] = -max_grad
 
-
-            blap = torch.Tensor(cvlap<blap_th).unsqueeze(0).unsqueeze(0).float()
+            cv_bedge = cvlap < -0.0005
+            bedge = torch.Tensor(cv_bedge).unsqueeze(0).unsqueeze(0).float()
             grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
             rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
 
             if input_ch == 3: # If edge detection only
-                input_x = torch.cat((blap,grad),dim=1)
+                input_x = torch.cat((bedge,grad),dim=1)
             elif input_ch == 6: # If try to detect edge and box, both of them.
-                input_x = torch.cat((blap,grad,rgb),dim=1)
+                input_x = torch.cat((bedge,grad,rgb),dim=1)
             else:
                 assert(False)
 
@@ -138,8 +144,12 @@ if __name__ == '__main__':
                 msg = ros_numpy.msgify(Image, dst, encoding='8UC3')
                 pub_vis_edge.publish(msg)
             if pub_blap.get_num_connections() > 0:
-                blap = blap.moveaxis(0,-1).squeeze(0).numpy().astype(np.uint8)
-                msg = ros_numpy.msgify(Image, 255*blap, encoding='8UC1')
+                msg = ros_numpy.msgify(Image, 255*cv_bedge.astype(np.uint8), encoding='8UC1')
                 pub_blap.publish(msg)
+
+            cv2.imshow("blap", 255*(cv_bedge).astype(np.uint8) )
+            if cv2.waitKey(1) == ord('q'):
+                break
+
 
 
