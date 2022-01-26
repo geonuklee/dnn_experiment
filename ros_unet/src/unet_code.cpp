@@ -56,11 +56,45 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
   const int size = 2*rows*cols;
   for (int i=0; i < size; i++)
     grad[i] = 0.;
-#if 1
+
   const int hk = (sample_width-1)/2;
   std::vector<float> samples0, samples;
   samples0.reserve(sample_width);
   samples.reserve(sample_width);
+
+  enum SAMPLE_METHOD{
+    MEAN,
+    MEDIAN,
+    MEAN_EXCLUDE_EXTREM
+  };
+
+  SAMPLE_METHOD sample_method = MEAN_EXCLUDE_EXTREM;
+
+  auto GetValue = [&sample_method](std::vector<float>& values){
+    if(sample_method == MEAN){
+      // Mean - 실험결과 mean 이 더 정확했음.
+      float sum = 0.;
+      for(const float& v : values)
+        sum += v;
+      return sum / (float) values.size();
+    }
+    else if(sample_method == MEDIAN){
+      std::sort(values.begin(), values.end());
+      return values[values.size()/2];
+    }
+    else if(sample_method == MEAN_EXCLUDE_EXTREM){
+      std::sort(values.begin(), values.end());
+      const int extrem = values.size()/3;
+      float sum = 0.;
+      int k = 0;
+      for(size_t i = extrem; i < values.size()-extrem; i++){
+        k++;
+        sum += values[k];
+      }
+      return sum / (float) k;
+    }
+    return -1.f;
+  };
 
   for (int r0=hk; r0<rows-hk-1; r0++) {
     for (int c0=hk; c0<cols-hk-1; c0++) {
@@ -83,11 +117,8 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
       float gx;
       if(samples0.empty() || samples.empty() )
         gx = 0.;
-      else {
-        std::sort(samples0.begin(), samples0.end());
-        std::sort(samples.begin(), samples.end());
-        gx = (samples[samples.size()/2] - samples0[samples0.size()/2] ) / sample_offset;
-      }
+      else
+        gx = (GetValue(samples) - GetValue(samples0) ) / sample_offset;
 
       samples0.clear();   
       samples.clear();   
@@ -107,36 +138,14 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
       float gy;
       if(samples0.empty() || samples.empty() )
         gy = 0.;
-      else{
-        // Differentitate from median sample.
-        std::sort(samples0.begin(), samples0.end());
-        std::sort(samples.begin(), samples.end());
-        gy = (samples[samples.size()/2] - samples0[samples0.size()/2] ) / sample_offset;
-      }
+      else
+        gy = (GetValue(samples) - GetValue(samples0) ) / sample_offset;
+
       int idx0 = 2*(r0*cols + c0);
       grad[idx0 ] = gx;
       grad[idx0+1] = gy;
     }
   }
-#else
-  for (int r0=0; r0<rows; r0++) {
-    for (int c0=0; c0<cols; c0++) {
-      const float& d0 = depth[r0*cols+c0];
-      float gx, gy;
-      if(c0+offset < cols)
-        gx = (depth[r0*cols+(c0+offset)] - d0 ) / offset;
-      else
-        gx = (d0 - depth[r0*cols+(c0-offset)] ) / offset;
-      if(r0+offset < rows)
-        gy = (depth[(r0+offset)*cols + c0] - d0 ) / offset;
-      else
-        gy = (d0 - depth[(r0-offset)*cols + c0] ) / offset;
-      int idx0 = 2*(r0*cols + c0);
-      grad[idx0 ] = gx;
-      grad[idx0+1] = gy;
-    }
-  }
-#endif
   return;
 }
 

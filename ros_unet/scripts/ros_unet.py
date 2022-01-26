@@ -97,7 +97,7 @@ if __name__ == '__main__':
             cvgrad[cvgrad > max_grad] = max_grad
             cvgrad[cvgrad < -max_grad] = -max_grad
 
-            cv_bedge = cvlap < -0.007
+            cv_bedge = cvlap < -0.005
             bedge = torch.Tensor(cv_bedge).unsqueeze(0).unsqueeze(0).float()
             grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
             rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
