@@ -30,24 +30,6 @@ class Sub:
             return
         self.rgb = ros_numpy.numpify(topic)[:,:,:3]
 
-
-def GetDifferential(depth, ksize, gradient_interval, compute_size):
-    org_size = (depth.shape[1],depth.shape[0])
-    # TODO Parameterize
-    #ddepth = cv2.resize(depth, compute_size, interpolation=cv2.INTER_CUBIC)
-    #cvgrad = cpp_ext.GetGradient(ddepth, gradient_interval)
-    #cvlap = cpp_ext.GetLaplacian(ddepth)
-
-    ## Restore size
-    #cvlap = cv2.resize(cvlap, org_size, interpolation=cv2.INTER_NEAREST)
-    #cvgrad = cv2.resize(cvgrad, org_size, interpolation=cv2.INTER_NEAREST)
-
-    cvgrad = cpp_ext.GetGradient(depth, gradient_interval)
-    cvlap = cpp_ext.GetLaplacian(depth)
-
-    return cvlap, cvgrad
-
-
 if __name__ == '__main__':
     rospy.init_node('ros_unet', anonymous=True)
     rate = rospy.Rate(hz=100)
@@ -108,13 +90,14 @@ if __name__ == '__main__':
             if cv_rgb is None:
                 break
 
-            cvlap, cvgrad = GetDifferential(depth, ksize=5, gradient_interval=1, compute_size=(1280,960))
+            cvgrad = cpp_ext.GetGradient(depth, sample_offset=1, sample_width=5)
+            cvlap = cpp_ext.GetLaplacian(depth, grad_sample_offset=1, grad_sample_width=7)
 
             max_grad = 1.
             cvgrad[cvgrad > max_grad] = max_grad
             cvgrad[cvgrad < -max_grad] = -max_grad
 
-            cv_bedge = cvlap < -0.0005
+            cv_bedge = cvlap < -0.007
             bedge = torch.Tensor(cv_bedge).unsqueeze(0).unsqueeze(0).float()
             grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
             rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
@@ -148,6 +131,8 @@ if __name__ == '__main__':
                 pub_blap.publish(msg)
 
             cv2.imshow("blap", 255*(cv_bedge).astype(np.uint8) )
+            cv2.imshow("gx", cvgrad[:,:,0])
+            cv2.moveWindow("gx", 700, 0)
             if cv2.waitKey(1) == ord('q'):
                 break
 

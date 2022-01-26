@@ -647,10 +647,8 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
     projected_points.reserve(boundary->size()+cloud->size() );
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr surf_cloud = FilterEuclideanOnPlane(cloud, plane, param);
-    //*cloud = * FilterEuclideanOnPlane(cloud, plane, param);
 
     for(pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ptr : {boundary, surf_cloud} ) {
-    //for(pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ptr : {boundary, cloud} ) {
     for(const pcl::PointXYZ& pt : *pc_ptr){
       Eigen::Vector3d x0 = Tw0.inverse() * cvt2eigen(pt);
       projected_points.push_back(cv::Point2f(x0[0],x0[1]) );
@@ -721,20 +719,26 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
       // Use boundary+inner points for defining OBB size instead of cloud (points),
       // I thought cloud (points) have no adventage for size accuracy,
       // But actually it has for rotated boxes.
-      for(pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ptr : {boundary, cloud} ) {
-      for(const pcl::PointXYZ& pt : *pc_ptr) {
-        Eigen::Vector3d x1 = T1w * cvt2eigen(pt);
-        // Get bounding box considering bended front plane by using points close to front plane only.
-        // 표면의 points만 사용해서, 강인한 결과값 획득하기 위한 조건문.
-        if(x1[2] > - param.max_surface_error_){
-          for(size_t k=0; k<2; k++){
-            min_x1[k] = std::min<double>(min_x1[k], x1[k]);
-            max_x1[k] = std::max<double>(max_x1[k], x1[k]);
+      for(pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ptr : {boundary, surf_cloud} ) {
+        for(const pcl::PointXYZ& pt : *pc_ptr) {
+          Eigen::Vector3d x1 = T1w * cvt2eigen(pt);
+          // 표면의 points만 사용해서, 강인한 결과값 획득하기 위한 조건문.
+          if(x1[2] > - param.max_surface_error_){
+            for(size_t k=0; k<2; k++){
+              min_x1[k] = std::min<double>(min_x1[k], x1[k]);
+              max_x1[k] = std::max<double>(max_x1[k], x1[k]);
+            }
           }
         }
-        min_x1[2] = std::min<double>(min_x1[2], x1[2]);
       }
+
+      for(pcl::PointCloud<pcl::PointXYZ>::Ptr pc_ptr : {boundary, cloud} ){
+        for(const pcl::PointXYZ& pt : *pc_ptr) {
+          Eigen::Vector3d x1 = T1w * cvt2eigen(pt);
+          min_x1[2] = std::min<double>(min_x1[2], x1[2]);
+        }
       }
+
 
       {
         double w = max_x1[0]-min_x1[0];
