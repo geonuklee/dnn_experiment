@@ -49,15 +49,21 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
                  int sample_width,
                  float fx,
                  float fy,
-                 float* grad) {
+                 float* grad,
+                 bool* valid
+                 ) {
   assert(sample_width > 2);
   assert(sample_width%2 == 1);
+  const float max_depth_diff = 0.1; // TODO parameterize
 
   const int rows = (int)shape.at(0);
   const int cols = (int)shape.at(1);
   const int size = 2*rows*cols;
   for (int i=0; i < size; i++)
     grad[i] = 0.;
+  if(valid)
+    for (int i=0; i < size; i++)
+      valid[i] = false;
 
   const int hk = (sample_width-1)/2;
   std::vector<float> samples0, samples;
@@ -86,7 +92,7 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
     }
     else if(sample_method == MEAN_EXCLUDE_EXTREM){
       std::sort(values.begin(), values.end());
-      const int extrem = values.size()/3;
+      const int extrem = values.size()/4;
       float sum = 0.;
       int k = 0;
       for(size_t i = extrem; i < values.size()-extrem; i++){
@@ -98,32 +104,43 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
     return -1.f;
   };
 
-  for (int r0=hk; r0<rows-hk-1; r0++) {
-    for (int c0=hk; c0<cols-hk-1; c0++) {
+  int boader = sample_offset + hk + 1;
+  for (int r0=boader; r0<rows-boader; r0++) {
+    for (int c0=boader; c0<cols-boader; c0++) {
+      const float& d_cp = depth[r0*cols+c0];
+      int idx0 = 2*(r0*cols + c0);
+
       samples0.clear();   
       samples.clear();   
       { // Sample depth for gx
         int c = c0 + sample_offset;
         for(int r=r0-hk; r <= r0+hk; r++){
           const float& d0 = depth[r*cols+c0];
-          if(d0 > 0.)
+          if(std::abs(d_cp-d0) > max_depth_diff)
+            break;
+          else if(d0 > 0.)
             samples0.push_back(d0);
+          else
+            break;
 
           const float& sample = depth[r*cols+c];
-          if(sample > 0.)
+          if(std::abs(d_cp-sample) > max_depth_diff)
+            break;
+          else if(sample > 0.)
             samples.push_back(sample);
+          else
+            break;
         }
       }
 
-      // Differentitate from median sample.
-      float gx;
-      if(samples0.empty() || samples.empty() )
-        gx = 0.;
-      else{
-        // TODO replace sample_offset to dx computed by focal length.
-        float d0 = GetValue(samples);
+      if(samples0.size() == sample_width && samples.size() == sample_width) {
+        float d0 = GetValue(samples0);
+        float d1 = GetValue(samples);
         float dx = (float) sample_offset * d0 / fx;
-        gx = (d0 - GetValue(samples0) ) / dx;
+        // gx
+        grad[idx0] = (d1 - d0) / dx;
+        if(valid)
+          valid[idx0] = true;
       }
 
       samples0.clear();   
@@ -134,25 +151,25 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
           const float& d0 = depth[r0*cols+c];
           if(d0 > 0.)
             samples0.push_back(d0);
-
+          else
+            break;
           const float& sample = depth[r*cols+c];
           if(sample > 0.)
             samples.push_back(sample);
+          else
+            break;
         }
       }
 
-      float gy;
-      if(samples0.empty() || samples.empty() )
-        gy = 0.;
-      else{
-        float d0 = GetValue(samples);
+      if(samples0.size() == sample_width && samples.size() == sample_width){
+        float d0 = GetValue(samples0);
+        float d1 = GetValue(samples);
         float dy = (float) sample_offset * d0 / fy;
-        gy = (d0 - GetValue(samples0) ) / dy;
+        // gy
+        grad[idx0+1] = (d1 - d0 ) / dy;
+        if(valid)
+          valid[idx0+1] = true;
       }
-
-      int idx0 = 2*(r0*cols + c0);
-      grad[idx0 ] = gx;
-      grad[idx0+1] = gy;
     }
   }
   return;
@@ -171,7 +188,8 @@ void GetLaplacian(const float* depth,
   const int size = rows*cols;
 
   float* grad = new float[2*size];
-  GetGradient(depth, shape, grad_sample_offset, grad_sample_width, fx, fy, grad);
+  bool* valid = new bool[2*size];
+  GetGradient(depth, shape, grad_sample_offset, grad_sample_width, fx, fy, grad, valid);
 
   for (int i=0; i < size; i++)
     lap[i] = 0.;
@@ -181,23 +199,48 @@ void GetLaplacian(const float* depth,
   for (int r0=0; r0<rows; r0++) {
     for (int c0=0; c0<cols; c0++) {
       int idx = r0*cols + c0;
-      const float& d0 = depth[r0*cols+c0];
+      int r = r0+duv;
+      int c = c0+duv;
+      const float& d0  = depth[r0*cols+c0];
+      const float& d1x = depth[r0*cols+c ];
+      const float& d1y = depth[ r*cols+c0];
       if(d0 == 0.)
         continue;
-      float dx = (float) duv * d0 / fx;
-      float dy = (float) duv * d0 / fy;
 
-      const float& gx0 = grad[2*idx];
-      const float& gy0 = grad[2*idx+1];
+      float lx = 0.;
+      int xidx = 2*(r0*cols+c);
+      bool bx = false;
+      if(valid[2*idx] && valid[xidx]){
+        float dx = (float) duv * d0 / fx;
+        float gx = grad[xidx];
+        const float& gx0 = grad[2*idx];
+        lx = (gx - gx0) / dx;
+        bx = true;
+      }
 
-      float gx = grad[2*(r0*cols+c0+duv) ];
-      float gy = grad[2*((r0+duv)*cols+c0) +1];
+      float ly = 0.;
+      int yidx = 2*(r*cols+c0) + 1;
+      bool by = false;
+      if(valid[2*idx+1] && valid[yidx]){
+        float dy = (float) duv * d0 / fy;
+        float gy = grad[yidx];
+        const float& gy0 = grad[2*idx+1];
+        ly = (gy - gy0) / dy;
+        by = true;
+      }
 
-      float lx = (gx - gx0) / dx;
-      float ly = (gy - gy0) / dy;
-      lap[idx] = std::min(lx,ly);
+      if(bx && by)
+        lap[idx] = std::min(lx,ly);
+      else if(bx)
+        lap[idx] = lx;
+      else if(by)
+        lap[idx] = ly;
+
     }
   }
+
+  delete[] grad;
+  delete[] valid;
   return;
 }
 
@@ -232,7 +275,7 @@ py::array_t<float> PyGetGradient(py::array_t<float> inputdepth,
 
   const float* ptr_inputdepth = (const float*) buf_inputdepth.ptr;
   float* ptr_output = (float*) buf_output.ptr;
-  GetGradient(ptr_inputdepth, buf_inputdepth.shape, sample_offset, sample_width, fx, fy, ptr_output);
+  GetGradient(ptr_inputdepth, buf_inputdepth.shape, sample_offset, sample_width, fx, fy, ptr_output, nullptr);
 
   // reshape array to match input shape
   output.resize({buf_inputdepth.shape[0], buf_inputdepth.shape[1], 2L});

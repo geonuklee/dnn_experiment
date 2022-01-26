@@ -108,18 +108,22 @@ if __name__ == '__main__':
 
             fx, fy = info.K[0], info.K[4]
             cvgrad=cpp_ext.GetGradient(depth,sample_offset=5,sample_width=7,fx=fx,fy=fy)
+
             if False:
                 cvlap=cpp_ext.GetLaplacian(depth,grad_sample_offset=1,grad_sample_width=7,fx=fx,fy=fy)
                 th_lap = -500
             else:
                 cvlap=cpp_ext.GetLaplacian(depth,grad_sample_offset=5,grad_sample_width=7,fx=fx,fy=fy)
                 th_lap = -100
+            cv_bedge = cvlap < th_lap
 
-            max_grad = 1.
+            max_grad = 2
             cvgrad[cvgrad > max_grad] = max_grad
             cvgrad[cvgrad < -max_grad] = -max_grad
+            curvature_min = 1. / 0.01
+            cvlap[cvlap > curvature_min] = curvature_min
+            cvlap[cvlap < -curvature_min] = -curvature_min
 
-            cv_bedge = cvlap < th_lap
             bedge = torch.Tensor(cv_bedge).unsqueeze(0).unsqueeze(0).float()
             grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
             rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
@@ -152,7 +156,8 @@ if __name__ == '__main__':
                 msg = ros_numpy.msgify(Image, 255*cv_bedge.astype(np.uint8), encoding='8UC1')
                 pub_blap.publish(msg)
 
-            cv2.imshow("blap", 255*(cv_bedge).astype(np.uint8) )
+            #cv2.imshow("blap", 255*(cv_bedge).astype(np.uint8) )
+            cv2.imshow("cvlap", cvlap)
             cv2.imshow("gx", cvgrad[:,:,0])
             cv2.moveWindow("gx", 700, 50)
             cv2.imshow("gy", cvgrad[:,:,1])
