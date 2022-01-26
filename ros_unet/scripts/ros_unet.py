@@ -3,7 +3,7 @@
 
 import rospy
 import numpy as np
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 import cv2
 import torch
 
@@ -14,11 +14,13 @@ import unet_ext as cpp_ext
 import ros_numpy
 
 class Sub:
-    def __init__(self, rgb, depth):
+    def __init__(self, rgb, depth, info):
         self.sub_depth = rospy.Subscriber(depth, Image, self.cb_depth, queue_size=1)
-        self.sub_rgb = rospy.Subscriber(rgb, Image, self.cb_rgb, queue_size=1)
+        self.sub_rgb   = rospy.Subscriber(rgb, Image, self.cb_rgb, queue_size=1)
+        self.sub_info  = rospy.Subscriber(info, CameraInfo, self.cb_info, queue_size=1)
         self.depth = None
         self.rgb = None
+        self.info = None
 
     def cb_depth(self, topic):
         if self.depth is not None:
@@ -30,13 +32,18 @@ class Sub:
             return
         self.rgb = ros_numpy.numpify(topic)[:,:,:3]
 
+    def cb_info(self, topic):
+        if self.info is not None:
+            return
+        self.info = topic
+
 if __name__ == '__main__':
     rospy.init_node('ros_unet', anonymous=True)
     rate = rospy.Rate(hz=100)
     cameras = rospy.get_param("~cameras")
     subs = {}
     for cam_id in cameras:
-        sub = Sub("~cam%d/rgb"%cam_id, "~cam%d/depth"%cam_id)
+        sub = Sub("~cam%d/rgb"%cam_id, "~cam%d/depth"%cam_id, "~cam%d/info"%cam_id)
         subs[cam_id] = sub
     fn = rospy.get_param('~weight_file')
     input_ch = rospy.get_param('~input_ch')
@@ -58,7 +65,7 @@ if __name__ == '__main__':
         pubs_blap[cam_id] = pub_blap
         pubs_vis_edge[cam_id] = pub_vis_edge
 
-    irgb, idepth = 0, 0
+    irgb, idepth, iinfo = 0, 0, 0
     while not rospy.is_shutdown():
         rate.sleep()
         for cam_id in cameras:
@@ -80,9 +87,18 @@ if __name__ == '__main__':
                     continue
                 else:
                     irgb = 0
+                if sub.info is None:
+                    rate.sleep()
+                    iinfo += 1
+                    if iinfo % (100*len(cameras)) == 0:
+                        rospy.loginfo("No info for camea %d" % cam_id)
+                    continue
+                else:
+                    iinfo = 0
                 break
             depth = sub.depth
             cv_rgb = sub.rgb
+            info = sub.info
             sub.depth = None
             sub.rgb = None
             if depth is None:
@@ -90,14 +106,20 @@ if __name__ == '__main__':
             if cv_rgb is None:
                 break
 
-            cvgrad = cpp_ext.GetGradient(depth, sample_offset=1, sample_width=5)
-            cvlap = cpp_ext.GetLaplacian(depth, grad_sample_offset=1, grad_sample_width=7)
+            fx, fy = info.K[0], info.K[4]
+            cvgrad=cpp_ext.GetGradient(depth,sample_offset=5,sample_width=7,fx=fx,fy=fy)
+            if False:
+                cvlap=cpp_ext.GetLaplacian(depth,grad_sample_offset=1,grad_sample_width=7,fx=fx,fy=fy)
+                th_lap = -500
+            else:
+                cvlap=cpp_ext.GetLaplacian(depth,grad_sample_offset=5,grad_sample_width=7,fx=fx,fy=fy)
+                th_lap = -100
 
             max_grad = 1.
             cvgrad[cvgrad > max_grad] = max_grad
             cvgrad[cvgrad < -max_grad] = -max_grad
 
-            cv_bedge = cvlap < -0.005
+            cv_bedge = cvlap < th_lap
             bedge = torch.Tensor(cv_bedge).unsqueeze(0).unsqueeze(0).float()
             grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
             rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
@@ -132,7 +154,10 @@ if __name__ == '__main__':
 
             cv2.imshow("blap", 255*(cv_bedge).astype(np.uint8) )
             cv2.imshow("gx", cvgrad[:,:,0])
-            cv2.moveWindow("gx", 700, 0)
+            cv2.moveWindow("gx", 700, 50)
+            cv2.imshow("gy", cvgrad[:,:,1])
+            cv2.moveWindow("gy", 700, 600)
+
             if cv2.waitKey(1) == ord('q'):
                 break
 

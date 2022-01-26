@@ -35,8 +35,10 @@
 <node name="unet_node" pkg="ros_unet" type="ros_unet.py" output="screen" required="true">
     <remap from="~cam0/rgb"          to="/cam0/$(arg rgb)" />
     <remap from="~cam0/depth"        to="/cam0/$(arg depth)" />
+    <remap from="~cam0/info"         to="/cam0/$(arg info)" />
     <remap from="~cam1/rgb"          to="/cam1/$(arg rgb)" />
     <remap from="~cam1/depth"        to="/cam1/$(arg depth)" />
+    <remap from="~cam1/info"         to="/cam1/$(arg info)" />
 
     <rosparam subst_value="True">
       input_ch: 3

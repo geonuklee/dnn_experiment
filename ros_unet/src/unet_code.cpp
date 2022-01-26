@@ -47,6 +47,8 @@ int FindEdge(const unsigned char *arr_in, const std::vector<long int>& shape,
 void GetGradient(const float* depth, const std::vector<long int>& shape,
                  int sample_offset,
                  int sample_width,
+                 float fx,
+                 float fy,
                  float* grad) {
   assert(sample_width > 2);
   assert(sample_width%2 == 1);
@@ -117,8 +119,12 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
       float gx;
       if(samples0.empty() || samples.empty() )
         gx = 0.;
-      else
-        gx = (GetValue(samples) - GetValue(samples0) ) / sample_offset;
+      else{
+        // TODO replace sample_offset to dx computed by focal length.
+        float d0 = GetValue(samples);
+        float dx = (float) sample_offset * d0 / fx;
+        gx = (d0 - GetValue(samples0) ) / dx;
+      }
 
       samples0.clear();   
       samples.clear();   
@@ -138,8 +144,11 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
       float gy;
       if(samples0.empty() || samples.empty() )
         gy = 0.;
-      else
-        gy = (GetValue(samples) - GetValue(samples0) ) / sample_offset;
+      else{
+        float d0 = GetValue(samples);
+        float dy = (float) sample_offset * d0 / fy;
+        gy = (d0 - GetValue(samples0) ) / dy;
+      }
 
       int idx0 = 2*(r0*cols + c0);
       grad[idx0 ] = gx;
@@ -153,6 +162,8 @@ void GetLaplacian(const float* depth,
                   const std::vector<long int>& shape,
                   int grad_sample_offset,
                   int grad_sample_width,
+                  float fx,
+                  float fy,
                   float* lap
                   ){
   const int rows = (int)shape.at(0);
@@ -160,22 +171,30 @@ void GetLaplacian(const float* depth,
   const int size = rows*cols;
 
   float* grad = new float[2*size];
-  GetGradient(depth, shape, grad_sample_offset, grad_sample_width, grad);
+  GetGradient(depth, shape, grad_sample_offset, grad_sample_width, fx, fy, grad);
 
   for (int i=0; i < size; i++)
     lap[i] = 0.;
 
+  const int duv = 1;
+
   for (int r0=0; r0<rows; r0++) {
     for (int c0=0; c0<cols; c0++) {
       int idx = r0*cols + c0;
+      const float& d0 = depth[r0*cols+c0];
+      if(d0 == 0.)
+        continue;
+      float dx = (float) duv * d0 / fx;
+      float dy = (float) duv * d0 / fy;
+
       const float& gx0 = grad[2*idx];
       const float& gy0 = grad[2*idx+1];
 
-      float gx = grad[2*(r0*cols+c0+1) ];
-      float gy = grad[2*((r0+1)*cols+c0) +1];
+      float gx = grad[2*(r0*cols+c0+duv) ];
+      float gy = grad[2*((r0+duv)*cols+c0) +1];
 
-      float lx = gx - gx0;
-      float ly = gy - gy0;
+      float lx = (gx - gx0) / dx;
+      float ly = (gy - gy0) / dy;
       lap[idx] = std::min(lx,ly);
     }
   }
@@ -201,7 +220,9 @@ py::array_t<unsigned char> PyFindEdge(py::array_t<unsigned char> inputmask) {
 
 py::array_t<float> PyGetGradient(py::array_t<float> inputdepth,
                                  int sample_offset,
-                                 int sample_width
+                                 int sample_width,
+                                 float fx,
+                                 float fy
                                  ) {
   py::buffer_info buf_inputdepth = inputdepth.request();
 
@@ -211,7 +232,7 @@ py::array_t<float> PyGetGradient(py::array_t<float> inputdepth,
 
   const float* ptr_inputdepth = (const float*) buf_inputdepth.ptr;
   float* ptr_output = (float*) buf_output.ptr;
-  GetGradient(ptr_inputdepth, buf_inputdepth.shape, sample_offset, sample_width, ptr_output);
+  GetGradient(ptr_inputdepth, buf_inputdepth.shape, sample_offset, sample_width, fx, fy, ptr_output);
 
   // reshape array to match input shape
   output.resize({buf_inputdepth.shape[0], buf_inputdepth.shape[1], 2L});
@@ -355,7 +376,9 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
 
 py::array_t<float> PyGetLaplacian(py::array_t<float> inputdepth,
                                   int grad_sample_offset,
-                                  int grad_sample_width
+                                  int grad_sample_width,
+                                  float fx,
+                                  float fy
                                   ) {
   py::buffer_info buf_inputdepth = inputdepth.request();
   /*  allocate the buffer */
@@ -368,6 +391,8 @@ py::array_t<float> PyGetLaplacian(py::array_t<float> inputdepth,
                buf_inputdepth.shape,
                grad_sample_offset,
                grad_sample_width,
+               fx,
+               fy,
                ptr_output);
 
   // reshape array to match input shape
@@ -378,9 +403,11 @@ py::array_t<float> PyGetLaplacian(py::array_t<float> inputdepth,
 PYBIND11_MODULE(unet_ext, m) {
   m.def("FindEdge", &PyFindEdge, "find edge", py::arg("input_mask") );
   m.def("GetGradient", &PyGetGradient, "get gradient",
-        py::arg("depth"), py::arg("sample_offset"), py::arg("sample_width") );
+        py::arg("depth"), py::arg("sample_offset"), py::arg("sample_width"),
+        py::arg("fx"), py::arg("fy") );
   m.def("GetLaplacian", &PyGetLaplacian, "get laplacian",
-        py::arg("depth"), py::arg("grad_sample_offset"), py::arg("grad_sample_width") );
+        py::arg("depth"), py::arg("grad_sample_offset"), py::arg("grad_sample_width"),
+        py::arg("fx"), py::arg("fy") );
   m.def("UnprojectPointscloud", &PyUnprojectPointscloud, "Get rgbxyz and xyzi points cloud",
         py::arg("rgb"), py::arg("depth"), py::arg("labels"), py::arg("K"), py::arg("D"), py::arg("leaf_xy"), py::arg("leaf_z"));
 }
