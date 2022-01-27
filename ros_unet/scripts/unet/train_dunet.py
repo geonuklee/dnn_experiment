@@ -42,11 +42,11 @@ if __name__ == '__main__':
         for i, data in enumerate(dataloader):
             source = data['source']
             optimizer.zero_grad(set_to_none=True)
-            blap = (data['lap5'][:,:,:] < -0.03).unsqueeze(1).float()
+            th_edge = data['edgedetection'].float().unsqueeze(-1).moveaxis(-1,1)
             grad = data['grad'].float().moveaxis(-1,1)
             rgb = data['rgb'].float().moveaxis(-1,1)/255
             if source == 'labeled':
-                input_x = torch.cat((blap,grad,rgb), dim=1)
+                input_x = torch.cat((th_edge,grad,rgb), dim=1)
                 input_x = spliter.put(input_x).to(device)
                 index = data['gt'].long()
                 index = spliter.put(index).to(device)
@@ -55,7 +55,7 @@ if __name__ == '__main__':
                 loss.backward()
                 optimizer.step()
 
-            input_x = torch.cat((blap,grad), dim=1)
+            input_x = torch.cat((th_edge,grad), dim=1)
             input_x = spliter.put(input_x).to(device)
             index = data['gt'].long()
             index[index == 2] = 0

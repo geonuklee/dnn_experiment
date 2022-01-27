@@ -3,6 +3,8 @@
 
 import torch
 import numpy as np
+import unet_ext as cpp_ext
+import cv2
 
 colors = (
   (0,255,0),
@@ -118,9 +120,63 @@ class SplitAdapter:
                     n+=1
         return output
 
+def GetGradient(depth, fx, fy):
+    cvgrad=cpp_ext.GetGradient(depth, sample_offset=5,sample_width=7,fx=fx,fy=fy)
+    return cvgrad
+
+def ConvertDepth2input(depth, fx, fy):
+    cvgrad = GetGradient(depth, fx, fy)
+
+    if False:
+        cvlap=cpp_ext.GetLaplacian(depth,grad_sample_offset=1,grad_sample_width=7,fx=fx,fy=fy)
+        #th_lap = -500
+    else:
+        cvlap=cpp_ext.GetLaplacian(depth,grad_sample_offset=5,grad_sample_width=7,fx=fx,fy=fy)
+        #th_lap = -100
+
+    max_grad = 2 # tan(60)
+    cvgrad[cvgrad > max_grad] = max_grad
+    cvgrad[cvgrad < -max_grad] = -max_grad
+
+    # curvature_min define sensitivity
+    curvature_min = 1. / 0.01 #  1./( radius[meter] )
+
+    cv_bedge = ( cvlap < -curvature_min ).astype(np.uint8)
+
+    # Normalization
+    cvgrad /= 2.*max_grad
+
+    return cvgrad, cv_bedge, cvlap
+
+def AddEdgeNoise(edge):
+    n_noise = 200
+    noise_radius = 10
+    min_offset = int(noise_radius * 3)
+
+    width, height = edge.shape[1], edge.shape[0]
+    mask = np.zeros_like(edge)
+
+    while n_noise > 0:
+        candidate = np.argwhere( np.logical_and(edge==1, mask==0) )
+        n_candidate = candidate.shape[0]
+        if n_candidate == 0:
+            break
+        i = np.random.choice(range(n_candidate))
+        y,x = candidate[i,:]
+
+        cv2.circle(mask, (x,y), min_offset, 1, -1)
+        cv2.circle(edge, (x,y), noise_radius, 0, -1)
+        n_noise -= 1
+    cv2.imshow("mask", mask*255)
+    return edge
+
+def get_meterdepth(depth):
+    if depth.max() > 100.: # Convert [mm] to [m]
+         return depth/ 1000.
+    return depth
+
 if __name__ == '__main__':
     from segment_dataset import CombinedDatasetLoader
-    import cv2
     dataloader = CombinedDatasetLoader(batch_size=1)
     spliter = SplitAdapter(w=100, offset=99)
     for i, data in enumerate(dataloader):

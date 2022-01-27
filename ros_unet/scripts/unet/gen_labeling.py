@@ -17,6 +17,7 @@ import numpy as np
 from cv_bridge import CvBridge
 from os import makedirs
 
+import deepdish as dd
 import subprocess
 from util import *
 
@@ -28,11 +29,6 @@ def get_topic(filename, topic):
         messages.append(msg)
     print("len(%s) = %d" % (topic, len(messages))  )
     return messages
-
-def get_meterdepth(depth):
-    if depth.max() > 100.: # Convert [mm] to [m]
-         return depth/ 1000.
-    return depth
 
 if __name__ == '__main__':
     rosbag_path = '/home/geo/dataset/unloading/**/*.bag' # remove hardcoding .. 
@@ -91,6 +87,11 @@ if __name__ == '__main__':
                 rgb_topic = rgbs[cam_id]['rgb_to_depth']
 
             rgb_messages = get_topic(fullfn, rgb_topic)
+            ros_info = get_topic(fullfn, "/%s/helios2/camera_info"%cam_id)[0]
+            K = np.array( ros_info.K ,dtype=np.float).reshape((3,3))
+            D = np.array( ros_info.D, dtype=np.float).reshape((-1,))
+            info = {"K":K, "D":D, "width":ros_info.width, "height":ros_info.height}
+
             b_pass = False
             while True:
                 c = 0
@@ -115,6 +116,7 @@ if __name__ == '__main__':
             minirgb  = cv2.resize(orgb, (400,400) )
 
             depth0 = get_meterdepth(depth0)
+            # TODO cv2.Laplacian 보다, 나중에 추가된 ConvertDepth2input이 더 정확하지만, 일단 필요없어서 생략.
             lap5 = cv2.Laplacian(depth0, cv2.CV_32FC1, ksize=5)
             blap5 = (lap5<-0.1 ).astype(np.uint8)*255
 
@@ -169,11 +171,10 @@ if __name__ == '__main__':
                 depth = get_meterdepth(depth)
                 np.save(write_format%( n_frames[usage],"depth","npy"), depth)
                 np.save(write_format%( n_frames[usage],"rgb" ,"npy"), rgb)
-                #cv2.imwrite(write_format%( n_frames[usage],"rgb" ,"png"), rgb)
+                dd.io.save(write_format%(n_frames[usage],"caminfo","h5"), info, compression=('blosc', 9))
 
                 n_frames[usage] += 1
                 b_results_from_fn = True
                 print(n_frames)
 
 
-    fp_rosbaglist.close()

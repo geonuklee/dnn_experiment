@@ -38,8 +38,8 @@ import shutil
 
 import deepdish as dd
 
-import unet_ext as cpp_ext
-from util import colors
+from unet_ext import FindEdge, UnprojectPointscloud
+from util import colors, AddEdgeNoise
 
 
 class RBoxSource:
@@ -75,7 +75,7 @@ class RBoxSource:
         self.texturemap.SetInputConnection(self.hull_filter.GetOutputPort())
 
         # TODO move below?
-        self.SetRoundRatio(0.05)
+        self.SetRoundRatio(0.02)
 
 
     def SetRoundRatio(self, radius):
@@ -232,7 +232,7 @@ class Scene:
         dataset_path = osp.join(pkg_dir, 'vtk_dataset')
 
         usages = ['train', 'valid']
-        numbers = [500, 20]
+        numbers = [200, 20]
         if not verbose:
             if osp.exists(dataset_path):
                 shutil.rmtree(dataset_path)
@@ -268,7 +268,7 @@ class Scene:
 
                 rgb = self.GetRgb()
                 vis, mask = self.GetMask()
-                edge = cpp_ext.FindEdge(mask.astype(np.uint8)) # Get instance edge
+                edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
                 mask[edge>0] = 0
 
                 org_depth = self.GetDepth()
@@ -276,12 +276,11 @@ class Scene:
 
                 depth = org_depth.copy()
                 dist = cv2.distanceTransform( (edge<1).astype(np.uint8)*255, cv2.DIST_L2,5)
-                #depth, dist, faint = AddRounding(org_depth, edge) # TODO Remove it.
 
+                # Detph noise
                 noise = np.random.normal(0.,0.0002,depth.shape)
                 depth[depth>0] += noise[depth>0]
 
-                lap5 =cv2.Laplacian(depth, cv2.CV_32FC1, ksize=5)
                 dst_label = np.zeros((org_depth.shape[0], org_depth.shape[1],3), np.uint8)
                 dst_label[org_depth>0,2] = 255
                 dst_label[edge>0,:] = 255
@@ -306,10 +305,13 @@ class Scene:
                 box_face = box_face.astype(np.uint8)
                 retval, labels = cv2.connectedComponents(box_face)
 
-                # I have no idean reason for need this. but without it, cpp receive wrong rgb.
+                # Edge noise
+                noised_edge = AddEdgeNoise(edge)
+
+                # I have no idea reason for need this. but without it, cpp receive wrong rgb.
                 bgr = cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR)
                 rgb = cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB)
-                xyzrgb, ins_points = cpp_ext.UnprojectPointscloud(rgb, depth, labels,
+                xyzrgb, ins_points = UnprojectPointscloud(rgb, depth, labels,
                         K, D, 0.04, 0.01)
                 sem_points = np.ones_like(ins_points)
                 sem_points[ins_points==0] = 0
@@ -321,9 +323,9 @@ class Scene:
                     np.save(fn_form%(img_idx,"depth","npy"),depth)
                     np.save(fn_form%(img_idx,"rgb","npy"),cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR))
                     cv2.imwrite(fn_form%(img_idx,"gt","png"), dst)
-
+                    cv2.imwrite(fn_form%(img_idx,"edgedetection","png"), 255*noised_edge)
                     # https://stackoverflow.com/questions/18071075/saving-dictionaries-to-file-numpy-and-python-2-3-friendly
-                    dd.io.save(fn_form%(img_idx,"info","h5"), info, compression=('blosc', 9))
+                    dd.io.save(fn_form%(img_idx,"caminfo","h5"), info, compression=('blosc', 9))
                     dd.io.save(fn_form%(img_idx,"pointscloud","h5"), xyz_rgb_i_s, compression=('blosc', 9))
                     continue
 
@@ -335,8 +337,7 @@ class Scene:
                 r = cv2.normalize(depth,None,255,0,cv2.NORM_MINMAX,cv2.CV_8UC1)
                 cv2.imshow("depth", r)
 
-                cv2.imshow("lap5", 255*(lap5 < -0.1).astype(np.uint8))
-                #cv2.imshow("edge", 255*edge)
+                cv2.imshow("edge", 255*noised_edge)
 
                 plt.subplot(221).title.set_text('depth map')
                 plt.imshow(depth)
