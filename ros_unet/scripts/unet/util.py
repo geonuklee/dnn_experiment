@@ -66,11 +66,12 @@ class SplitAdapter:
 
     def pred2mask(self, pred):
         mask = np.zeros((pred.shape[-2],pred.shape[-1]),np.uint8)
-        edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
-        mask[edge_pred> 0.95] = 1
         if pred.shape[1] == 3:
             box_pred   = pred.moveaxis(1,3).squeeze(0)[:,:,2].numpy()
-            mask[box_pred> 0.9] = 2
+            mask[box_pred>= 0.8] = 2
+
+        edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
+        mask[edge_pred> 0.8] = 1
         return mask
 
     def mask2dst(self, mask):
@@ -141,12 +142,17 @@ def ConvertDepth2input(depth, fx, fy):
     # curvature_min define sensitivity
     curvature_min = 1. / 0.01 #  1./( radius[meter] )
 
-    cv_bedge = ( cvlap < -curvature_min ).astype(np.uint8)
+    cv_bedge = ( cvlap > curvature_min ).astype(np.uint8)
+    cv_wrinkle = ( np.abs(cvlap) > curvature_min ).astype(np.uint8)
 
     # Normalization
     cvgrad /= 2.*max_grad
 
-    return cvgrad, cv_bedge, cvlap
+    input_stack = np.stack( (cv_bedge, #cv_wrinkle,
+                             cvgrad[:,:,0],
+                             cvgrad[:,:,1]
+                             ), axis=0 )
+    return input_stack, cvgrad, cvlap, cv_bedge, cv_wrinkle
 
 def AddEdgeNoise(edge):
     n_noise = 200

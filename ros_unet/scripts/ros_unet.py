@@ -11,6 +11,7 @@ from unet.unet_model import DuNet
 from unet.util import SplitAdapter, ConvertDepth2input
 
 import ros_numpy
+import time
 
 class Sub:
     def __init__(self, rgb, depth, info):
@@ -106,20 +107,10 @@ if __name__ == '__main__':
                 break
 
             fx, fy = info.K[0], info.K[4]
-            cvgrad, cv_th_edge, cvlap = ConvertDepth2input(depth, fx, fy)
-
-            th_edge = torch.Tensor(cv_th_edge).unsqueeze(0).unsqueeze(0).float()
-            grad = torch.Tensor(cvgrad).unsqueeze(0).moveaxis(-1,1).float()
-            rgb = torch.Tensor(cv_rgb).unsqueeze(0).float().moveaxis(-1,1)/255
-
-            if input_ch == 3: # If edge detection only
-                input_x = torch.cat((th_edge,grad),dim=1)
-            elif input_ch == 6: # If try to detect edge and box, both of them.
-                input_x = torch.cat((th_edge,grad,rgb),dim=1)
-            else:
-                assert(False)
-
-            input_x = spliter.put(input_x).to(device)
+            t0 = time.clock()
+            input_stack, cvgrad, cvlap, cv_bedge, cv_wrinkle = ConvertDepth2input(depth, fx, fy)
+            input_stack = torch.Tensor(input_stack).unsqueeze(0)
+            input_x = spliter.put(input_stack).to(device)
             pred = model(input_x)
             pred = pred.detach()
             pred = spliter.restore(pred)
@@ -137,16 +128,19 @@ if __name__ == '__main__':
                 msg = ros_numpy.msgify(Image, dst, encoding='8UC3')
                 pub_vis_edge.publish(msg)
             if pub_th_edge.get_num_connections() > 0:
-                msg = ros_numpy.msgify(Image, 255*cv_th_edge.astype(np.uint8), encoding='8UC1')
+                msg = ros_numpy.msgify(Image, 255*cv_bedge.astype(np.uint8), encoding='8UC1')
                 pub_th_edge.publish(msg)
 
-            #cv2.imshow("cvlap", cvlap)
-            #cv2.imshow("gx", cvgrad[:,:,0])
+            print("Elapsed time = %.2f [sec]"% (time.clock()-t0) )
+
+            cv2.imshow("cv_wrinkle", ( cv_wrinkle > 0 ).astype(np.uint8)*255)
+            #cv2.imshow("cvlap", ( cvlap < -100. ).astype(np.uint8)*255)
+            cv2.imshow("gx", cvgrad[:,:,0])
             #cv2.moveWindow("gx", 700, 50)
-            #cv2.imshow("gy", cvgrad[:,:,1])
+            cv2.imshow("gy", cvgrad[:,:,1])
             #cv2.moveWindow("gy", 700, 600)
-            #if cv2.waitKey(1) == ord('q'):
-            #    break
+            if cv2.waitKey(1) == ord('q'):
+                break
 
 
 

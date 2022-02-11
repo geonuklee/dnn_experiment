@@ -42,23 +42,18 @@ if __name__ == '__main__':
         for i, data in enumerate(dataloader):
             source = data['source']
             optimizer.zero_grad(set_to_none=True)
-            th_edge = data['edgedetection'].float().unsqueeze(-1).moveaxis(-1,1)
-            grad = data['grad'].float().moveaxis(-1,1)
-            rgb = data['rgb'].float().moveaxis(-1,1)/255
-            if source == 'labeled':
-                input_x = torch.cat((th_edge,grad,rgb), dim=1)
-                input_x = spliter.put(input_x).to(device)
-                index = data['gt'].long()
-                index = spliter.put(index).to(device)
-                pred = model(input_x)
-                loss = model.loss(pred, index)
-                loss.backward()
-                optimizer.step()
-
-            input_x = torch.cat((th_edge,grad), dim=1)
+            #if source == 'labeled':
+            #    input_x = torch.cat((th_edge,grad,rgb), dim=1)
+            #    input_x = spliter.put(input_x).to(device)
+            #    index = data['gt'].long()
+            #    index = spliter.put(index).to(device)
+            #    pred = model(input_x)
+            #    loss = model.loss(pred, index)
+            #    loss.backward()
+            #    optimizer.step()
+            input_x = data['input']
             input_x = spliter.put(input_x).to(device)
             index = data['gt'].long()
-            index[index == 2] = 0
             index = spliter.put(index).to(device)
             pred = model(input_x)
             loss = model.loss(pred, index)
@@ -68,6 +63,7 @@ if __name__ == '__main__':
             if i %100 == 0:
                 print("[%d/%d,%d/%d] loss = %f" % (epoch,n_epoch,i,len(dataloader), loss.item()) )
         states = {
+            'comment': 'input = cv_bedge, cv_wrinkle, cvgrad',
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),

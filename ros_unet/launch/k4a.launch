@@ -4,6 +4,7 @@
 
 <arg name="rgb"   value="k4a/rgb/image_raw" />
 <arg name="depth" value="k4a/depth_to_rgb/image_raw" />
+<arg name="info"   value="k4a/rgb/camera_info" />
 
 <arg name="verbose" default="false"/>
 <arg name="generate_points" default="true"/>
@@ -17,12 +18,19 @@
 <node name="unet_node" pkg="ros_unet" type="ros_unet.py" output="screen" required="true">
     <remap from="~cam0/rgb"          to="/cam0/$(arg rgb)" />
     <remap from="~cam0/depth"        to="/cam0/$(arg depth)" />
+    <remap from="~cam0/info"         to="/cam0/$(arg info)" />
+
     <remap from="~cam1/rgb"          to="/cam1/$(arg rgb)" />
     <remap from="~cam1/depth"        to="/cam1/$(arg depth)" />
+    <remap from="~cam1/info"         to="/cam1/$(arg info)" />
+
     <remap from="~cam2/rgb"          to="/cam2/$(arg rgb)" />
     <remap from="~cam2/depth"        to="/cam2/$(arg depth)" />
+    <remap from="~cam2/info"         to="/cam2/$(arg info)" />
+
     <remap from="~cam3/rgb"          to="/cam3/$(arg rgb)" />
     <remap from="~cam3/depth"        to="/cam3/$(arg depth)" />
+    <remap from="~cam3/info"         to="/cam3/$(arg info)" />
 
     <rosparam subst_value="True">
       input_ch: 3

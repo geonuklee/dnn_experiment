@@ -229,13 +229,16 @@ void GetLaplacian(const float* depth,
         by = true;
       }
 
+#if 0
+      lap[idx] = lx + ly;
+#else
       if(bx && by)
-        lap[idx] = std::min(lx,ly);
+        lap[idx] = std::abs(lx) > std::abs(ly)? lx : ly;
       else if(bx)
         lap[idx] = lx;
       else if(by)
         lap[idx] = ly;
-
+#endif
     }
   }
 

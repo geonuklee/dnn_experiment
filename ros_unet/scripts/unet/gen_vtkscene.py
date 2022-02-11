@@ -43,7 +43,7 @@ from util import colors, AddEdgeNoise
 
 
 class RBoxSource:
-    def __init__(self):
+    def __init__(self, w, h, d):
         self.corners = vtk.vtkPoints()
         self.corners.SetNumberOfPoints(8)
         polydata = vtk.vtkPolyData()
@@ -74,12 +74,12 @@ class RBoxSource:
         self.texturemap = vtk.vtkTextureMapToPlane()
         self.texturemap.SetInputConnection(self.hull_filter.GetOutputPort())
 
-        # TODO move below?
-        self.SetRoundRatio(0.02)
+        self.SetRoundRatio(w, h, d, 0.01)
 
 
-    def SetRoundRatio(self, radius):
-        hw = 0.5 - radius
+    def SetRoundRatio(self, w, h, d, radius):
+        r = radius/w
+        hw = 0.5 - r
         self.corners.SetPoint(0, hw, hw, hw)
         self.corners.SetPoint(1, -hw, hw, hw)
         self.corners.SetPoint(2, -hw, -hw, hw)
@@ -88,7 +88,7 @@ class RBoxSource:
         self.corners.SetPoint(5, -hw, hw, -hw)
         self.corners.SetPoint(6, -hw, -hw, -hw)
         self.corners.SetPoint(7, hw, -hw, -hw)
-        self.sphere_source.SetRadius(radius)
+        self.sphere_source.SetRadius(r)
 
         self.texturemap.Modified()
         self.texturemap.Update()
@@ -372,14 +372,14 @@ class Scene:
         h = np.random.uniform(0.5,2.)*w
         d=1.
         z = np.random.uniform(2.,6.)
-        margin = 0.01 # To remove gap.
+        margin = 0. # To remove gap.
 
         camera.SetFocalPoint(0.5*nc*w,0.5*nr*h,z)
         cx = 0.5*nc*w + np.random.uniform(-0.1,0.1)
         cy = 0.5*nr*h + np.random.uniform(-0.1,0.1)
         camera.SetPosition(cx, cy, 0.)
 
-        rbox_source = RBoxSource()
+        rbox_source = RBoxSource(w+margin,h+margin, d)
         box_mapper = vtk.vtkPolyDataMapper()
         box_mapper.SetInputConnection(rbox_source.GetOutputPort())
 
@@ -390,7 +390,6 @@ class Scene:
                 actor = rbox_source.CreateTexturedActor()
                 actor.SetMapper(box_mapper)
                 actor.SetPosition(x, y, z)
-                actor.SetScale(w+margin, h+margin, d)
                 self.ren.AddActor(actor)
                 self.box_actors.append(actor)
 
@@ -411,7 +410,7 @@ class Scene:
         camera.SetFocalPoint(cx, cy, z0);
         camera.SetPosition(tx, ty, 0.);
 
-        rbox_source = RBoxSource()
+        rbox_source = RBoxSource(w0,h0,d)
         box_mapper = vtk.vtkPolyDataMapper()
         box_mapper.SetInputConnection(rbox_source.GetOutputPort())
 
@@ -430,7 +429,6 @@ class Scene:
                 actor = rbox_source.CreateTexturedActor()
                 actor.SetMapper(box_mapper)
                 actor.SetPosition(x, y, z)
-                actor.SetScale(w, h, d)
                 self.ren.AddActor(actor)
                 self.box_actors.append(actor)
                 th0, th1 = np.random.uniform(-40.,40.,2)

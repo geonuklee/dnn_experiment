@@ -116,7 +116,7 @@ if __name__ == '__main__':
             minirgb  = cv2.resize(orgb, (400,400) )
 
             depth0 = get_meterdepth(depth0)
-            # TODO cv2.Laplacian 보다, 나중에 추가된 ConvertDepth2input이 더 정확하지만, 일단 필요없어서 생략.
+            # TODO 지금 lap5를 bedge 로 변경.
             lap5 = cv2.Laplacian(depth0, cv2.CV_32FC1, ksize=5)
             blap5 = (lap5<-0.1 ).astype(np.uint8)*255
 

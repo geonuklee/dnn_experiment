@@ -11,6 +11,11 @@
 
 # Generate Dataset
 
+```bash
+python2 scripts/unet/gen_labeling.py
+```
+
+
 # Train UNet
 
 ```bash

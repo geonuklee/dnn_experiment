@@ -41,7 +41,7 @@
     <remap from="~cam1/info"         to="/cam1/$(arg info)" />
 
     <rosparam subst_value="True">
-      input_ch: 3
+      input_ch: 6
       cameras: $(arg cameras)
       weight_file: "$(arg weight_file)"
     </rosparam>
