@@ -175,13 +175,13 @@ void GetGradient(const float* depth, const std::vector<long int>& shape,
   return;
 }
 
-void GetLaplacian(const float* depth,
+void GetHessian(const float* depth,
                   const std::vector<long int>& shape,
                   int grad_sample_offset,
                   int grad_sample_width,
                   float fx,
                   float fy,
-                  float* lap
+                  float* hessian
                   ){
   const int rows = (int)shape.at(0);
   const int cols = (int)shape.at(1);
@@ -194,7 +194,7 @@ void GetLaplacian(const float* depth,
   const float l0 = 0.;
 
   for (int i=0; i < size; i++)
-    lap[i] = l0;
+    hessian[i] = l0;
 
   const int duv=1;
 #if 1
@@ -234,10 +234,7 @@ void GetLaplacian(const float* depth,
       float dy = 2. * (float) duv * d0 / fy;
       float lx = (gpx - gnx)/dx;
       float ly = (gpy - gny)/dy;
-      lap[idx] = lx + ly;
-      // TODO oblique가 심한 지점에선 noise가 심해진다..
-      //if(gpx * gnx > 0.)
-      //  lap[idx] = 9999.;
+      hessian[idx] = lx + ly;
     }
   }
 #else
@@ -275,14 +272,14 @@ void GetLaplacian(const float* depth,
       }
 
 #if 0
-      lap[idx] = lx + ly;
+      hessian[idx] = lx + ly;
 #else
       if(bx && by)
-        lap[idx] = std::abs(lx) > std::abs(ly)? lx : ly;
+        hessian[idx] = std::abs(lx) > std::abs(ly)? lx : ly;
       else if(bx)
-        lap[idx] = lx;
+        hessian[idx] = lx;
       else if(by)
-        lap[idx] = ly;
+        hessian[idx] = ly;
 #endif
     }
   }
@@ -466,7 +463,7 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
   return output;
 }
 
-py::array_t<float> PyGetLaplacian(py::array_t<float> inputdepth,
+py::array_t<float> PyGetHessian(py::array_t<float> inputdepth,
                                   int grad_sample_offset,
                                   int grad_sample_width,
                                   float fx,
@@ -479,7 +476,7 @@ py::array_t<float> PyGetLaplacian(py::array_t<float> inputdepth,
 
   const float* ptr_inputdepth = (const float*) buf_inputdepth.ptr;
   float* ptr_output = (float*) buf_output.ptr;
-  GetLaplacian(ptr_inputdepth,
+  GetHessian(ptr_inputdepth,
                buf_inputdepth.shape,
                grad_sample_offset,
                grad_sample_width,
@@ -497,7 +494,7 @@ PYBIND11_MODULE(unet_ext, m) {
   m.def("GetGradient", &PyGetGradient, "get gradient",
         py::arg("depth"), py::arg("sample_offset"), py::arg("sample_width"),
         py::arg("fx"), py::arg("fy") );
-  m.def("GetLaplacian", &PyGetLaplacian, "get laplacian",
+  m.def("GetHessian", &PyGetHessian, "Get diagonal elements of Hessian",
         py::arg("depth"), py::arg("grad_sample_offset"), py::arg("grad_sample_width"),
         py::arg("fx"), py::arg("fy") );
   m.def("UnprojectPointscloud", &PyUnprojectPointscloud, "Get rgbxyz and xyzi points cloud",

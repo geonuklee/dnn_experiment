@@ -108,7 +108,7 @@ if __name__ == '__main__':
 
             fx, fy = info.K[0], info.K[4]
             t0 = time.clock()
-            input_stack, cvgrad, cvlap, cv_bedge, cv_wrinkle = ConvertDepth2input(depth, fx, fy)
+            input_stack, cvgrad, cvhessian, cv_bedge, cv_wrinkle = ConvertDepth2input(depth, fx, fy)
             input_stack = torch.Tensor(input_stack).unsqueeze(0)
             input_x = spliter.put(input_stack).to(device)
             pred = model(input_x)
@@ -136,7 +136,7 @@ if __name__ == '__main__':
             #cv2.imshow("valid", valid_depth)
             #print("Elapsed time = %.2f [sec]"% (time.clock()-t0) )
             #cv2.imshow("cv_wrinkle", ( cv_wrinkle > 0 ).astype(np.uint8)*255)
-            cv2.imshow("cvlap", ( cvlap < -100. ).astype(np.uint8)*255)
+            cv2.imshow("cvhessian", ( cvhessian < -100. ).astype(np.uint8)*255)
             cv2.imshow("gx", -cvgrad[:,:,0])
             #cv2.imshow("mgx", (cvgrad[:,:,0]<0.).astype(np.uint8)*255)
             dgx  = cv_rgb.copy()

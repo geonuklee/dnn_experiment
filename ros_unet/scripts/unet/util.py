@@ -129,11 +129,11 @@ def ConvertDepth2input(depth, fx, fy):
     cvgrad = GetGradient(depth, fx, fy)
 
     if False:
-        cvlap=cpp_ext.GetLaplacian(depth,grad_sample_offset=1,grad_sample_width=7,fx=fx,fy=fy)
-        #th_lap = -500
+        cvhessian=cpp_ext.GetHessian(depth,grad_sample_offset=1,grad_sample_width=7,fx=fx,fy=fy)
+        #th = -500
     else:
-        cvlap=cpp_ext.GetLaplacian(depth,grad_sample_offset=5,grad_sample_width=7,fx=fx,fy=fy)
-        #th_lap = -100
+        cvhessian=cpp_ext.GetHessian(depth,grad_sample_offset=5,grad_sample_width=7,fx=fx,fy=fy)
+        #th = -100
 
     max_grad = 2 # tan(60)
     cvgrad[cvgrad > max_grad] = max_grad
@@ -142,8 +142,8 @@ def ConvertDepth2input(depth, fx, fy):
     # curvature_min define sensitivity
     curvature_min = 1. / 0.01 #  1./( radius[meter] )
 
-    cv_bedge = ( cvlap < -curvature_min ).astype(np.uint8)
-    cv_wrinkle = ( np.abs(cvlap) > curvature_min ).astype(np.uint8)
+    cv_bedge = ( cvhessian < -curvature_min ).astype(np.uint8)
+    cv_wrinkle = ( np.abs(cvhessian) > curvature_min ).astype(np.uint8)
 
     # Normalization
     cvgrad /= 2.*max_grad
@@ -152,7 +152,7 @@ def ConvertDepth2input(depth, fx, fy):
                              cvgrad[:,:,0],
                              cvgrad[:,:,1]
                              ), axis=0 )
-    return input_stack, cvgrad, cvlap, cv_bedge, cv_wrinkle
+    return input_stack, cvgrad, cvhessian, cv_bedge, cv_wrinkle
 
 def AddEdgeNoise(edge):
     n_noise = 200
