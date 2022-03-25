@@ -161,9 +161,10 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
 
 
   // Unproject cloud, boundary
+  int boundary = 10;
   int max_idx = 0;
-  for(int r = 0; r < depth.rows; r++){
-    for(int c = 0; c < depth.cols; c++){
+  for(int r = boundary; r < depth.rows-boundary; r++){
+    for(int c = boundary; c < depth.cols-boundary; c++){
       float z0 = depth.at<float>(r,c);
       if(z0 < 0.000001 || z0 > max_depth)
         continue;
@@ -188,13 +189,31 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
         pcl::PointCloud<pcl::PointXYZ>::Ptr ptr = clouds.at(idx);
         ptr->push_back(xyz);
       }
-      else { // else of pixel_distance > 5.
-        cv::Point2i sample_uv;
-        sample_uv.x = (float) c + 4. * GetGx(r,c);
-        sample_uv.y = (float) r + 4. * GetGy(r,c);
-        if(mask.at<int>( sample_uv.y, sample_uv.x ) == idx){
-          float sample_z = depth.at<float>(sample_uv.y,sample_uv.x);
-          if(std::abs(sample_z - z0)  < 0.05){
+      else {
+        cv::Point2i inner_uv, far_inner_uv, outer_uv;{
+          float gx = GetGx(r,c);
+          float gy = GetGy(r,c);
+          inner_uv.x = (float) c + 4. * gx;
+          inner_uv.y = (float) r + 4. * gy;
+          far_inner_uv.x = (float) c + 8. * gx;
+          far_inner_uv.y = (float) r + 8. * gy;
+          outer_uv.x = (float) c - 4. * gx;
+          outer_uv.y = (float) r - 4. * gy;
+        }
+
+        if(mask.at<int>( inner_uv.y, inner_uv.x ) == idx){
+          float inner_z = depth.at<float>(inner_uv.y,inner_uv.x);
+          float far_inner_z = depth.at<float>(far_inner_uv.y,far_inner_uv.x);
+          float outer_z = depth.at<float>(outer_uv.y,outer_uv.x);
+          if(outer_z < 0.0001)
+            outer_z = 9999.;
+
+          // bool continue_from_inside = std::abs(inner_z - z0)  < 0.05; // gradients 없으니 기울어진 objects에서 취약.
+          float da = (z0-inner_z);
+          float db = (inner_z-far_inner_z);
+          bool continue_from_inside = std::abs(da-db) < 0.05;
+          bool no_occlusion_from_outside = z0 < outer_z + 0.01;
+          if(continue_from_inside & no_occlusion_from_outside){
             if(!boundary_clouds.count(idx)){
               pcl::PointCloud<pcl::PointXYZ>::Ptr ptr_cloud(new pcl::PointCloud<pcl::PointXYZ>());
               ptr_cloud->reserve(1000);

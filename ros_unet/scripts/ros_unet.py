@@ -132,12 +132,22 @@ if __name__ == '__main__':
                 pub_th_edge.publish(msg)
 
             print("Elapsed time = %.2f [sec]"% (time.clock()-t0) )
+            #valid_depth = (depth > 0.01).astype(np.uint8) * 200
+            #cv2.imshow("valid", valid_depth)
+            #print("Elapsed time = %.2f [sec]"% (time.clock()-t0) )
+            #cv2.imshow("cv_wrinkle", ( cv_wrinkle > 0 ).astype(np.uint8)*255)
+            cv2.imshow("cvlap", ( cvlap < -100. ).astype(np.uint8)*255)
+            cv2.imshow("gx", -cvgrad[:,:,0])
+            #cv2.imshow("mgx", (cvgrad[:,:,0]<0.).astype(np.uint8)*255)
+            dgx  = cv_rgb.copy()
+            dgx[cvgrad[:,:,0]>0.,2] = 255
+            dgx[cvgrad[:,:,0]>0.,:2] = 0
+            dgx[cvgrad[:,:,0]<0.,0] = 255
+            dgx[cvgrad[:,:,0]<0.,1:] = 0
+            cv2.imshow("dgx", dgx)
 
-            cv2.imshow("cv_wrinkle", ( cv_wrinkle > 0 ).astype(np.uint8)*255)
-            #cv2.imshow("cvlap", ( cvlap < -100. ).astype(np.uint8)*255)
-            cv2.imshow("gx", cvgrad[:,:,0])
             #cv2.moveWindow("gx", 700, 50)
-            cv2.imshow("gy", cvgrad[:,:,1])
+            #cv2.imshow("gy", cvgrad[:,:,1])
             #cv2.moveWindow("gy", 700, 600)
             if cv2.waitKey(1) == ord('q'):
                 break

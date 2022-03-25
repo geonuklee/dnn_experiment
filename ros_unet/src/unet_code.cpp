@@ -191,11 +191,56 @@ void GetLaplacian(const float* depth,
   bool* valid = new bool[2*size];
   GetGradient(depth, shape, grad_sample_offset, grad_sample_width, fx, fy, grad, valid);
 
+  const float l0 = 0.;
+
   for (int i=0; i < size; i++)
-    lap[i] = 0.;
+    lap[i] = l0;
 
-  const int duv = 1;
-
+  const int duv=1;
+#if 1
+  for (int r=duv; r < rows-duv; r++) {
+    int rp = r+duv;
+    int rn = r-duv;
+    for (int c=duv; c < cols-duv; c++) {
+      int cp = c+duv;
+      int cn = c-duv;
+      int idx = r*cols+c;
+      const float& d0  = depth[idx];
+      float gpx; {
+        int j = 2*(r*cols+cp);
+        if(!valid[j])
+          continue;
+        gpx = grad[j];
+      }
+      float gnx; {
+        int j = 2*(r*cols+cn);
+        if(!valid[j])
+          continue;
+        gnx = grad[j];
+      }
+      float gpy; {
+        int j = 2*(rp*cols+c)+1;
+        if(!valid[j])
+          continue;
+        gpy = grad[j];
+      }
+      float gny; {
+        int j = 2*(rn*cols+c)+1;
+        if(!valid[j])
+          continue;
+        gny = grad[j];
+      }
+      float dx = 2. * (float) duv * d0 / fx;
+      float dy = 2. * (float) duv * d0 / fy;
+      float lx = (gpx - gnx)/dx;
+      float ly = (gpy - gny)/dy;
+      lap[idx] = lx + ly;
+      // TODO oblique가 심한 지점에선 noise가 심해진다..
+      //if(gpx * gnx > 0.)
+      //  lap[idx] = 9999.;
+    }
+  }
+#else
   for (int r0=0; r0<rows; r0++) {
     for (int c0=0; c0<cols; c0++) {
       int idx = r0*cols + c0;
@@ -207,7 +252,7 @@ void GetLaplacian(const float* depth,
       if(d0 == 0.)
         continue;
 
-      float lx = 0.;
+      float lx = l0;
       int xidx = 2*(r0*cols+c);
       bool bx = false;
       if(valid[2*idx] && valid[xidx]){
@@ -218,7 +263,7 @@ void GetLaplacian(const float* depth,
         bx = true;
       }
 
-      float ly = 0.;
+      float ly = l0;
       int yidx = 2*(r*cols+c0) + 1;
       bool by = false;
       if(valid[2*idx+1] && valid[yidx]){
@@ -241,6 +286,7 @@ void GetLaplacian(const float* depth,
 #endif
     }
   }
+#endif
 
   delete[] grad;
   delete[] valid;

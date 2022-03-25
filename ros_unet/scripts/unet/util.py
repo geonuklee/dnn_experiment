@@ -142,7 +142,7 @@ def ConvertDepth2input(depth, fx, fy):
     # curvature_min define sensitivity
     curvature_min = 1. / 0.01 #  1./( radius[meter] )
 
-    cv_bedge = ( cvlap > curvature_min ).astype(np.uint8)
+    cv_bedge = ( cvlap < -curvature_min ).astype(np.uint8)
     cv_wrinkle = ( np.abs(cvlap) > curvature_min ).astype(np.uint8)
 
     # Normalization
