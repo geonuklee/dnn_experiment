@@ -116,7 +116,7 @@ if __name__ == '__main__':
             #cv2.imshow("valid_depth", dg)
 
             fd = cpp_ext.GetFilteredDepth(depth, sample_width=7)
-            grad, valid = cpp_ext.GetGradient(fd, sample_offset=5,fx=fx,fy=fy)
+            grad, valid = cpp_ext.GetGradient(fd, sample_offset=3,fx=fx,fy=fy) # 5
             hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
 
             fd[ fd[:,:,0] > 2.,0 ]  = 2.
@@ -124,21 +124,25 @@ if __name__ == '__main__':
             #cv2.imshow("gx", -grad[:,:,0])
             #cv2.imshow("valid", 255*valid.astype(np.uint8))
 
-            dgx  = cv_rgb.copy()
-            dgx[grad[:,:,0]>0.,2] = 255
-            dgx[grad[:,:,0]>0.,:2] = 0
-            dgx[grad[:,:,0]<0.,0] = 255
-            dgx[grad[:,:,0]<0.,1:] = 0
-            dgx[grad[:,:,0]==0.,1] = 255
-            cv2.imshow("dgx", dgx)
-
+            dgx = np.zeros_like(cv_rgb)
             dgy  = cv_rgb.copy()
-            dgy[grad[:,:,1]>0.,2] = 255
-            dgy[grad[:,:,1]>0.,:2] = 0
-            dgy[grad[:,:,1]<0.,0] = 255
-            dgy[grad[:,:,1]<0.,1:] = 0
-            dgy[grad[:,:,1]==0.,1] = 255
-            cv2.imshow("dgy", dgy)
+            gmax = 20.
+            for r in range(grad.shape[0]):
+                for c in range(grad.shape[1]):
+                    gx, gy = grad[r,c,:]
+                    if gx > 0.3:
+                        gx = min(gmax,gx)
+                        vx = 200./gmax * gx
+                        vx = max(vx, 0)
+                        dgx[r,c,2] = 255 #int(vx)
+                    if gx < -0.3:
+                        gx = min(gmax,-gx)
+                        vx = 200./gmax * gx
+                        vx = max(vx, 0)
+                        dgx[r,c,0] = 255 #int(vx)
+
+
+            #cv2.imshow("dgy", dgy.astype(np.uint8))
 
             dh  = cv_rgb.copy()
             curvature = 30.;
@@ -150,6 +154,7 @@ if __name__ == '__main__':
             cv2.imshow("dh", dh)
 
             cv2.imshow("concave", 255*(hessian < -curvature).astype(np.uint8))
+            cv2.imshow("dgx", dgx.astype(np.uint8))
             cv2.waitKey(1)
             continue # TODO Erase it after test!
 

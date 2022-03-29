@@ -135,7 +135,7 @@ int FindEdge(const unsigned char *arr_in, const std::vector<long int>& shape,
         if(is_edge)
           break;
       }
-      arr_out[r0*cols + c0] = is_edge?1:0;
+      arr_out[r0*cols + c0] = (is_edge?1:0);
     }
   }
   return 0;
@@ -156,13 +156,14 @@ void GetGradient(const float* filtered_depth,
   float doffset = 2*sample_offset;
   for (int rc=sample_offset; rc<rows-sample_offset; rc++) {
     for (int cc=sample_offset; cc<cols-sample_offset; cc++) {
+      // Remind : Gradients는 smoothing 때문에 gradient로 점진적으로 반응.
       int vidx0 = rc*cols+cc;
       int idx0 = 2*vidx0;
       grad[idx0] = grad[idx0+1] = 0.f;
 
       const float& dcp = filtered_depth[idx0];
-      int c0 = cc;
-      int r0 = rc;
+      int c0 = cc-sample_offset;
+      int r0 = rc-sample_offset;
       int c1 = cc+sample_offset;
       int r1 = rc+sample_offset;
 
@@ -193,7 +194,7 @@ void GetGradient(const float* filtered_depth,
   return;
 }
 
-void GetHessian(const float* depth,
+void GetHessianWithFixedSamplePosition(const float* depth,
                 const float* grad,
                 const unsigned char* valid,
                 const std::vector<long int>& shape,
@@ -214,70 +215,89 @@ void GetHessian(const float* depth,
   memset((void*)hessian_x, 0, size*sizeof(float) );
   memset((void*)hessian_y, 0, size*sizeof(float) );
 
+  enum PARTIAL {X, Y};
   for (int rc=hk; rc<rows-hk; rc++) {
     for (int cc=hk; cc<cols-hk; cc++) {
-      {
-        float gx0 = vmax;
-        float gx1 = -vmax;
-        int c0, c1;
-        c0 = c1 = -1;
-        for(int c=cc-hk; c < cc+hk; c++){
-          const int i = rc*cols+c;
+      // Partial differential with fixed sampling point.
+      const float& gx0 = grad[2*(rc*cols+cc-1)];
+      const float& gx1 = grad[2*(rc*cols+cc+1)];
+      const float du = 2;
+      const int i = rc*cols+cc;
+      const float& dcp = depth[i];
+      const float dx = du * dcp / fx;
+      const float hx = (gx1 - gx0) / dx;
+      hessian_x[i] = hx;
+    }
+  }
+  for(int i = 0; i < size; i++)
+    hessian[i] = hessian_x[i] + hessian_y[i];
+
+  delete[] hessian_x;
+  delete[] hessian_y;
+  return;
+}
+
+void GetHessian(const float* depth,
+                const float* grad,
+                const unsigned char* valid,
+                const std::vector<long int>& shape,
+                float fx,
+                float fy,
+                float* hessian)
+{
+  const int rows = (int)shape.at(0);
+  const int cols = (int)shape.at(1);
+  const int size = rows*cols;
+  // TODO -논문용- 왜 두겹짜리 Hessian edge가 발생하는지?
+  // Done 해결책 구현
+#if 1
+  int hk = 5;
+#else
+  int hk = 20;
+#endif
+  const float vmax = 999999.;
+
+  float* hessian_x = new float[size];
+  float* hessian_y = new float[size];
+  memset((void*)hessian_x, 0, size*sizeof(float) );
+  memset((void*)hessian_y, 0, size*sizeof(float) );
+
+  enum PARTIAL {X, Y};
+  for (int rc=hk; rc<rows-hk; rc++) {
+    for (int cc=hk; cc<cols-hk; cc++) {
+      for(const auto& partial : {PARTIAL::X,PARTIAL::Y} ) {
+        float g0 = vmax;
+        float g1 = -vmax;
+        int e0, e1;
+        e0 = e1 = -1;
+        const int kc = (partial==PARTIAL::X? cc : rc);
+        for(int k=kc-hk; k < kc+hk; k++){
+          const int i = (partial==PARTIAL::X? rc*cols+k : k*cols+cc);
           const unsigned char& v = valid[i];
           if(!v)
             continue;
-          const float gx = grad[2*i];
-          if(gx < gx0){
-            c0 = c;
-            gx0 = gx;
+          const float& g = (partial==PARTIAL::X? grad[2*i] : grad[2*i+1]);
+          if(g < g0){
+            e0 = k;
+            g0 = g;
           }
-          if(gx > gx1){
-            c1 = c;
-            gx1 = gx;
+          if(g > g1){
+            e1 = k;
+            g1 = g;
           }
         }
-
-        if(c0 >= 0 && c1 >= 0){
-          int c = (c0+c1)/2;
-          int i = rc*cols+c;
+        if(e0 >= 0 && e1 >= 0){
+          int k = (e0+e1)/2;
+          int i = (partial==PARTIAL::X? rc*cols+k : k*cols+cc);
           if(valid[i]){
-            const float& dcp = depth[i];
-            float du = c1 - c0;
-            float dx = du * dcp / fx;
-            hessian_x[i] = (gx1-gx0)/dx;
-          }
-        }
-      }
-
-      {
-        float gy0 = vmax;
-        float gy1 = -vmax;
-        int r0, r1;
-        r0 = r1 = -1;
-        for(int r=rc-hk; r < rc+hk; r++){
-          const int i = r*cols+cc;
-          const unsigned char& v = valid[i];
-          if(!v)
-            continue;
-          const float gy = grad[2*i+1];
-          if(gy < gy0){
-            r0 = r;
-            gy0 = gy;
-          }
-          if(gy > gy1){
-            r1 = r;
-            gy1 = gy;
-          }
-        }
-
-        if(r0 >= 0 && r1 >= 0){
-          int r = (r0+r1)/2;
-          int i = r*cols+cc;
-          if(valid[i]){
-            const float& dcp = depth[i];
-            float dv = r1 - r0;
-            float dy = dv * dcp / fy;
-            hessian_y[i] = (gy1-gy0)/dy;
+            const float& dcp = depth[i]; // Middle of sample point 0 and 1.
+            float duv = e1 - e0;
+            float dxy = duv * dcp / (partial==PARTIAL::X? fx : fy);
+            float& h = (partial==PARTIAL::X? hessian_x[i]:hessian_y[i]);
+            float h_candidate = (g1-g0)/dxy;
+            if(std::abs(h_candidate) > std::abs(h) )
+              h = h_candidate;
+            // partial==PARTIAL::X? hessian_x[i]:hessian_y[i] = (g1-g0)/dxy; << Be careful.
           }
         }
       }
