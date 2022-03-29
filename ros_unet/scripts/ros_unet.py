@@ -10,6 +10,8 @@ import torch
 from unet.unet_model import DuNet
 from unet.util import SplitAdapter, ConvertDepth2input
 
+import unet_ext as cpp_ext #TODO erase
+
 import ros_numpy
 import time
 
@@ -105,8 +107,52 @@ if __name__ == '__main__':
                 break
             if cv_rgb is None:
                 break
-
             fx, fy = info.K[0], info.K[4]
+
+            #dg  = cv_rgb.copy()
+            #dg[depth[:,:]==0.,:2] = 0
+            #dg[depth[:,:]==0.,2] = 255
+            #dg[depth[:,:]>0.,1] += 100
+            #cv2.imshow("valid_depth", dg)
+
+            fd = cpp_ext.GetFilteredDepth(depth, sample_width=7)
+            grad, valid = cpp_ext.GetGradient(fd, sample_offset=5,fx=fx,fy=fy)
+            hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
+
+            fd[ fd[:,:,0] > 2.,0 ]  = 2.
+            cv2.imshow("fdu", (fd[:,:,0]*100).astype(np.uint8))
+            #cv2.imshow("gx", -grad[:,:,0])
+            #cv2.imshow("valid", 255*valid.astype(np.uint8))
+
+            dgx  = cv_rgb.copy()
+            dgx[grad[:,:,0]>0.,2] = 255
+            dgx[grad[:,:,0]>0.,:2] = 0
+            dgx[grad[:,:,0]<0.,0] = 255
+            dgx[grad[:,:,0]<0.,1:] = 0
+            dgx[grad[:,:,0]==0.,1] = 255
+            cv2.imshow("dgx", dgx)
+
+            dgy  = cv_rgb.copy()
+            dgy[grad[:,:,1]>0.,2] = 255
+            dgy[grad[:,:,1]>0.,:2] = 0
+            dgy[grad[:,:,1]<0.,0] = 255
+            dgy[grad[:,:,1]<0.,1:] = 0
+            dgy[grad[:,:,1]==0.,1] = 255
+            cv2.imshow("dgy", dgy)
+
+            dh  = cv_rgb.copy()
+            curvature = 30.;
+            dh[hessian > curvature,2] = 255
+            dh[hessian > curvature,:2] = 0
+            dh[hessian < -curvature,0] = 255
+            dh[hessian < -curvature,1:] = 0
+            #dh[hessian ==0.,1] = 255
+            cv2.imshow("dh", dh)
+
+            cv2.imshow("concave", 255*(hessian < -curvature).astype(np.uint8))
+            cv2.waitKey(1)
+            continue # TODO Erase it after test!
+
             t0 = time.clock()
             input_stack, cvgrad, cvhessian, cv_bedge, cv_wrinkle = ConvertDepth2input(depth, fx, fy)
             input_stack = torch.Tensor(input_stack).unsqueeze(0)
@@ -144,6 +190,8 @@ if __name__ == '__main__':
             dgx[cvgrad[:,:,0]>0.,:2] = 0
             dgx[cvgrad[:,:,0]<0.,0] = 255
             dgx[cvgrad[:,:,0]<0.,1:] = 0
+            dgx[cvgrad[:,:,0]==0.,1] = 255
+
             cv2.imshow("dgx", dgx)
 
             #cv2.moveWindow("gx", 700, 50)

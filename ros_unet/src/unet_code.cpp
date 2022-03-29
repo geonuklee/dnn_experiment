@@ -1,6 +1,7 @@
 #include <iostream>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+#include <eigen3/Eigen/Dense> // TODO find_package at exts/py(2|3)ext/CMakeLists.txt
 
 #include <opencv2/opencv.hpp>
 #include <memory.h>
@@ -8,6 +9,102 @@
 #include <pcl/filters/voxel_grid.h>
 
 namespace py = pybind11;
+
+int GetFilteredDepth(const float* depth,
+                     const std::vector<long int>& shape,
+                     int sample_width,
+                     float* filtered_depth) {
+  //assert(sample_width > 2);
+  assert(sample_width%2 == 1);
+
+  const int rows = (int)shape.at(0);
+  const int cols = (int)shape.at(1);
+  const int hw = 2;
+  const float max_depth_diff = 0.1; // TODO parameterize
+
+  enum SAMPLE_METHOD{
+    MEAN,
+    MEDIAN,
+    MEAN_EXCLUDE_EXTREM
+  };
+  SAMPLE_METHOD sample_method = MEAN_EXCLUDE_EXTREM;
+  auto GetValue = [&sample_method](std::vector<float>& values){
+    if(sample_method == MEAN){
+      // Mean - 실험결과 mean 이 더 정확했음.
+      float sum = 0.;
+      for(const float& v : values)
+        sum += v;
+      return sum / (float) values.size();
+    }
+    else if(sample_method == MEDIAN){
+      std::sort(values.begin(), values.end());
+      return values[values.size()/2];
+    }
+    else if(sample_method == MEAN_EXCLUDE_EXTREM){
+      std::sort(values.begin(), values.end());
+      const int extrem = values.size()/4;
+      float sum = 0.;
+      int k = 0;
+      for(size_t i = extrem; i < values.size()-extrem; i++){
+        k++;
+        sum += values[k];
+      }
+      return sum / (float) k;
+    }
+    return -1.f;
+  };
+
+  const int hk = (sample_width-1)/2;
+
+  std::vector<float> su, sv;
+  su.reserve(sample_width);
+  sv.reserve(sample_width);
+
+  for (int r0=hk; r0<rows-hk; r0++) {
+    for (int c0=hk; c0<cols-hk; c0++) {
+      const float& d_cp = depth[r0*cols+c0];
+      float zu, zv;
+      if(d_cp ==0.){
+        zu = zv = 0.;
+      }
+      else if(sample_width > 2){
+        su.clear();
+        // Sample depth for gx
+        for(int r=r0-hk; r <= r0+hk; r++){
+          const float& d = depth[r*cols+c0];
+          if(std::abs(d_cp-d) > max_depth_diff)
+            continue;
+          else if(d > 0.)
+            su.push_back(d);
+          else
+            continue;
+        }
+        zu = GetValue(su);
+        // Sample depth for gy
+        sv.clear();
+        for(int c=c0-hk; c <= c0+hk; c++){
+          const float& d = depth[r0*cols+c];
+          if(std::abs(d_cp-d) > max_depth_diff)
+            continue;
+          else if(d > 0.)
+            sv.push_back(d);
+          else
+            continue;
+        }
+        zv = GetValue(sv);
+      }
+      else{
+        zu = zv = d_cp;
+      }
+
+      int idx0 = 2*(r0*cols + c0);
+      filtered_depth[idx0] = zu;
+      filtered_depth[idx0+1] = zv;
+    }
+  }
+  //printf("GetFilteredDepth %d, %d \n", rows, cols);
+  return 0;
+}
 
 int FindEdge(const unsigned char *arr_in, const std::vector<long int>& shape,
              unsigned char *arr_out) {
@@ -44,249 +141,154 @@ int FindEdge(const unsigned char *arr_in, const std::vector<long int>& shape,
   return 0;
 }
 
-void GetGradient(const float* depth, const std::vector<long int>& shape,
+void GetGradient(const float* filtered_depth,
+                 const std::vector<long int>& shape,
                  int sample_offset,
-                 int sample_width,
                  float fx,
                  float fy,
                  float* grad,
-                 bool* valid
-                 ) {
-  assert(sample_width > 2);
-  assert(sample_width%2 == 1);
-  const float max_depth_diff = 0.1; // TODO parameterize
+                 unsigned char* valid
+                ){
+  int rows = shape[0];
+  int cols = shape[1];
 
-  const int rows = (int)shape.at(0);
-  const int cols = (int)shape.at(1);
-  const int size = 2*rows*cols;
-  for (int i=0; i < size; i++)
-    grad[i] = 0.;
-  if(valid)
-    for (int i=0; i < size; i++)
-      valid[i] = false;
+  int boader = sample_offset;
+  float doffset = 2*sample_offset;
+  for (int rc=sample_offset; rc<rows-sample_offset; rc++) {
+    for (int cc=sample_offset; cc<cols-sample_offset; cc++) {
+      int vidx0 = rc*cols+cc;
+      int idx0 = 2*vidx0;
+      grad[idx0] = grad[idx0+1] = 0.f;
 
-  const int hk = (sample_width-1)/2;
-  std::vector<float> samples0, samples;
-  samples0.reserve(sample_width);
-  samples.reserve(sample_width);
+      const float& dcp = filtered_depth[idx0];
+      int c0 = cc;
+      int r0 = rc;
+      int c1 = cc+sample_offset;
+      int r1 = rc+sample_offset;
 
-  enum SAMPLE_METHOD{
-    MEAN,
-    MEDIAN,
-    MEAN_EXCLUDE_EXTREM
-  };
+      const float& dx0 = filtered_depth[2*(rc*cols+c0)];
+      const float& dx1 = filtered_depth[2*(rc*cols+c1)];
+      const float& dy0 = filtered_depth[2*(r0*cols+cc)+1];
+      const float& dy1 = filtered_depth[2*(r1*cols+cc)+1];
 
-  SAMPLE_METHOD sample_method = MEAN_EXCLUDE_EXTREM;
+      if(dcp == 0.f)
+        continue;
+      else if(dx0 == 0.f)
+        continue;
+      else if(dx1 == 0.f)
+        continue;
+      else if(dy0 == 0.f)
+        continue;
+      else if(dy1 == 0.f)
+        continue;
 
-  auto GetValue = [&sample_method](std::vector<float>& values){
-    if(sample_method == MEAN){
-      // Mean - 실험결과 mean 이 더 정확했음.
-      float sum = 0.;
-      for(const float& v : values)
-        sum += v;
-      return sum / (float) values.size();
-    }
-    else if(sample_method == MEDIAN){
-      std::sort(values.begin(), values.end());
-      return values[values.size()/2];
-    }
-    else if(sample_method == MEAN_EXCLUDE_EXTREM){
-      std::sort(values.begin(), values.end());
-      const int extrem = values.size()/4;
-      float sum = 0.;
-      int k = 0;
-      for(size_t i = extrem; i < values.size()-extrem; i++){
-        k++;
-        sum += values[k];
-      }
-      return sum / (float) k;
-    }
-    return -1.f;
-  };
+      float dx = doffset * dcp / fx;
+      float dy = doffset * dcp / fy;
 
-  int boader = sample_offset + hk + 1;
-  for (int r0=boader; r0<rows-boader; r0++) {
-    for (int c0=boader; c0<cols-boader; c0++) {
-      const float& d_cp = depth[r0*cols+c0];
-      int idx0 = 2*(r0*cols + c0);
-
-      samples0.clear();   
-      samples.clear();   
-      { // Sample depth for gx
-        int c = c0 + sample_offset;
-        for(int r=r0-hk; r <= r0+hk; r++){
-          const float& d0 = depth[r*cols+c0];
-          if(std::abs(d_cp-d0) > max_depth_diff)
-            break;
-          else if(d0 > 0.)
-            samples0.push_back(d0);
-          else
-            break;
-
-          const float& sample = depth[r*cols+c];
-          if(std::abs(d_cp-sample) > max_depth_diff)
-            break;
-          else if(sample > 0.)
-            samples.push_back(sample);
-          else
-            break;
-        }
-      }
-
-      if(samples0.size() == sample_width && samples.size() == sample_width) {
-        float d0 = GetValue(samples0);
-        float d1 = GetValue(samples);
-        float dx = (float) sample_offset * d0 / fx;
-        // gx
-        grad[idx0] = (d1 - d0) / dx;
-        if(valid)
-          valid[idx0] = true;
-      }
-
-      samples0.clear();   
-      samples.clear();   
-      { // Compute depth for gy
-        int r = r0 + sample_offset;
-        for(int c=c0-hk; c <= c0+hk; c++){
-          const float& d0 = depth[r0*cols+c];
-          if(d0 > 0.)
-            samples0.push_back(d0);
-          else
-            break;
-          const float& sample = depth[r*cols+c];
-          if(sample > 0.)
-            samples.push_back(sample);
-          else
-            break;
-        }
-      }
-
-      if(samples0.size() == sample_width && samples.size() == sample_width){
-        float d0 = GetValue(samples0);
-        float d1 = GetValue(samples);
-        float dy = (float) sample_offset * d0 / fy;
-        // gy
-        grad[idx0+1] = (d1 - d0 ) / dy;
-        if(valid)
-          valid[idx0+1] = true;
-      }
+      valid[vidx0] = true;
+      grad[idx0] = (dx1 - dx0) / dx; // gx
+      grad[idx0+1] = (dy1 - dy0) / dy; // gy
     }
   }
   return;
 }
 
 void GetHessian(const float* depth,
-                  const std::vector<long int>& shape,
-                  int grad_sample_offset,
-                  int grad_sample_width,
-                  float fx,
-                  float fy,
-                  float* hessian
-                  ){
+                const float* grad,
+                const unsigned char* valid,
+                const std::vector<long int>& shape,
+                float fx,
+                float fy,
+                float* hessian)
+{
   const int rows = (int)shape.at(0);
   const int cols = (int)shape.at(1);
   const int size = rows*cols;
+  // TODO -논문용- 왜 두겹짜리 Hessian edge가 발생하는지?
+  // Done 해결책 구현
+  int hk = 20;
+  const float vmax = 999999.;
 
-  float* grad = new float[2*size];
-  bool* valid = new bool[2*size];
-  GetGradient(depth, shape, grad_sample_offset, grad_sample_width, fx, fy, grad, valid);
+  float* hessian_x = new float[size];
+  float* hessian_y = new float[size];
+  memset((void*)hessian_x, 0, size*sizeof(float) );
+  memset((void*)hessian_y, 0, size*sizeof(float) );
 
-  const float l0 = 0.;
+  for (int rc=hk; rc<rows-hk; rc++) {
+    for (int cc=hk; cc<cols-hk; cc++) {
+      {
+        float gx0 = vmax;
+        float gx1 = -vmax;
+        int c0, c1;
+        c0 = c1 = -1;
+        for(int c=cc-hk; c < cc+hk; c++){
+          const int i = rc*cols+c;
+          const unsigned char& v = valid[i];
+          if(!v)
+            continue;
+          const float gx = grad[2*i];
+          if(gx < gx0){
+            c0 = c;
+            gx0 = gx;
+          }
+          if(gx > gx1){
+            c1 = c;
+            gx1 = gx;
+          }
+        }
 
-  for (int i=0; i < size; i++)
-    hessian[i] = l0;
+        if(c0 >= 0 && c1 >= 0){
+          int c = (c0+c1)/2;
+          int i = rc*cols+c;
+          if(valid[i]){
+            const float& dcp = depth[i];
+            float du = c1 - c0;
+            float dx = du * dcp / fx;
+            hessian_x[i] = (gx1-gx0)/dx;
+          }
+        }
+      }
 
-  const int duv=1;
-#if 1
-  for (int r=duv; r < rows-duv; r++) {
-    int rp = r+duv;
-    int rn = r-duv;
-    for (int c=duv; c < cols-duv; c++) {
-      int cp = c+duv;
-      int cn = c-duv;
-      int idx = r*cols+c;
-      const float& d0  = depth[idx];
-      float gpx; {
-        int j = 2*(r*cols+cp);
-        if(!valid[j])
-          continue;
-        gpx = grad[j];
+      {
+        float gy0 = vmax;
+        float gy1 = -vmax;
+        int r0, r1;
+        r0 = r1 = -1;
+        for(int r=rc-hk; r < rc+hk; r++){
+          const int i = r*cols+cc;
+          const unsigned char& v = valid[i];
+          if(!v)
+            continue;
+          const float gy = grad[2*i+1];
+          if(gy < gy0){
+            r0 = r;
+            gy0 = gy;
+          }
+          if(gy > gy1){
+            r1 = r;
+            gy1 = gy;
+          }
+        }
+
+        if(r0 >= 0 && r1 >= 0){
+          int r = (r0+r1)/2;
+          int i = r*cols+cc;
+          if(valid[i]){
+            const float& dcp = depth[i];
+            float dv = r1 - r0;
+            float dy = dv * dcp / fy;
+            hessian_y[i] = (gy1-gy0)/dy;
+          }
+        }
       }
-      float gnx; {
-        int j = 2*(r*cols+cn);
-        if(!valid[j])
-          continue;
-        gnx = grad[j];
-      }
-      float gpy; {
-        int j = 2*(rp*cols+c)+1;
-        if(!valid[j])
-          continue;
-        gpy = grad[j];
-      }
-      float gny; {
-        int j = 2*(rn*cols+c)+1;
-        if(!valid[j])
-          continue;
-        gny = grad[j];
-      }
-      float dx = 2. * (float) duv * d0 / fx;
-      float dy = 2. * (float) duv * d0 / fy;
-      float lx = (gpx - gnx)/dx;
-      float ly = (gpy - gny)/dy;
-      hessian[idx] = lx + ly;
     }
   }
-#else
-  for (int r0=0; r0<rows; r0++) {
-    for (int c0=0; c0<cols; c0++) {
-      int idx = r0*cols + c0;
-      int r = r0+duv;
-      int c = c0+duv;
-      const float& d0  = depth[r0*cols+c0];
-      const float& d1x = depth[r0*cols+c ];
-      const float& d1y = depth[ r*cols+c0];
-      if(d0 == 0.)
-        continue;
 
-      float lx = l0;
-      int xidx = 2*(r0*cols+c);
-      bool bx = false;
-      if(valid[2*idx] && valid[xidx]){
-        float dx = (float) duv * d0 / fx;
-        float gx = grad[xidx];
-        const float& gx0 = grad[2*idx];
-        lx = (gx - gx0) / dx;
-        bx = true;
-      }
+  for(int i = 0; i < size; i++)
+    hessian[i] = hessian_x[i] + hessian_y[i];
 
-      float ly = l0;
-      int yidx = 2*(r*cols+c0) + 1;
-      bool by = false;
-      if(valid[2*idx+1] && valid[yidx]){
-        float dy = (float) duv * d0 / fy;
-        float gy = grad[yidx];
-        const float& gy0 = grad[2*idx+1];
-        ly = (gy - gy0) / dy;
-        by = true;
-      }
-
-#if 0
-      hessian[idx] = lx + ly;
-#else
-      if(bx && by)
-        hessian[idx] = std::abs(lx) > std::abs(ly)? lx : ly;
-      else if(bx)
-        hessian[idx] = lx;
-      else if(by)
-        hessian[idx] = ly;
-#endif
-    }
-  }
-#endif
-
-  delete[] grad;
-  delete[] valid;
+  delete[] hessian_x;
+  delete[] hessian_y;
   return;
 }
 
@@ -307,24 +309,35 @@ py::array_t<unsigned char> PyFindEdge(py::array_t<unsigned char> inputmask) {
   return output;
 }
 
-py::array_t<float> PyGetGradient(py::array_t<float> inputdepth,
+py::tuple PyGetGradient(py::array_t<float> filtered_depth,
                                  int sample_offset,
-                                 int sample_width,
                                  float fx,
                                  float fy
                                  ) {
-  py::buffer_info buf_inputdepth = inputdepth.request();
+  py::buffer_info buf_filtered_depth = filtered_depth.request();
+  long rows = buf_filtered_depth.shape[0];
+  long cols = buf_filtered_depth.shape[1];
 
   /*  allocate the buffer */
-  py::array_t<float> output = py::array_t<float>(2*buf_inputdepth.size);
-  py::buffer_info buf_output = output.request();
+  py::array_t<float> grad = py::array_t<float>(rows*cols*2);
+  py::array_t<unsigned char> valid = py::array_t<unsigned char>(rows*cols);
+  py::buffer_info buf_grad = grad.request();
+  float* ptr_grad = (float*) buf_grad.ptr;
 
-  const float* ptr_inputdepth = (const float*) buf_inputdepth.ptr;
-  float* ptr_output = (float*) buf_output.ptr;
-  GetGradient(ptr_inputdepth, buf_inputdepth.shape, sample_offset, sample_width, fx, fy, ptr_output, nullptr);
+  py::buffer_info buf_valid = valid.request();
+  unsigned char* ptr_valid = (unsigned char*) buf_valid.ptr;
+  memset((void*)ptr_valid,0, buf_valid.size*sizeof(unsigned char));
+
+  const float* ptr_filtered_depth = (const float*) buf_filtered_depth.ptr;
+  GetGradient(ptr_filtered_depth, buf_filtered_depth.shape,
+              sample_offset, fx, fy, ptr_grad, ptr_valid);
 
   // reshape array to match input shape
-  output.resize({buf_inputdepth.shape[0], buf_inputdepth.shape[1], 2L});
+  grad.resize({rows, cols, 2L});
+  valid.resize({rows, cols});
+
+  // ref: https://pybind11.readthedocs.io/en/stable/advanced/pycpp/object.html#instantiating-compound-python-types-from-c
+  py::tuple output = py::make_tuple(grad, valid);
   return output;
 }
 
@@ -463,36 +476,70 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
   return output;
 }
 
-py::array_t<float> PyGetHessian(py::array_t<float> inputdepth,
-                                  int grad_sample_offset,
-                                  int grad_sample_width,
-                                  float fx,
-                                  float fy
-                                  ) {
-  py::buffer_info buf_inputdepth = inputdepth.request();
-  /*  allocate the buffer */
-  py::array_t<float> output = py::array_t<float>(buf_inputdepth.size);
-  py::buffer_info buf_output = output.request();
+py::array_t<float> PyGetHessian(py::array_t<float> depth,
+                                py::array_t<float> grad,
+                                py::array_t<unsigned char> valid,
+                                float fx,
+                                float fy
+                               ) {
+  py::buffer_info buf_depth = depth.request();
+  long rows = buf_depth.shape[0];
+  long cols = buf_depth.shape[1];
+  const float* ptr_depth = (const float*) buf_depth.ptr;
 
-  const float* ptr_inputdepth = (const float*) buf_inputdepth.ptr;
-  float* ptr_output = (float*) buf_output.ptr;
-  GetHessian(ptr_inputdepth,
-               buf_inputdepth.shape,
-               grad_sample_offset,
-               grad_sample_width,
-               fx,
-               fy,
-               ptr_output);
+  py::buffer_info buf_grad = grad.request();
+  const float* ptr_grad = (const float*) buf_grad.ptr;
+
+  py::buffer_info buf_valid = valid.request();
+  const unsigned char* ptr_valid = (const unsigned char*) buf_valid.ptr;
+
+  /*  allocate the buffer */
+  py::array_t<float> hessian = py::array_t<float>(rows*cols);
+  py::buffer_info buf_hessian = hessian.request();
+  float* ptr_hessian = (float*) buf_hessian.ptr;
+  memset((void*)ptr_hessian,0, buf_hessian.size*sizeof(float));
+
+  GetHessian(ptr_depth,
+             ptr_grad,
+             ptr_valid,
+             buf_depth.shape,
+             fx,
+             fy,
+             ptr_hessian);
 
   // reshape array to match input shape
-  output.resize({buf_inputdepth.shape[0], buf_inputdepth.shape[1]});
+  hessian.resize({rows, cols});
+  return hessian;
+}
+
+py::array_t<float> PyGetFilteredDepth(py::array_t<float> inputdepth,
+                                  int sample_width
+                                  ) {
+  py::buffer_info buf_inputdepth = inputdepth.request();
+  //  allocate the buffer, Depth map of $z_u$ and $z_v$
+  py::array_t<float> output = py::array_t<float>(2*buf_inputdepth.size);
+  py::buffer_info buf_output = output.request();
+  float* ptr_output = (float*) buf_output.ptr;
+  //memset((void*)ptr_output,0, 2*buf_inputdepth.size*sizeof(float));
+
+  const float* ptr_inputdepth = (const float*) buf_inputdepth.ptr;
+
+  GetFilteredDepth(ptr_inputdepth,
+                   buf_inputdepth.shape,
+                   sample_width,
+                   ptr_output);
+  // reshape array to match input shape
+  output.resize({buf_inputdepth.shape[0], buf_inputdepth.shape[1], 2L});
   return output;
 }
 
+
 PYBIND11_MODULE(unet_ext, m) {
+  m.def("GetFilteredDepth", &PyGetFilteredDepth, "Get filtered depth.", py::arg("input_mask"),
+        py::arg("sample_width") );
   m.def("FindEdge", &PyFindEdge, "find edge", py::arg("input_mask") );
   m.def("GetGradient", &PyGetGradient, "get gradient",
-        py::arg("depth"), py::arg("sample_offset"), py::arg("sample_width"),
+        py::arg("depth"), py::arg("sample_offset"),
         py::arg("fx"), py::arg("fy") );
   m.def("GetHessian", &PyGetHessian, "Get diagonal elements of Hessian",
         py::arg("depth"), py::arg("grad_sample_offset"), py::arg("grad_sample_width"),
