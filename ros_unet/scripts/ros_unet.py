@@ -115,7 +115,7 @@ if __name__ == '__main__':
             #dg[depth[:,:]>0.,1] += 100
             #cv2.imshow("valid_depth", dg)
 
-            fd = cpp_ext.GetFilteredDepth(depth, sample_width=7)
+            fd = cpp_ext.GetFilteredDepth(depth, sample_width=5)
             grad, valid = cpp_ext.GetGradient(fd, sample_offset=3,fx=fx,fy=fy) # 5
             hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
 
@@ -145,16 +145,15 @@ if __name__ == '__main__':
             #cv2.imshow("dgy", dgy.astype(np.uint8))
 
             dh  = cv_rgb.copy()
-            curvature = 30.;
+            curvature = 15.;
             dh[hessian > curvature,2] = 255
             dh[hessian > curvature,:2] = 0
             dh[hessian < -curvature,0] = 255
             dh[hessian < -curvature,1:] = 0
             #dh[hessian ==0.,1] = 255
-            cv2.imshow("dh", dh)
-
-            cv2.imshow("concave", 255*(hessian < -curvature).astype(np.uint8))
             cv2.imshow("dgx", dgx.astype(np.uint8))
+            cv2.imshow("dh", dh)
+            cv2.imshow("concave", 255*(hessian < -curvature).astype(np.uint8))
             cv2.waitKey(1)
             continue # TODO Erase it after test!
 

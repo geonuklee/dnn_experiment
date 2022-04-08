@@ -10,6 +10,14 @@
 
 namespace py = pybind11;
 
+bool SameSign(const float& v1, const float& v2){
+  if(v1 > 0.)
+    return v2 > 0.;
+  else if(v1 < 0.)
+    return v2 < 0.;
+  return (v1 == 0.) && (v2 == 0.);
+}
+
 int GetFilteredDepth(const float* depth,
                      const std::vector<long int>& shape,
                      int sample_width,
@@ -215,7 +223,7 @@ void GetHessianWithFixedSamplePosition(const float* depth,
   memset((void*)hessian_x, 0, size*sizeof(float) );
   memset((void*)hessian_y, 0, size*sizeof(float) );
 
-  enum PARTIAL {X, Y};
+  enum PARTIAL {X=0, Y=1};
   for (int rc=hk; rc<rows-hk; rc++) {
     for (int cc=hk; cc<cols-hk; cc++) {
       // Partial differential with fixed sampling point.
@@ -248,13 +256,6 @@ void GetHessian(const float* depth,
   const int rows = (int)shape.at(0);
   const int cols = (int)shape.at(1);
   const int size = rows*cols;
-  // TODO -논문용- 왜 두겹짜리 Hessian edge가 발생하는지?
-  // Done 해결책 구현
-#if 1
-  int hk = 5;
-#else
-  int hk = 20;
-#endif
   const float vmax = 999999.;
 
   float* hessian_x = new float[size];
@@ -263,42 +264,35 @@ void GetHessian(const float* depth,
   memset((void*)hessian_y, 0, size*sizeof(float) );
 
   enum PARTIAL {X, Y};
-  for (int rc=hk; rc<rows-hk; rc++) {
-    for (int cc=hk; cc<cols-hk; cc++) {
+  bool* bmax_x = new bool[size];
+  bool* bmax_y = new bool[size];
+  memset((void*)bmax_x, true, size*sizeof(bool) );
+  memset((void*)bmax_y, true, size*sizeof(bool) );
+
+  // 실험결과 multi scale offset은 random에서, min offset은 공통 필요했음.
+  const int hd = 6;
+  for (int rc=hd; rc<rows-hd; rc++) {
+    for (int cc=hd; cc<cols-hd; cc++) {
       for(const auto& partial : {PARTIAL::X,PARTIAL::Y} ) {
-        float g0 = vmax;
-        float g1 = -vmax;
-        int e0, e1;
-        e0 = e1 = -1;
-        const int kc = (partial==PARTIAL::X? cc : rc);
-        for(int k=kc-hk; k < kc+hk; k++){
-          const int i = (partial==PARTIAL::X? rc*cols+k : k*cols+cc);
-          const unsigned char& v = valid[i];
-          if(!v)
+        const int ic = rc*cols+cc;
+        if(!valid[ic])
+          continue;
+        for(int k = hd-1; k < hd; k++){
+          const int i0 = (partial==PARTIAL::X? rc*cols+cc-k : (rc-k)*cols+cc);
+          const int i1 = (partial==PARTIAL::X? rc*cols+cc+k : (rc+k)*cols+cc);
+          if(!valid[i0])
             continue;
-          const float& g = (partial==PARTIAL::X? grad[2*i] : grad[2*i+1]);
-          if(g < g0){
-            e0 = k;
-            g0 = g;
-          }
-          if(g > g1){
-            e1 = k;
-            g1 = g;
-          }
-        }
-        if(e0 >= 0 && e1 >= 0){
-          int k = (e0+e1)/2;
-          int i = (partial==PARTIAL::X? rc*cols+k : k*cols+cc);
-          if(valid[i]){
-            const float& dcp = depth[i]; // Middle of sample point 0 and 1.
-            float duv = e1 - e0;
-            float dxy = duv * dcp / (partial==PARTIAL::X? fx : fy);
-            float& h = (partial==PARTIAL::X? hessian_x[i]:hessian_y[i]);
-            float h_candidate = (g1-g0)/dxy;
-            if(std::abs(h_candidate) > std::abs(h) )
-              h = h_candidate;
-            // partial==PARTIAL::X? hessian_x[i]:hessian_y[i] = (g1-g0)/dxy; << Be careful.
-          }
+          if(!valid[i1])
+            continue;
+          const float& g0 = (partial==PARTIAL::X? grad[2*i0] : grad[2*i0+1]);
+          const float& g1 = (partial==PARTIAL::X? grad[2*i1] : grad[2*i1+1]);
+          const float& dcp = depth[ic]; // Middle of sample point 0 and 1.
+          float doffset = 2 * k;
+          float dxy = doffset * dcp / (partial==PARTIAL::X? fx : fy);
+          float& h = (partial==PARTIAL::X? hessian_x[ic]:hessian_y[ic]);
+          float h_candidate = (g1-g0)/dxy;
+          if(std::abs(h_candidate) > std::abs(h))
+            h = h_candidate;
         }
       }
     }
@@ -306,6 +300,61 @@ void GetHessian(const float* depth,
 
   for(int i = 0; i < size; i++)
     hessian[i] = hessian_x[i] + hessian_y[i];
+
+  const int hk = 10;
+  for (int rc=hk; rc<rows-hk; rc++) {
+    for (int cc=hk; cc<cols-hk; cc++) {
+      const int ic = rc*cols+cc;
+      if(!valid[ic])
+        continue;
+      const float& hc = hessian[ic];
+      const float abs_hc = std::abs(hc);
+
+      bool& is_maximum = bmax_x[ic];
+      bool search_dir[4] = {true,true,true,true};
+      for(int k=1; k< hk; k++){
+        for(const auto& partial : {PARTIAL::X,PARTIAL::Y} ) {
+          const int i0 = (partial==PARTIAL::X? rc*cols+cc-k : (rc-k)*cols+cc);
+          const int i1 = (partial==PARTIAL::X? rc*cols+cc+k : (rc+k)*cols+cc);
+          if(search_dir[partial] ){
+            if(valid[i0]) {
+              const float& h0 = hessian[i0];
+              if( (std::abs(h0) > abs_hc) && (!SameSign(h0,hc)) ){
+                is_maximum = false;
+                break; // break for loop of k
+              }
+            } else {
+              // TODO invalid 또는 depth 오차가 급격히 증가했을때 - 즉 실루엣
+              search_dir[partial] = false;
+            }
+          }
+          if(search_dir[2+partial] ){
+            if(valid[i1]) {
+              const float& h1 = hessian[i1];
+              if( (std::abs(h1) > abs_hc) && (!SameSign(h1,hc)) ){
+                is_maximum = false;
+                break; // break for loop of k
+              }
+            } else {
+              search_dir[2+partial] = false;
+            }
+          }
+        }
+        if(!is_maximum)
+          break;
+      }
+    }
+  }
+
+  for (int r=1; r<rows-1; r++) {
+    for (int c=1; c<cols-1; c++) {
+      const int i = r*cols+c;
+      if(!bmax_x[i])
+        hessian[i] = 0.;
+    }
+  }
+  delete[] bmax_x;
+  delete[] bmax_y;
 
   delete[] hessian_x;
   delete[] hessian_y;
