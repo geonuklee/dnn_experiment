@@ -65,7 +65,9 @@ int GetFilteredDepth(const float* depth,
 
   const int rows = (int)shape.at(0);
   const int cols = (int)shape.at(1);
+  const int size = rows*cols;
   const int hw = 2;
+  memset((void*)filtered_depth, 0, 2*size*sizeof(float));
 
   enum SAMPLE_METHOD{
     MEAN,
@@ -96,7 +98,7 @@ int GetFilteredDepth(const float* depth,
       }
       return sum / (float) k;
     }
-    return -1.f;
+    return 0.f;
   };
 
   const int hk = (sample_width-1)/2;
@@ -112,7 +114,10 @@ int GetFilteredDepth(const float* depth,
       if(d_cp ==0.){
         zu = zv = 0.;
       }
-      else if(sample_width > 2){
+      else if(sample_width < 3){
+        zu = zv = d_cp;
+      }
+      else {
 #if 1
         su.clear();
         su.push_back(d_cp);
@@ -173,9 +178,6 @@ int GetFilteredDepth(const float* depth,
         zv = GetValue(sv);
 #endif
       }
-      else{
-        zu = zv = d_cp;
-      }
       int idx0 = 2*(r0*cols + c0);
       filtered_depth[idx0] = zu;
       filtered_depth[idx0+1] = zv;
@@ -228,17 +230,20 @@ void GetGradient(const float* filtered_depth,
                  float* grad,
                  unsigned char* valid
                 ){
-  int rows = shape[0];
-  int cols = shape[1];
+  const int rows = shape[0];
+  const int cols = shape[1];
+  const int size = rows*cols;
 
   int boader = sample_offset;
   float doffset = 2*sample_offset;
+  memset((void*)grad, 0, 2*size*sizeof(float));
+  memset((void*)valid, 0, size*sizeof(unsigned char));
+
   for (int rc=sample_offset; rc<rows-sample_offset; rc++) {
     for (int cc=sample_offset; cc<cols-sample_offset; cc++) {
       // Remind : Gradients는 smoothing 때문에 gradient로 점진적으로 반응.
       int vidx0 = rc*cols+cc;
       int idx0 = 2*vidx0;
-      grad[idx0] = grad[idx0+1] = 0.f;
 
       const float& dcp = filtered_depth[idx0];
       int c0 = cc-sample_offset;

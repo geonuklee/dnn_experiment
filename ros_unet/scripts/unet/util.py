@@ -127,6 +127,17 @@ def ConvertDepth2input(depth, fx, fy):
     fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
     grad, valid = cpp_ext.GetGradient(fd, sample_offset=3,fx=fx,fy=fy) # 5
     hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
+
+    #if np.isnan(fd.sum()):
+    #    print("fd has nan")
+    #    import pdb; pdb.set_trace()
+    #if np.isnan(grad.sum()):
+    #    print("grad has nan")
+    #    import pdb; pdb.set_trace()
+    #if np.isnan(hessian.sum()):
+    #    print("hessian has nan")
+    #    import pdb; pdb.set_trace()
+
     threshold_curvature = 15.
     outline = np.logical_or(hessian < -threshold_curvature, dd_edge > 0).astype(np.uint8)
 
