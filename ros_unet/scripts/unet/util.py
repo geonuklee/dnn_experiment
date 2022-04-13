@@ -121,11 +121,25 @@ class SplitAdapter:
                     n+=1
         return output
 
-def GetGradient(depth, fx, fy):
-    cvgrad=cpp_ext.GetGradient(depth, sample_offset=5,sample_width=7,fx=fx,fy=fy)
-    return cvgrad
-
 def ConvertDepth2input(depth, fx, fy):
+    # TODO New input from gradient and Hessian
+    dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.1)
+    fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
+    grad, valid = cpp_ext.GetGradient(fd, sample_offset=3,fx=fx,fy=fy) # 5
+    hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
+    threshold_curvature = 15.
+    outline = np.logical_or(hessian < -threshold_curvature, dd_edge > 0).astype(np.uint8)
+
+    max_grad = 2 # tan(60)
+    grad[grad > max_grad] = max_grad
+    grad[grad < -max_grad] = -max_grad
+    # Normalization
+    grad /= 2.*max_grad
+    input_stack = np.stack( (outline,
+                             grad[:,:,0],
+                             grad[:,:,1]
+                             ), axis=0 )
+    return (input_stack, grad, hessian, outline )
     cvgrad = GetGradient(depth, fx, fy)
 
     if False:

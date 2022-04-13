@@ -18,7 +18,45 @@ bool SameSign(const float& v1, const float& v2){
   return (v1 == 0.) && (v2 == 0.);
 }
 
+void GetDiscontinuousDepthEdge(const float* depth,
+                               const std::vector<long int>& shape,
+                               float threshold_depth,
+                               unsigned char* output
+                               ){
+  const int rows = (int)shape.at(0);
+  const int cols = (int)shape.at(1);
+  const int size = rows*cols;
+  const int hk = 1;
+  memset((void*)output, false, size*sizeof(unsigned char) );
+
+  for (int r0=hk; r0<rows-hk; r0++) {
+    for (int c0=hk; c0<cols-hk; c0++) {
+      const int idx0 = r0*cols+c0;
+      const float& d_cp = depth[idx0];
+      for(int r=r0-hk; r < r0+hk; r++){
+        if(output[idx0])
+          break;
+        for(int c=c0-hk; c < c0+hk; c++){
+          if(output[idx0])
+            break;
+          const float& d = depth[r*cols+c];
+          bool c1 = d < 0.001;
+          bool c2 = d_cp < 0.001;
+          bool c3 = std::abs(d-d_cp) > threshold_depth;
+          if(c1 || c2 || c3){
+            output[idx0] = true;
+            break;
+          } // if abs(d-d_cp) > threshold
+        } // for c
+      } //for r
+    } // for c0
+  } // for r0
+  return;
+}
+
+
 int GetFilteredDepth(const float* depth,
+                     const unsigned char* dd_edge,
                      const std::vector<long int>& shape,
                      int sample_width,
                      float* filtered_depth) {
@@ -28,7 +66,6 @@ int GetFilteredDepth(const float* depth,
   const int rows = (int)shape.at(0);
   const int cols = (int)shape.at(1);
   const int hw = 2;
-  const float max_depth_diff = 0.1; // TODO parameterize
 
   enum SAMPLE_METHOD{
     MEAN,
@@ -76,6 +113,40 @@ int GetFilteredDepth(const float* depth,
         zu = zv = 0.;
       }
       else if(sample_width > 2){
+#if 1
+        su.clear();
+        su.push_back(d_cp);
+        // Sample depth for gx
+        for(int dir = 0; dir < 2; dir++){
+          for(int k=1; k<hk; k++){
+            int r = dir==0? r0+k : r0-k;
+            int idx = r*cols+c0;
+            const float& d = depth[idx];
+            const unsigned char& discontinuous = dd_edge[idx];
+            if(discontinuous)
+              break; // break for k
+            su.push_back(d);
+          }
+        }
+        zu = GetValue(su);
+
+        // Sample depth for gy
+        sv.clear();
+        sv.push_back(d_cp);
+        for(int dir = 0; dir < 2; dir++){
+          for(int k=1; k<hk; k++){
+            int c = dir==0? c0+k : c0-k;
+            int idx = r0*cols+c;
+            const float& d = depth[idx];
+            const unsigned char& discontinuous = dd_edge[idx];
+            if(discontinuous)
+              break; // break for k
+            sv.push_back(d);
+          }
+        }
+        zv = GetValue(sv);
+#else
+        const float max_depth_diff = 0.1;
         su.clear();
         // Sample depth for gx
         for(int r=r0-hk; r <= r0+hk; r++){
@@ -100,11 +171,11 @@ int GetFilteredDepth(const float* depth,
             continue;
         }
         zv = GetValue(sv);
+#endif
       }
       else{
         zu = zv = d_cp;
       }
-
       int idx0 = 2*(r0*cols + c0);
       filtered_depth[idx0] = zu;
       filtered_depth[idx0+1] = zv;
@@ -582,9 +653,12 @@ py::array_t<float> PyGetHessian(py::array_t<float> depth,
 }
 
 py::array_t<float> PyGetFilteredDepth(py::array_t<float> inputdepth,
-                                  int sample_width
-                                  ) {
+                                      py::array_t<unsigned char> dd_edge,
+                                      int sample_width
+                                     ) {
   py::buffer_info buf_inputdepth = inputdepth.request();
+  py::buffer_info buf_ddedge = dd_edge.request();
+
   //  allocate the buffer, Depth map of $z_u$ and $z_v$
   py::array_t<float> output = py::array_t<float>(2*buf_inputdepth.size);
   py::buffer_info buf_output = output.request();
@@ -592,8 +666,10 @@ py::array_t<float> PyGetFilteredDepth(py::array_t<float> inputdepth,
   //memset((void*)ptr_output,0, 2*buf_inputdepth.size*sizeof(float));
 
   const float* ptr_inputdepth = (const float*) buf_inputdepth.ptr;
+  const unsigned char* ptr_ddedge = (const unsigned char*) buf_ddedge.ptr;
 
   GetFilteredDepth(ptr_inputdepth,
+                   ptr_ddedge,
                    buf_inputdepth.shape,
                    sample_width,
                    ptr_output);
@@ -602,11 +678,34 @@ py::array_t<float> PyGetFilteredDepth(py::array_t<float> inputdepth,
   return output;
 }
 
+py::array_t<float> PyGetDiscontinuousDepthEdge(py::array_t<float> inputdepth,
+                                  float threshold_depth
+                                  ) {
+  py::buffer_info buf_inputdepth = inputdepth.request();
+  py::array_t<unsigned char> output = py::array_t<unsigned char>(buf_inputdepth.size);
+  py::buffer_info buf_output = output.request();
+  unsigned char* ptr_output = (unsigned char*) buf_output.ptr;
+  memset((void*)ptr_output,0, buf_inputdepth.size*sizeof(unsigned char));
+
+  const float* ptr_inputdepth = (const float*) buf_inputdepth.ptr;
+  GetDiscontinuousDepthEdge(ptr_inputdepth,
+                            buf_inputdepth.shape,
+                            threshold_depth,
+                            ptr_output);
+
+  output.resize({buf_inputdepth.shape[0], buf_inputdepth.shape[1]});
+  return output;
+}
+
 
 PYBIND11_MODULE(unet_ext, m) {
-  m.def("GetFilteredDepth", &PyGetFilteredDepth, "Get filtered depth.", py::arg("input_mask"),
+  m.def("GetFilteredDepth", &PyGetFilteredDepth, "Get filtered depth.",
+        py::arg("input_mask"), py::arg("dd_edge"),
         py::arg("sample_width") );
   m.def("FindEdge", &PyFindEdge, "find edge", py::arg("input_mask") );
+  m.def("GetDiscontinuousDepthEdge", &PyGetDiscontinuousDepthEdge,
+        "Find edge of discontinuous depth",
+        py::arg("input_depth"), py::arg("threshold_depth") );
   m.def("GetGradient", &PyGetGradient, "get gradient",
         py::arg("depth"), py::arg("sample_offset"),
         py::arg("fx"), py::arg("fy") );

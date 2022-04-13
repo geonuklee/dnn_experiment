@@ -39,6 +39,39 @@ class Sub:
             return
         self.info = topic
 
+def visualize_gradient_x(grad):
+    dgx = np.zeros( (grad.shape[0],grad.shape[1],3), np.uint8)
+    gmax = 20.
+    for r in range(grad.shape[0]):
+        for c in range(grad.shape[1]):
+            gx, gy = grad[r,c,:]
+            if gx > 0.3:
+                gx = min(gmax,gx)
+                vx = 200./gmax * gx
+                vx = max(vx, 0)
+                dgx[r,c,2] = 255 #int(vx)
+            if gx < -0.3:
+                gx = min(gmax,-gx)
+                vx = 200./gmax * gx
+                vx = max(vx, 0)
+                dgx[r,c,0] = 255 #int(vx)
+    return dgx
+
+def visualize_hessian(hessian, cv_rgb, threshold_curvature):
+    dh  = cv_rgb.copy()
+    dh[hessian > threshold_curvature,2] = 255
+    dh[hessian > threshold_curvature,:2] = 0
+    dh[hessian < -threshold_curvature,0] = 255
+    dh[hessian < -threshold_curvature,1:] = 0
+    return dh
+
+def visualize_outline(hessian, dd_edg, threshold_curvature, do=None ):
+    if do is None:
+        do = np.zeros( (hessian.shape[0],hessian.shape[1],3), np.uint8)
+    do[hessian < -threshold_curvature, 0] = 255
+    do[dd_edge > 0, 1] = 255
+    return do
+
 if __name__ == '__main__':
     rospy.init_node('ros_unet', anonymous=True)
     rate = rospy.Rate(hz=100)
@@ -109,56 +142,30 @@ if __name__ == '__main__':
                 break
             fx, fy = info.K[0], info.K[4]
 
-            #dg  = cv_rgb.copy()
-            #dg[depth[:,:]==0.,:2] = 0
-            #dg[depth[:,:]==0.,2] = 255
-            #dg[depth[:,:]>0.,1] += 100
-            #cv2.imshow("valid_depth", dg)
-
-            fd = cpp_ext.GetFilteredDepth(depth, sample_width=5)
-            grad, valid = cpp_ext.GetGradient(fd, sample_offset=3,fx=fx,fy=fy) # 5
-            hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
-
-            fd[ fd[:,:,0] > 2.,0 ]  = 2.
-            cv2.imshow("fdu", (fd[:,:,0]*100).astype(np.uint8))
-            #cv2.imshow("gx", -grad[:,:,0])
-            #cv2.imshow("valid", 255*valid.astype(np.uint8))
-
-            dgx = np.zeros_like(cv_rgb)
-            dgy  = cv_rgb.copy()
-            gmax = 20.
-            for r in range(grad.shape[0]):
-                for c in range(grad.shape[1]):
-                    gx, gy = grad[r,c,:]
-                    if gx > 0.3:
-                        gx = min(gmax,gx)
-                        vx = 200./gmax * gx
-                        vx = max(vx, 0)
-                        dgx[r,c,2] = 255 #int(vx)
-                    if gx < -0.3:
-                        gx = min(gmax,-gx)
-                        vx = 200./gmax * gx
-                        vx = max(vx, 0)
-                        dgx[r,c,0] = 255 #int(vx)
-
-
-            #cv2.imshow("dgy", dgy.astype(np.uint8))
-
-            dh  = cv_rgb.copy()
-            curvature = 15.;
-            dh[hessian > curvature,2] = 255
-            dh[hessian > curvature,:2] = 0
-            dh[hessian < -curvature,0] = 255
-            dh[hessian < -curvature,1:] = 0
-            #dh[hessian ==0.,1] = 255
-            cv2.imshow("dgx", dgx.astype(np.uint8))
-            cv2.imshow("dh", dh)
-            cv2.imshow("concave", 255*(hessian < -curvature).astype(np.uint8))
-            cv2.waitKey(1)
-            continue # TODO Erase it after test!
+            #dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.1)
+            #cv2.imshow("dd_edge", 255*dd_edge.astype(np.uint8))
+            #fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
+            #grad, valid = cpp_ext.GetGradient(fd, sample_offset=3,fx=fx,fy=fy) # 5
+            #hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
+            #fd[ fd[:,:,0] > 2.,0 ]  = 2.
+            #cv2.imshow("fdu", (fd[:,:,0]*100).astype(np.uint8))
+            #threshold_curvature = 15.
+            #dgx = visualize_gradient_x(grad)
+            #cv2.imshow("dgx", dgx.astype(np.uint8))
+            #dh = visualize_hessian(hessian, cv_rgb, threshold_curvature)
+            #cv2.imshow("dh", dh)
+            #outline = np.logical_or(hessian < -threshold_curvature, dd_edge > 0).astype(np.uint8)
+            #cv2.imshow("outline",255*outline)
+            #do = visualize_outline(hessian, dd_edge, threshold_curvature,
+            #        (cv_rgb.copy()/2).astype(np.uint8) )
+            #cv2.imshow("do", do)
+            # cv2.waitKey(1)
 
             t0 = time.clock()
-            input_stack, cvgrad, cvhessian, cv_bedge, cv_wrinkle = ConvertDepth2input(depth, fx, fy)
+            # TODO ConvertDepth2input 다시 작동하게.
+            # -> 왜 가끔가다 정전발생하지??
+            input_stack, grad, hessian, outline = ConvertDepth2input(depth, fx, fy)
+
             input_stack = torch.Tensor(input_stack).unsqueeze(0)
             input_x = spliter.put(input_stack).to(device)
             pred = model(input_x)
@@ -172,35 +179,22 @@ if __name__ == '__main__':
             msg = ros_numpy.msgify(Image, mask, encoding='8UC1')
             pub_mask.publish(msg)
 
+            cv2.imshow("outline", outline*255)
+            cv2.imshow("mask", (mask==1).astype(np.uint8)*255)
+            print(mask.shape)
+
             if pub_vis_edge.get_num_connections() > 0:
                 dst = spliter.mask2dst(mask)
                 dst = cv2.addWeighted(dst,0.5,cv_rgb,0.5,0)
                 msg = ros_numpy.msgify(Image, dst, encoding='8UC3')
                 pub_vis_edge.publish(msg)
             if pub_th_edge.get_num_connections() > 0:
-                msg = ros_numpy.msgify(Image, 255*cv_bedge.astype(np.uint8), encoding='8UC1')
+                msg = ros_numpy.msgify(Image, 255*outline.astype(np.uint8), encoding='8UC1')
                 pub_th_edge.publish(msg)
 
             print("Elapsed time = %.2f [sec]"% (time.clock()-t0) )
-            #valid_depth = (depth > 0.01).astype(np.uint8) * 200
-            #cv2.imshow("valid", valid_depth)
-            #print("Elapsed time = %.2f [sec]"% (time.clock()-t0) )
-            #cv2.imshow("cv_wrinkle", ( cv_wrinkle > 0 ).astype(np.uint8)*255)
-            cv2.imshow("cvhessian", ( cvhessian < -100. ).astype(np.uint8)*255)
-            cv2.imshow("gx", -cvgrad[:,:,0])
-            #cv2.imshow("mgx", (cvgrad[:,:,0]<0.).astype(np.uint8)*255)
-            dgx  = cv_rgb.copy()
-            dgx[cvgrad[:,:,0]>0.,2] = 255
-            dgx[cvgrad[:,:,0]>0.,:2] = 0
-            dgx[cvgrad[:,:,0]<0.,0] = 255
-            dgx[cvgrad[:,:,0]<0.,1:] = 0
-            dgx[cvgrad[:,:,0]==0.,1] = 255
-
-            cv2.imshow("dgx", dgx)
-
-            #cv2.moveWindow("gx", 700, 50)
-            #cv2.imshow("gy", cvgrad[:,:,1])
-            #cv2.moveWindow("gy", 700, 600)
+            #cv2.imshow("cvhessian", ( cvhessian < -100. ).astype(np.uint8)*255)
+            #cv2.imshow("gx", -cvgrad[:,:,0])
             if cv2.waitKey(1) == ord('q'):
                 break
 
