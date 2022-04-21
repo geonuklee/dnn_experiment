@@ -118,7 +118,6 @@ int GetFilteredDepth(const float* depth,
         zu = zv = d_cp;
       }
       else {
-#if 1
         su.clear();
         su.push_back(d_cp);
         // Sample depth for gx
@@ -150,33 +149,6 @@ int GetFilteredDepth(const float* depth,
           }
         }
         zv = GetValue(sv);
-#else
-        const float max_depth_diff = 0.1;
-        su.clear();
-        // Sample depth for gx
-        for(int r=r0-hk; r <= r0+hk; r++){
-          const float& d = depth[r*cols+c0];
-          if(std::abs(d_cp-d) > max_depth_diff)
-            continue;
-          else if(d > 0.)
-            su.push_back(d);
-          else
-            continue;
-        }
-        zu = GetValue(su);
-        // Sample depth for gy
-        sv.clear();
-        for(int c=c0-hk; c <= c0+hk; c++){
-          const float& d = depth[r0*cols+c];
-          if(std::abs(d_cp-d) > max_depth_diff)
-            continue;
-          else if(d > 0.)
-            sv.push_back(d);
-          else
-            continue;
-        }
-        zv = GetValue(sv);
-#endif
       }
       int idx0 = 2*(r0*cols + c0);
       filtered_depth[idx0] = zu;
@@ -278,49 +250,6 @@ void GetGradient(const float* filtered_depth,
   return;
 }
 
-void GetHessianWithFixedSamplePosition(const float* depth,
-                const float* grad,
-                const unsigned char* valid,
-                const std::vector<long int>& shape,
-                float fx,
-                float fy,
-                float* hessian)
-{
-  const int rows = (int)shape.at(0);
-  const int cols = (int)shape.at(1);
-  const int size = rows*cols;
-  // TODO -논문용- 왜 두겹짜리 Hessian edge가 발생하는지?
-  // Done 해결책 구현
-  int hk = 20;
-  const float vmax = 999999.;
-
-  float* hessian_x = new float[size];
-  float* hessian_y = new float[size];
-  memset((void*)hessian_x, 0, size*sizeof(float) );
-  memset((void*)hessian_y, 0, size*sizeof(float) );
-
-  enum PARTIAL {X=0, Y=1};
-  for (int rc=hk; rc<rows-hk; rc++) {
-    for (int cc=hk; cc<cols-hk; cc++) {
-      // Partial differential with fixed sampling point.
-      const float& gx0 = grad[2*(rc*cols+cc-1)];
-      const float& gx1 = grad[2*(rc*cols+cc+1)];
-      const float du = 2;
-      const int i = rc*cols+cc;
-      const float& dcp = depth[i];
-      const float dx = du * dcp / fx;
-      const float hx = (gx1 - gx0) / dx;
-      hessian_x[i] = hx;
-    }
-  }
-  for(int i = 0; i < size; i++)
-    hessian[i] = hessian_x[i] + hessian_y[i];
-
-  delete[] hessian_x;
-  delete[] hessian_y;
-  return;
-}
-
 void GetHessian(const float* depth,
                 const float* grad,
                 const unsigned char* valid,
@@ -346,16 +275,17 @@ void GetHessian(const float* depth,
   memset((void*)bmax_y, true, size*sizeof(bool) );
 
   // 실험결과 multi scale offset은 random에서, min offset은 공통 필요했음.
-  const int hd = 6;
-  for (int rc=hd; rc<rows-hd; rc++) {
-    for (int cc=hd; cc<cols-hd; cc++) {
+  {
+  const int hk = 5;
+  const float doffset = 2*hk;
+  for (int rc=hk; rc<rows-hk; rc++) {
+    for (int cc=hk; cc<cols-hk; cc++) {
       for(const auto& partial : {PARTIAL::X,PARTIAL::Y} ) {
         const int ic = rc*cols+cc;
         if(!valid[ic])
           continue;
-        for(int k = hd-1; k < hd; k++){
-          const int i0 = (partial==PARTIAL::X? rc*cols+cc-k : (rc-k)*cols+cc);
-          const int i1 = (partial==PARTIAL::X? rc*cols+cc+k : (rc+k)*cols+cc);
+          const int i0 = (partial==PARTIAL::X? rc*cols+cc-hk : (rc-hk)*cols+cc);
+          const int i1 = (partial==PARTIAL::X? rc*cols+cc+hk : (rc+hk)*cols+cc);
           if(!valid[i0])
             continue;
           if(!valid[i1])
@@ -363,15 +293,12 @@ void GetHessian(const float* depth,
           const float& g0 = (partial==PARTIAL::X? grad[2*i0] : grad[2*i0+1]);
           const float& g1 = (partial==PARTIAL::X? grad[2*i1] : grad[2*i1+1]);
           const float& dcp = depth[ic]; // Middle of sample point 0 and 1.
-          float doffset = 2 * k;
           float dxy = doffset * dcp / (partial==PARTIAL::X? fx : fy);
           float& h = (partial==PARTIAL::X? hessian_x[ic]:hessian_y[ic]);
-          float h_candidate = (g1-g0)/dxy;
-          if(std::abs(h_candidate) > std::abs(h))
-            h = h_candidate;
-        }
+          h = (g1-g0)/dxy;
       }
     }
+  }
   }
 
   for(int i = 0; i < size; i++)
