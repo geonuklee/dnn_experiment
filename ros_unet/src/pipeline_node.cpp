@@ -239,11 +239,11 @@ int main(int argc, char **argv) {
 
     for(int cam_id : cameras){
       std::map<int,int> ins2cls;
-      cv::Mat instance_marker, edge_distance, depthmap;
+      cv::Mat instance_marker, convex_edge, depthmap;
       auto segmenter = segment2d.at(cam_id);
       bool b = segmenter->Process(rgbs.at(cam_id),
                                   depths.at(cam_id),
-                                  instance_marker, edge_distance, depthmap,
+                                  instance_marker, convex_edge, depthmap,
                                   ins2cls, verbose_segment2d
                                  );
       if(!b)
@@ -253,6 +253,7 @@ int main(int argc, char **argv) {
                                                    segmenter->GetRectifiedRgb(),
                                                    segmenter->GetRectifiedDepth(),
                                                    instance_marker,
+                                                   convex_edge,
                                                    param,
                                                    segmented_clouds, boundary_clouds, xyzrgb);
       // TODO Compute OBB for each instance

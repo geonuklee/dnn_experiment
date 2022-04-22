@@ -25,7 +25,9 @@ public:
 
   virtual bool Process(const cv::Mat given_rgb,
                        const cv::Mat given_depth,
-                       cv::Mat& marker, cv::Mat& edge_distance, cv::Mat& depthmap,
+                       cv::Mat& marker,
+                       cv::Mat& convex_edge,
+                       cv::Mat& depthmap,
                        std::map<int,int>& instance2class,
                        bool verbose=false) = 0;
 
@@ -56,7 +58,7 @@ public:
   virtual bool Process(const cv::Mat rgb,
                        const cv::Mat depth,
                        cv::Mat& marker,
-                       cv::Mat& edge_distance,
+                       cv::Mat& convex_edge,
                        cv::Mat& depthmap,
                        std::map<int,int>& instance2class,
                        bool verbose=false);
@@ -73,7 +75,8 @@ protected:
   virtual void GetEdge(const cv::Mat rgb,
                        const cv::Mat depth,
                        const cv::Mat validmask,
-                       cv::Mat& edge,
+                       cv::Mat& outline_edge,
+                       cv::Mat& convex_edge,
                        cv::Mat& surebox_mask,
                        bool verbose) = 0;
 
@@ -92,7 +95,8 @@ protected:
   virtual void GetEdge(const cv::Mat rgb,
                        const cv::Mat depth,
                        const cv::Mat validmask,
-                       cv::Mat& edge,
+                       cv::Mat& outline_edge,
+                       cv::Mat& convex_edge,
                        cv::Mat& surebox_mask,
                        bool verbose);
 
@@ -114,12 +118,14 @@ protected:
   virtual void GetEdge(const cv::Mat rgb,
                        const cv::Mat depth,
                        const cv::Mat validmask,
-                       cv::Mat& edge,
+                       cv::Mat& outliene_edge,
+                       cv::Mat& convex_edge,
                        cv::Mat& surebox_mask,
                        bool verbose);
 
   ros::Subscriber edge_subscriber_;
   cv::Mat mask_;
+  cv::Mat convex_edge_;
 };
 
 

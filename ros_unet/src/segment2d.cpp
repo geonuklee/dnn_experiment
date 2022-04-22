@@ -323,7 +323,7 @@ cv::Mat GetValidMask(const cv::Mat depthmask) {
 bool Segment2DEdgeBased::Process(const cv::Mat rgb,
                                  const cv::Mat given_depth,
                                  cv::Mat& marker,
-                                 cv::Mat& groove_distance,
+                                 cv::Mat& convex_edge,
                                  cv::Mat& depthmap,
                                  std::map<int,int>& instance2class,
                                  bool verbose){
@@ -336,25 +336,25 @@ bool Segment2DEdgeBased::Process(const cv::Mat rgb,
     vignett8U_  = 255*cv::Mat::ones(rectified_rgb.size(), CV_8UC1);
   }
 
-  return _Process(rectified_rgb, depthmap, marker, groove_distance, instance2class, verbose);
+  return _Process(rectified_rgb, depthmap, marker, convex_edge, instance2class, verbose);
 }
 
 bool Segment2DEdgeBased::_Process(cv::Mat rgb,
                         cv::Mat depth,
                         cv::Mat& marker,
-                        cv::Mat& groove_distance,
+                        cv::Mat& convex_edge,
                         std::map<int,int>& instance2class,
                         bool verbose){
   cv::Mat depthmask = GetDepthMask(depth);
   cv::Mat validmask = GetValidMask(depthmask);
-  cv::Mat edge, surebox_mask;
-  GetEdge(rgb, depth, validmask, edge, surebox_mask, verbose);
-  if(edge.empty())
+  cv::Mat outline_edge, surebox_mask;
+  GetEdge(rgb, depth, validmask, outline_edge, convex_edge, surebox_mask, verbose);
+  if(outline_edge.empty())
     return false;
 
   if(!surebox_mask.empty()) { // pre-filtering for surebox
     cv::Mat sureground;
-    cv::bitwise_or(edge > 0, surebox_mask > 0, sureground);
+    cv::bitwise_or(outline_edge > 0, surebox_mask > 0, sureground);
     cv::Mat element5(3, 3, CV_8U, cv::Scalar(1));
     cv::morphologyEx(sureground, sureground, cv::MORPH_CLOSE, element5);
 
@@ -363,12 +363,12 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
   }
 
   if(! vignett32S_.empty() )
-    cv::bitwise_and(edge, vignett8U_, edge);
+    cv::bitwise_and(outline_edge, vignett8U_, outline_edge);
 
 
   cv::Mat divided;
   cv::Mat dist_transform; {
-    cv::bitwise_and(depthmask, ~edge, divided);
+    cv::bitwise_and(depthmask, ~outline_edge, divided);
     cv::bitwise_and(vignett8U_, divided, divided);
 
     if(divided.type()!=CV_8UC1)
@@ -482,7 +482,7 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
     if(!leaf_seeds.empty()) {
       // Convert elements of seed from exist_idx to convert_lists
       bg_idx = Convert(convert_lists, leaf_seeds,
-                       edge, depthmask,
+                       outline_edge, depthmask,
                        seed);
     }
     else
@@ -514,20 +514,6 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
     marker = marker2;
   }
 
-  cv::Mat thick_marker_edge, groove; {
-    //marker = shape_marker;
-
-    // Thick edge area to thin edge
-    groove = GetGroove(marker,
-                       depth,
-                       validmask,
-                       vignett32S_,
-                       bg_idx);
-
-    cv::Mat _marker;
-    cv::distanceTransform(groove, groove_distance, _marker, cv::DIST_L2, cv::DIST_MASK_PRECISE, cv::DIST_LABEL_PIXEL);
-  }
-
   if(verbose){
     cv::Mat dst = Overlap(rgb, marker);
     //cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
@@ -538,6 +524,7 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
     //cv::flip(dst,dst,0);
     //cv::flip(dst,dst,1);
     //cv::imshow(name_+"dst", dst);
+    cv::imshow(name_+"outline_edge.png", 255*outline_edge);
 
     cv::Mat norm_depth, norm_dist;
     cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
@@ -545,7 +532,7 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
     cv::imwrite(name_+"dst.png", dst );
     cv::imwrite(name_+"depth.png", norm_depth);
     cv::imwrite(name_+"rgb.png", rgb);
-    cv::imwrite(name_+"edge.png", 255*edge);
+    cv::imwrite(name_+"outline_edge.png", 255*outline_edge);
     cv::imwrite(name_+"valid.png", 255*validmask);
     cv::imwrite(name_+"dist.png", dist_transform);
     cv::imwrite(name_+"norm_dist.png", norm_dist);
@@ -559,62 +546,12 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
 void Segment2Dthreshold::GetEdge(const cv::Mat rgb,
                                  const cv::Mat depth,
                                  const cv::Mat validmask,
-                                 cv::Mat& edge,
+                                 cv::Mat& outline_edge,
+                                 cv::Mat& convex_edge,
                                  cv::Mat& surebox_mask,
                                  bool verbose){
-  cv::Mat cosmap = EstimateNormal(camera_.K_, depth);
-  cv::Mat blap_depth; {
-    const int ksize = 7;
-
-    // Should be 16SC1? https://docs.opencv.org/3.4/d5/db5/tutorial_laplace_operator.html
-    cv::Mat lap_depth;
-    int ddepth = CV_32F;
-    cv::Laplacian(depth, lap_depth, ddepth, ksize);
-    blap_depth = cv::Mat::zeros(depth.rows, depth.cols, CV_8UC1);
-    for(int r = 0; r < lap_depth.rows; r++){
-      for(int c = 0; c < lap_depth.cols; c++){
-        const unsigned char& valid = validmask.at<unsigned char>(r,c);
-        if(!valid)
-          continue;
-        const float& cth = cosmap.at<float>(r,c);
-        const float& lap = lap_depth.at<float>(r,c);
-        float threshold = - (2.-cth)*lap_depth_threshold_;
-        blap_depth.at<unsigned char>(r,c) = lap < threshold? 1 : 0;
-      }
-    }
-  }
-
-  {
-    cv::Mat hkernel, vkernel; // TODO Add diagnoal
-    if(camera_.image_size_.width > 500){
-      hkernel = cv::Mat::zeros(7,7, CV_32F);
-      vkernel = cv::Mat::zeros(7,7, CV_32F);
-      vkernel.colRange(3,4) = 1.;
-      hkernel.rowRange(3,4) = 1.;
-    }
-    else{
-      hkernel = cv::Mat::zeros(5,5, CV_32F);
-      vkernel = cv::Mat::zeros(5,5, CV_32F);
-      vkernel.colRange(2,3) = 1.;
-      hkernel.rowRange(2,3) = 1.;
-    }
-
-    int threshold = hkernel.cols >= 5 ? 4 : 7;
-    cv::Mat a, b;
-    cv::filter2D(blap_depth, a, CV_32F, hkernel);
-    cv::filter2D(blap_depth, b, CV_32F, vkernel);
-    cv::threshold(a, a, 4, 1, cv::THRESH_BINARY);
-    cv::threshold(b, b, 4, 1, cv::THRESH_BINARY);
-    cv::bitwise_or(a, b, edge);
-    edge.convertTo(edge, CV_8UC1);
-    surebox_mask = cv::Mat();
-  }
-
-  if(verbose){
-    cv::imshow(name_+"blap_depth", blap_depth*255);
-    cv::imshow(name_+"filtered_edge", edge*255);
-  }
-
+  // TODO Compute Hessian and NMAS using function of unet_code.cpp.
+  assert(false);
   return;
 }
 

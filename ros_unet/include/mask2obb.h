@@ -204,6 +204,7 @@ public:
                          cv::Mat rgb,
                          cv::Mat depth,
                          cv::Mat instance_marker,
+                         cv::Mat convex_edge,
                          const ObbParam& param,
                          std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr>& segmented_clouds,
                          std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr>& boundary_clouds,

@@ -162,9 +162,7 @@ if __name__ == '__main__':
             # cv2.waitKey(1)
 
             t0 = time.clock()
-            # TODO ConvertDepth2input 다시 작동하게.
-            # -> 왜 가끔가다 정전발생하지??
-            input_stack, grad, hessian, outline = ConvertDepth2input(depth, fx, fy)
+            input_stack, grad, hessian, outline, convex_edge = ConvertDepth2input(depth, fx, fy)
 
             input_stack = torch.Tensor(input_stack).unsqueeze(0)
             input_x = spliter.put(input_stack).to(device)
@@ -176,12 +174,14 @@ if __name__ == '__main__':
             pub_th_edge, pub_vis_edge = pubs_th_edge[cam_id], pubs_vis_edge[cam_id]
             mask = spliter.pred2mask(pred)
 
-            msg = ros_numpy.msgify(Image, mask, encoding='8UC1')
+            # mask.shape 480,640
+            mask_concave = np.stack((mask,convex_edge),axis=2)
+            msg = ros_numpy.msgify(Image, mask_concave, encoding='8UC2')
             pub_mask.publish(msg)
 
-            cv2.imshow("outline", outline*255)
-            cv2.imshow("mask", (mask==1).astype(np.uint8)*255)
-            print(mask.shape)
+            #cv2.imshow("outline", outline*255)
+            #cv2.imshow("convex", convex_edge*255)
+            #cv2.imshow("mask", (mask==1).astype(np.uint8)*255)
 
             if pub_vis_edge.get_num_connections() > 0:
                 dst = spliter.mask2dst(mask)
@@ -195,8 +195,8 @@ if __name__ == '__main__':
             print("Elapsed time = %.2f [sec]"% (time.clock()-t0) )
             #cv2.imshow("cvhessian", ( cvhessian < -100. ).astype(np.uint8)*255)
             #cv2.imshow("gx", -cvgrad[:,:,0])
-            if cv2.waitKey(1) == ord('q'):
-                break
+            #if cv2.waitKey(1) == ord('q'):
+            #    break
 
 
 

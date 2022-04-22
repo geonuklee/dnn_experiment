@@ -10,8 +10,14 @@ Segment2DEdgeSubscribe::Segment2DEdgeSubscribe(const sensor_msgs::CameraInfo& ca
 {
 
   auto img_callback = [this](const sensor_msgs::ImageConstPtr& msg){
-    if(this->mask_.empty())
-      this->mask_ = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_8UC1)->image;
+    if(this->mask_.empty()){
+      // TODO 2 channel-> mask_, convex edge 분리.
+      cv::Mat mask_concave = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_8UC2)->image;
+      cv::Mat ch[2];
+      cv::split(mask_concave,ch);
+      this->mask_ = ch[0];
+      this->convex_edge_ = ch[1];
+    }
   };
 
   std::string img_name = name+"/mask";
@@ -27,7 +33,8 @@ Segment2DEdgeSubscribe::~Segment2DEdgeSubscribe() {
 void Segment2DEdgeSubscribe::GetEdge(const cv::Mat rgb,
                                      const cv::Mat depth,
                                      const cv::Mat validmask,
-                                     cv::Mat& edge,
+                                     cv::Mat& outline_edge,
+                                     cv::Mat& convex_edge,
                                      cv::Mat& surebox_mask,
                                      bool verbose)
 {
@@ -45,8 +52,12 @@ void Segment2DEdgeSubscribe::GetEdge(const cv::Mat rgb,
 
   cv::Mat rectified_mask;
   cv::remap(mask_, rectified_mask, map1_, map2_, cv::INTER_NEAREST);
-  edge = rectified_mask==1;
+  outline_edge = rectified_mask==1;
   surebox_mask = rectified_mask==2;
+
+  cv::remap(convex_edge_, convex_edge, map1_, map2_, cv::INTER_NEAREST);
+
   mask_ = cv::Mat();
+  convex_edge_ = cv::Mat();
   return;
 }

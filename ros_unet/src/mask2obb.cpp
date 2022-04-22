@@ -124,6 +124,7 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
                                       cv::Mat rgb,
                                       cv::Mat depth,
                                       cv::Mat mask,
+                                      cv::Mat convex_edge,
                                       const ObbParam& param,
                                       std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr>& clouds,
                                       std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr>& boundary_clouds,
@@ -139,7 +140,9 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
     cv::Mat fg = cv::Mat::zeros(mask.rows, mask.cols, CV_8UC1);
     for(int r =0; r<fg.rows;r++){
       for(int c = 0; c<fg.cols;c++){
-        if(mask.at<int>(r,c)>0 && depth.at<float>(r,c) > 0.001)
+        if(mask.at<int>(r,c)>0
+            && depth.at<float>(r,c) > 0.001
+            && convex_edge.at<unsigned char>(r,c)==0)
           fg.at<unsigned char>(r,c) = 255;
       }
     }
@@ -633,7 +636,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 
     /*
     Calculate SE(3) transformation to {w}orld coordinate from {0} coordinate.
-    Denote that 
+    Denote that
      * Center of {0} coordinate is an 1st vertex of 'champion' polygon on concavehull.
      * x-axis is parrel to the line between 1st and 2nd vertex of champion polygon.
      * z-axis is the 'n0' normal vector computed by RANSAC
@@ -950,7 +953,7 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
 
   // The loop for each instance.
   for(auto it : segmented_clouds){
-    // Pass the instance if there is no boundary 
+    // Pass the instance if there is no boundary
     if(! boundary_clouds.count(it.first)){
       ROS_INFO("No boundary clouds for instance %d", it.first);
       continue;
@@ -959,7 +962,7 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
     pcl::PointCloud<pcl::PointXYZ>::Ptr boundary = boundary_clouds.at(it.first);
 
     // Pas the instance if there are not enough points.
-    if(cloud->size() < param.min_points_of_cluster 
+    if(cloud->size() < param.min_points_of_cluster
        || boundary->size() < param.min_points_of_cluster){
       ROS_INFO("No enough clouds for instance %d", it.first);
       continue;

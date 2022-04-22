@@ -122,7 +122,6 @@ class SplitAdapter:
         return output
 
 def ConvertDepth2input(depth, fx, fy):
-    # TODO New input from gradient and Hessian
     dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.1)
     fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
     grad, valid = cpp_ext.GetGradient(fd, sample_offset=3,fx=fx,fy=fy) # 5
@@ -139,7 +138,9 @@ def ConvertDepth2input(depth, fx, fy):
     #    import pdb; pdb.set_trace()
 
     threshold_curvature = 15.
-    outline = np.logical_or(hessian < -threshold_curvature, dd_edge > 0).astype(np.uint8)
+    concave_edge = hessian < -threshold_curvature
+    outline = np.logical_or(concave_edge, dd_edge > 0).astype(np.uint8)
+    convex_edge = (hessian > 3.*threshold_curvature).astype(np.uint8)
 
     max_grad = 2 # tan(60)
     grad[grad > max_grad] = max_grad
@@ -150,34 +151,7 @@ def ConvertDepth2input(depth, fx, fy):
                              grad[:,:,0],
                              grad[:,:,1]
                              ), axis=0 )
-    return (input_stack, grad, hessian, outline )
-    cvgrad = GetGradient(depth, fx, fy)
-
-    if False:
-        cvhessian=cpp_ext.GetHessian(depth,grad_sample_offset=1,grad_sample_width=7,fx=fx,fy=fy)
-        #th = -500
-    else:
-        cvhessian=cpp_ext.GetHessian(depth,grad_sample_offset=5,grad_sample_width=7,fx=fx,fy=fy)
-        #th = -100
-
-    max_grad = 2 # tan(60)
-    cvgrad[cvgrad > max_grad] = max_grad
-    cvgrad[cvgrad < -max_grad] = -max_grad
-
-    # curvature_min define sensitivity
-    curvature_min = 1. / 0.01 #  1./( radius[meter] )
-
-    cv_bedge = ( cvhessian < -curvature_min ).astype(np.uint8)
-    cv_wrinkle = ( np.abs(cvhessian) > curvature_min ).astype(np.uint8)
-
-    # Normalization
-    cvgrad /= 2.*max_grad
-
-    input_stack = np.stack( (cv_bedge, #cv_wrinkle,
-                             cvgrad[:,:,0],
-                             cvgrad[:,:,1]
-                             ), axis=0 )
-    return input_stack, cvgrad, cvhessian, cv_bedge, cv_wrinkle
+    return (input_stack, grad, hessian, outline, convex_edge )
 
 def AddEdgeNoise(edge):
     n_noise = 200
