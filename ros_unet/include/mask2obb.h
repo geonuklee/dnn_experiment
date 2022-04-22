@@ -111,7 +111,7 @@ struct ObbParam{
   bool verbose;
 };
 
-void ColorizeSegmentation(const std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr>& clouds,
+void ColorizeSegmentation(const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& clouds,
                           sensor_msgs::PointCloud2& msg);
 
 class ObbProcessVisualizer{
@@ -206,13 +206,13 @@ public:
                          cv::Mat instance_marker,
                          cv::Mat convex_edge,
                          const ObbParam& param,
-                         std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr>& segmented_clouds,
-                         std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr>& boundary_clouds,
+                         std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& segmented_clouds,
+                         std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds,
                          pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb
                         );
 
-  void ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr>& clouds,
-                   const std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr>& boundary_clouds,
+  void ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& clouds,
+                   const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds,
                    const ObbParam& param,
                    const g2o::SE3Quat& Tcw,
                    int cam_id,

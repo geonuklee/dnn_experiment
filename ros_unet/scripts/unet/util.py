@@ -140,7 +140,7 @@ def ConvertDepth2input(depth, fx, fy):
     threshold_curvature = 15.
     concave_edge = hessian < -threshold_curvature
     outline = np.logical_or(concave_edge, dd_edge > 0).astype(np.uint8)
-    convex_edge = (hessian > 3.*threshold_curvature).astype(np.uint8)
+    convex_edge = (hessian > 50).astype(np.uint8)
 
     max_grad = 2 # tan(60)
     grad[grad > max_grad] = max_grad

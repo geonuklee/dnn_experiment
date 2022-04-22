@@ -524,7 +524,7 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
     //cv::flip(dst,dst,0);
     //cv::flip(dst,dst,1);
     //cv::imshow(name_+"dst", dst);
-    cv::imshow(name_+"outline_edge.png", 255*outline_edge);
+    //cv::imshow(name_+"outline_edge", 255*outline_edge);
 
     cv::Mat norm_depth, norm_dist;
     cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);

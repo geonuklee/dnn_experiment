@@ -248,7 +248,7 @@ int main(int argc, char **argv) {
                                  );
       if(!b)
         break;
-      std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr> segmented_clouds, boundary_clouds;
+      std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr> segmented_clouds, boundary_clouds;
       obb_estimators.at(cam_id)->GetSegmentedCloud(Tcws.at(cam_id),
                                                    segmenter->GetRectifiedRgb(),
                                                    segmenter->GetRectifiedDepth(),
@@ -256,7 +256,7 @@ int main(int argc, char **argv) {
                                                    convex_edge,
                                                    param,
                                                    segmented_clouds, boundary_clouds, xyzrgb);
-      // TODO Compute OBB for each instance
+
       obb_estimators.at(cam_id)->ComputeObbs(segmented_clouds,
                                              boundary_clouds,
                                              param,
