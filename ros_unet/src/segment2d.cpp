@@ -47,7 +47,6 @@ int Convert(const std::map<int,int>& convert_lists,
   int* ptr = (int*) seed.data;
   const int n = seed.rows*seed.cols;
 
-  // Profile 결과, 연산의 병목지점은 laplacian of depth(약40%), seed_contour(약 50%) 이므로 그 이후작업의 성능개선은 무의미.
   for(int r = 0; r < n; r++){
       int& idx = ptr[r];
       if(filtered_edge.data[r] > 0)
@@ -391,6 +390,7 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
 
     std::map<int,std::set<int> > seed_childs;
     std::map<int,int> seed_parents;
+    std::map<int,cv::RotatedRect> seed_obbs;
 
     int idx = 1;
     for(int i = 1; i < n; i++){
@@ -412,13 +412,14 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
         const int& x = cnt.at(0).x;
         const int& y = cnt.at(0).y;
         const int& exist_idx = seed.at<int>(y,x);
-        auto ar = cv::minAreaRect(cnt);
+        const cv::RotatedRect ar = cv::minAreaRect(cnt);
         if(std::min(ar.size.width,ar.size.height) < min_width)
           continue;
         idx += 1;
         n_insertion++;
         seed_childs[exist_idx].insert(idx);
         seed_parents[idx] = exist_idx;
+        seed_obbs[idx] = ar;
         std::vector<std::vector<cv::Point> > cnts = { cnt, };
         cv::drawContours(seed, cnts, 0, idx,-1);
         seed_childs[idx];
@@ -461,7 +462,22 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
           break;
         }
         else if(siblings.size() == 1)
+        {
+          // 자식노드 숫자 count해서 내려가기전,..
+          const cv::RotatedRect& keyidx_obb = seed_obbs.at(keyidx);
+          const cv::RotatedRect& parent_obb = seed_obbs.at(parent);
+          //if( std::min(keyidx_obb.size.width,keyidx_obb.size.height) > 100)
+          {
+            const float parent_area = parent_obb.size.width*parent_obb.size.height;
+            const float expectation =(keyidx_obb.size.width+2.*dth)*(keyidx_obb.size.height+2.*dth);
+            const float ratio = std::abs(expectation-parent_area)/parent_area;
+            if(ratio > 0.5){
+              non_sibiling.insert(keyidx);
+              break;
+            }
+          }
           non_sibiling.insert(keyidx);
+        }
         else{
           non_sibiling.insert(keyidx);
           break;
@@ -516,15 +532,16 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
 
   if(verbose){
     cv::Mat dst = Overlap(rgb, marker);
-    //cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
-    //cv::imshow(name_+"seed", GetColoredLabel(seed) );
-    //cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
+    cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
+    cv::imshow(name_+"seed", GetColoredLabel(seed) );
+    cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
     //cv::imshow(name_+"final_marker", GetColoredLabel(marker) );
     // cv::imshow(name_+"groove", 255*groove );
     //cv::flip(dst,dst,0);
     //cv::flip(dst,dst,1);
     //cv::imshow(name_+"dst", dst);
     //cv::imshow(name_+"outline_edge", 255*outline_edge);
+    cv::waitKey(1);
 
     cv::Mat norm_depth, norm_dist;
     cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
