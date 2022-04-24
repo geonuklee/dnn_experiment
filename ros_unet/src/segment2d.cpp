@@ -386,15 +386,16 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
 
     int n = 15;
     double dth = camera_.image_size_.width * 0.006;
-    float min_width = 20.;
+    float min_width = 10.;
 
     std::map<int,std::set<int> > seed_childs;
     std::map<int,int> seed_parents;
     std::map<int,cv::RotatedRect> seed_obbs;
+    std::map<int,int> seed_levels;
 
     int idx = 1;
-    for(int i = 1; i < n; i++){
-      int th_distance = dth*i;
+    for(int lv = 0; lv < n; lv++){
+      int th_distance = dth*(float)lv;
       cv::Mat local_seed;
       cv::threshold(dist_transform, local_seed, th_distance, 255, cv::THRESH_BINARY);
       local_seed.convertTo(local_seed, CV_8UC1); // findContour support only CV_8UC1
@@ -420,6 +421,7 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
         seed_childs[exist_idx].insert(idx);
         seed_parents[idx] = exist_idx;
         seed_obbs[idx] = ar;
+        seed_levels[idx] = lv;
         std::vector<std::vector<cv::Point> > cnts = { cnt, };
         cv::drawContours(seed, cnts, 0, idx,-1);
         seed_childs[idx];
@@ -466,8 +468,8 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
           // 자식노드 숫자 count해서 내려가기전,..
           const cv::RotatedRect& keyidx_obb = seed_obbs.at(keyidx);
           const cv::RotatedRect& parent_obb = seed_obbs.at(parent);
-          //if( std::min(keyidx_obb.size.width,keyidx_obb.size.height) > 100)
-          {
+          const int& lv = seed_levels.at(keyidx);
+          if(lv > 0 &&  std::min(keyidx_obb.size.width,keyidx_obb.size.height) > 50) {
             const float parent_area = parent_obb.size.width*parent_obb.size.height;
             const float expectation =(keyidx_obb.size.width+2.*dth)*(keyidx_obb.size.height+2.*dth);
             const float ratio = std::abs(expectation-parent_area)/parent_area;
