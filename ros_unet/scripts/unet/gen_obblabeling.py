@@ -153,8 +153,8 @@ def ParseGroundTruth(cv_gt, fn_rosbag):
     yellowedges = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==255),cv_gt[:,:,2]==255)
 
     outline = la(la(cv_gt[:,:,0]==255,cv_gt[:,:,1]==255),cv_gt[:,:,2]==255)
-    #for c in [reddots, greendots, bluedots]:
-        #outline = la(outline, ~c)
+    for c in [reddots, greendots, bluedots]:
+        outline = la(outline, ~c)
 
     # outline에 red, green, blue dot 추가. 안그러면 component가 끊겨서..
     boundary = outline.copy()
@@ -171,7 +171,7 @@ def ParseGroundTruth(cv_gt, fn_rosbag):
     vertices = {}
     for element, mask_of_dots in {'o':reddots,'x':greendots,'y':bluedots}.items():
         _,_,_, centroids = cv2.connectedComponentsWithStats(mask_of_dots.astype(np.uint8))
-        for pt in centroids:
+        for pt in centroids[1:,:]: # 1st row : centroid of 'zero background'
             c, r = int(pt[0]), int(pt[1])
             pidx = plane_marker0[r,c]
             assert(pidx > 0)
@@ -202,8 +202,6 @@ def ParseGroundTruth(cv_gt, fn_rosbag):
             arr_oxy[4:] =  vertices[pidx]['y']
         planemarker2vertices.append( (pidx, arr_oxy, cp) )
 
-    cv2.imshow("color_pm0", color_pm0)
-
     dist = cv2.distanceTransform( (~outline).astype(np.uint8),
             distanceType=cv2.DIST_L2, maskSize=5)
     n_inssegments, marker0, _, _ \
@@ -217,25 +215,27 @@ def ParseGroundTruth(cv_gt, fn_rosbag):
         marker[marker0==idx] = pidx
         front_plane[plane_marker0==pidx] = pidx
 
-    cv2.imshow("marker", GetColoredLabel(marker))
-    cv2.imshow("front_plane", GetColoredLabel(front_plane))
-
-    dst = GetColoredLabel(marker)
-    for pidx, arr_oxy, cp in planemarker2vertices:
-        pt_org = tuple(arr_oxy[:2].astype(np.int32).tolist())
-        if arr_oxy[2] > 0:
-            pt_x = tuple(arr_oxy[2:4].astype(np.int32).tolist())
-            cv2.line(dst,pt_org,pt_x, (255,255,255),2)
-        if arr_oxy[4] > 0:
-            pt_y = tuple(arr_oxy[4:].astype(np.int32).tolist())
-            cv2.line(dst,pt_org,pt_y, (255,255,255),2)
-        cv2.circle(dst,pt_org,3,(0,0,255),-1)
-        cv2.circle(dst,(cp[0],cp[1]),5,(150,150,150),2)
-    cv2.imshow("dst", dst)
-    cv2.waitKey()
-    return
-
     rgb, depth, info = GetScene(fn_rosbag)
+
+    verbose=True
+    if verbose:
+        cv2.imshow("color_pm0", color_pm0)
+        cv2.imshow("marker", GetColoredLabel(marker))
+        cv2.imshow("front_plane", GetColoredLabel(front_plane))
+        dst = GetColoredLabel(marker)
+        for pidx, arr_oxy, cp in planemarker2vertices:
+            pt_org = tuple(arr_oxy[:2].astype(np.int32).tolist())
+            if arr_oxy[2] > 0:
+                pt_x = tuple(arr_oxy[2:4].astype(np.int32).tolist())
+                cv2.line(dst,pt_org,pt_x, (255,255,255),2)
+            if arr_oxy[4] > 0:
+                pt_y = tuple(arr_oxy[4:].astype(np.int32).tolist())
+                cv2.line(dst,pt_org,pt_y, (255,255,255),2)
+            cv2.circle(dst,pt_org,3,(0,0,255),-1)
+            #cv2.circle(dst,(cp[0],cp[1]),5,(150,150,150),2)
+        cv2.imshow("dst", dst)
+        cv2.waitKey()
+
     return
 
 
@@ -250,12 +250,12 @@ if __name__ == '__main__':
         #cv_gt = cv2.imread("tmp.png")[:480,:640,:]
         #ParseGroundTruth(cv_gt,(480,640))
 
-        #cv_gt = cv2.imread("tmp1.png")
-        #fn_rosbag = "/home/geo/dataset/unloading/stc2021/stc_2021-09-02-10-28-32.bag"
-        #ParseGroundTruth(cv_gt, fn_rosbag)
-        cv_gt = cv2.imread("tmp2.png")
-        fn_rosbag = "/home/geo/dataset/unloading/stc2021/stc_2021-08-19-17-10-55.bag"
+        cv_gt = cv2.imread("tmp1.png")
+        fn_rosbag = "/home/geo/dataset/unloading/stc2021/stc_2021-09-02-10-28-32.bag"
         ParseGroundTruth(cv_gt, fn_rosbag)
+        #cv_gt = cv2.imread("tmp2.png")
+        #fn_rosbag = "/home/geo/dataset/unloading/stc2021/stc_2021-08-19-17-10-55.bag"
+        #ParseGroundTruth(cv_gt, fn_rosbag)
 
 
     else:
