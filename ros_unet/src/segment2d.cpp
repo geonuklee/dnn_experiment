@@ -569,7 +569,7 @@ void Segment2Dthreshold::GetEdge(const cv::Mat rgb,
                                  cv::Mat& convex_edge,
                                  cv::Mat& surebox_mask,
                                  bool verbose){
-  // TODO Compute Hessian and NMAS using function of unet_code.cpp.
+  // Compute Hessian and NMAS using function of unet_code.cpp.
   assert(false);
   return;
 }

@@ -180,6 +180,16 @@ def get_meterdepth(depth):
          return depth/ 1000.
     return depth
 
+def GetColoredLabel(marker):
+    dst = np.zeros((marker.shape[0],marker.shape[1],3), dtype=np.uint8)
+    uniq = np.unique(marker)
+    n= len(colors)
+    for u in uniq:
+        if u == 0:
+            continue
+        dst[marker==u] = colors[u%n]
+    return dst
+
 if __name__ == '__main__':
     from segment_dataset import CombinedDatasetLoader
     dataloader = CombinedDatasetLoader(batch_size=1)

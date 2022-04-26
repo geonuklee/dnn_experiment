@@ -11,7 +11,7 @@ Segment2DEdgeSubscribe::Segment2DEdgeSubscribe(const sensor_msgs::CameraInfo& ca
 
   auto img_callback = [this](const sensor_msgs::ImageConstPtr& msg){
     if(this->mask_.empty()){
-      // TODO 2 channel-> mask_, convex edge 분리.
+      // 2 channel-> mask_, convex edge 분리.
       cv::Mat mask_concave = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::TYPE_8UC2)->image;
       cv::Mat ch[2];
       cv::split(mask_concave,ch);

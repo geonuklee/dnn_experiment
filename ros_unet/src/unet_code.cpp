@@ -8,7 +8,62 @@
 #include <vector>
 #include <pcl/filters/voxel_grid.h>
 
+std::vector<cv::Scalar> colors = {
+  CV_RGB(0,255,0),
+  CV_RGB(0,180,0),
+  CV_RGB(0,100,0),
+  CV_RGB(255,0,255),
+  CV_RGB(100,0,255),
+  CV_RGB(255,0,100),
+  CV_RGB(100,0,100),
+  CV_RGB(0,0,255),
+  CV_RGB(0,0,180),
+  CV_RGB(0,0,100),
+  CV_RGB(255,255,0),
+  CV_RGB(100,255,0),
+  CV_RGB(255,100,0),
+  CV_RGB(100,100,0),
+  CV_RGB(255,0,0),
+  CV_RGB(180,0,0),
+  CV_RGB(100,0,0),
+  CV_RGB(0,255,255),
+  CV_RGB(0,100,255),
+  CV_RGB(0,255,100),
+  CV_RGB(0,100,100)
+};
+
+
 namespace py = pybind11;
+
+cv::Mat GetColoredLabel(cv::Mat marker){
+  cv::Mat dst = cv::Mat::zeros(marker.rows, marker.cols, CV_8UC3);
+  for(int r=0; r<marker.rows; r++){
+    for(int c=0; c<marker.cols; c++){
+      const int32_t& idx = marker.at<int32_t>(r,c);
+      if(idx == 0)
+        continue;
+      const cv::Scalar& bgr = colors.at(idx % colors.size());
+      dst.at<cv::Vec3b>(r,c)[0] = bgr[0];
+      dst.at<cv::Vec3b>(r,c)[1] = bgr[1];
+      dst.at<cv::Vec3b>(r,c)[2] = bgr[2];
+    }
+  }
+  return dst;
+}
+
+
+size_t ComputeOBB(const std::vector<long int>& shape,
+                  const int32_t* ptr_marker,
+                  const float* ptr_depth
+                  ){
+  int rows = shape[0];
+  int cols = shape[1];
+  cv::Mat marker(rows, cols, CV_32SC1, (void*)ptr_marker);
+  cv::Mat depth(rows, cols, CV_32F, (void*)ptr_depth);
+  cv::imshow("marker", GetColoredLabel(marker));
+  cv::waitKey();
+  return 0;
+}
 
 bool SameSign(const float& v1, const float& v2){
   if(v1 > 0.)
@@ -629,6 +684,25 @@ py::array_t<float> PyGetDiscontinuousDepthEdge(py::array_t<float> inputdepth,
   return output;
 }
 
+py::tuple PyComputeOBB(py::array_t<int32_t> marker,
+                       py::array_t<float> depth){
+  py::buffer_info buf_depth = depth.request();
+  const float* ptr_depth = (const float*) buf_depth.ptr;
+
+  py::buffer_info buf_marker = marker.request();
+  const int32_t* ptr_marker = (const int32_t*) buf_marker.ptr;
+
+  size_t n_instance = ComputeOBB(buf_depth.shape, ptr_marker, ptr_depth);
+
+  //py::array_t<float> output = py::array_t<float>(n_instance);
+  //py::buffer_info buf_output = output.request();
+  //float* ptr_output = (float*) buf_output.ptr;
+  //memset((void*)ptr_output,0, n_instance*sizeof(float));
+
+  py::tuple results;
+  return results;
+}
+
 
 PYBIND11_MODULE(unet_ext, m) {
   m.def("GetFilteredDepth", &PyGetFilteredDepth, "Get filtered depth.",
@@ -646,4 +720,8 @@ PYBIND11_MODULE(unet_ext, m) {
         py::arg("fx"), py::arg("fy") );
   m.def("UnprojectPointscloud", &PyUnprojectPointscloud, "Get rgbxyz and xyzi points cloud",
         py::arg("rgb"), py::arg("depth"), py::arg("labels"), py::arg("K"), py::arg("D"), py::arg("leaf_xy"), py::arg("leaf_z"));
+
+  m.def("ComputeOBB", &PyComputeOBB, "Compute OBB from given marker and depth map",
+        py::arg("marker"), py::arg("depth"));
+
 }

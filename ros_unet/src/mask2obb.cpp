@@ -735,7 +735,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
 
   {
     // The contour of convexhull which is computed from projection of boundary points on front plane.
-    // TODO 단순화된 contour 궤적을 구하면, rotation caliper에서 집중되는 시간낭비를 줄일 수 있다.
+    // TODO Future works - 단순화된 contour 궤적을 구하면, rotation caliper에서 집중되는 시간낭비를 줄일 수 있다.
     std::vector<cv::Point2f> projected_points, contour;
     projected_points.reserve(boundary->size()+cloud->size() );
 
@@ -841,6 +841,9 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
         if(min_x1[2] > -min_depth)
           min_x1[2] = -min_depth;
       }
+
+
+      // TODO Normal을 고려한 outlier 제거 추가.
 
       // If points on front plane are too less considering size of it,
       //  exclude it from candidates because something is wrong.
@@ -1051,9 +1054,8 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
     if(! ComputeBoxOBB(cloud, boundary, param, depth_dir, t_wc, cam_id,  obj, visualizer) )
       continue;
 
-    // Collect unsynced obb before matching.
+    // TODO Collect unsynced obb before matching.
     // The obj->instance_id is (yolact instance id == local id).
-    // TODO
     // cam_lid_obj[cam_id][obj->instance_id] = obj;
   }
   return;
