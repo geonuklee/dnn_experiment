@@ -4,6 +4,7 @@ set(CMAKE_CXX_STANDARD 14)
 
 find_package(OpenCV 3 REQUIRED )
 find_package(PCL 1. REQUIRED COMPONENTS common filters)
+find_package(PCL 1. REQUIRED COMPONENTS segmentation) # It cause error for python3, but it works for python2. ???
 
 set(PYBIND11_PYTHON_VERSION 2.7)
 add_subdirectory(../pybind11 pybind11_2)

@@ -8,6 +8,17 @@
 #include <vector>
 #include <pcl/filters/voxel_grid.h>
 
+namespace py = pybind11;
+#ifndef WITHOUT_OBB
+#include <g2o/types/slam3d/se3quat.h>
+#include <opencv2/calib3d.hpp>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/search/kdtree.h>
+#include <pcl/sample_consensus/method_types.h>
+#include <pcl/sample_consensus/model_types.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/segmentation/extract_clusters.h>
+
 std::vector<cv::Scalar> colors = {
   CV_RGB(0,255,0),
   CV_RGB(0,180,0),
@@ -32,9 +43,6 @@ std::vector<cv::Scalar> colors = {
   CV_RGB(0,100,100)
 };
 
-
-namespace py = pybind11;
-
 cv::Mat GetColoredLabel(cv::Mat marker){
   cv::Mat dst = cv::Mat::zeros(marker.rows, marker.cols, CV_8UC3);
   for(int r=0; r<marker.rows; r++){
@@ -51,19 +59,220 @@ cv::Mat GetColoredLabel(cv::Mat marker){
   return dst;
 }
 
+template <typename K, typename T>
+using EigenMap = std::map<K, T, std::less<K>, Eigen::aligned_allocator<std::pair<const K, T> > >;
 
-size_t ComputeOBB(const std::vector<long int>& shape,
-                  const int32_t* ptr_marker,
-                  const float* ptr_depth
-                  ){
+struct OBB{
+  float Tcb_xyz_qwxyz_[7];
+  float scale_[3];
+};
+
+std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
+                              const int32_t* ptr_frontmarker,
+                              const int32_t* ptr_marker,
+                              const float* ptr_depth,
+                              const EigenMap<int,Eigen::Matrix<float,6,1> >& label2vertices,
+                              const cv::Mat& K
+                             ){
   int rows = shape[0];
   int cols = shape[1];
+  cv::Mat frontmarker(rows,cols, CV_32SC1, (void*)ptr_frontmarker);
   cv::Mat marker(rows, cols, CV_32SC1, (void*)ptr_marker);
   cv::Mat depth(rows, cols, CV_32F, (void*)ptr_depth);
-  cv::imshow("marker", GetColoredLabel(marker));
-  cv::waitKey();
-  return 0;
+
+  // Euclidean cluster before thickness measurement
+  std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr> allpoints;
+  // For plane detection
+  std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr> frontpoints;
+
+  auto uv2pclxyz = [&depth,K](int r, int c){
+    float u = c;
+    float v = r;
+    float nu = u/K.at<float>(0,0);
+    float nv = v/K.at<float>(1,1);
+    const float& d = depth.at<float>(r,c);
+    return pcl::PointXYZ(nu*d,nv*d,d);
+  };
+  auto uv2eigen_xyz = [&depth,K](float u, float v){
+    int c = u;
+    int r = v;
+    float nu = u/K.at<float>(0,0);
+    float nv = v/K.at<float>(1,1);
+    const float& d = depth.at<float>(r,c);
+    return Eigen::Vector3f(nu*d,nv*d,d);
+  };
+
+
+  // TODO label 별, front points, side points, 
+  for(int r=0; r<rows; r++){
+    for(int c=0; c<cols; c++){
+      const int32_t& l_marker = marker.at<int32_t>(r,c);
+      const int32_t& l_front = frontmarker.at<int32_t>(r,c);
+      const float& d = depth.at<float>(r,c);
+      if(d==0)
+        continue;
+      if(l_marker==0)
+        continue;
+      pcl::PointXYZ xyz = uv2pclxyz(r,c);
+      if(l_front>0){
+        if(!frontpoints.count(l_front))
+          frontpoints[l_front] = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>() );
+        frontpoints.at(l_front)->push_back(xyz);
+        if(!allpoints.count(l_front))
+          allpoints[l_front] = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>() );
+        allpoints.at(l_front)->push_back(xyz);
+      }
+      else if(l_marker > 0){
+        if(!allpoints.count(l_front))
+          allpoints[l_front] = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>() );
+        allpoints.at(l_front)->push_back(xyz);
+      }
+    }
+  }
+
+  const float inf = 999999.;
+  std::map<int, OBB> output;
+  // plane detection with frontpoints.
+  for(auto it : frontpoints){
+    pcl::PointCloud<pcl::PointXYZ>::Ptr front_cloud = it.second;
+    // Do RANSACT for plane detection.
+    pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    pcl::SACSegmentation<pcl::PointXYZ> seg;
+    seg.setOptimizeCoefficients(true);
+    seg.setModelType(pcl::SACMODEL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    //seg.setMethodType(pcl::SAC_LMEDS);
+    seg.setDistanceThreshold(0.01);
+    seg.setInputCloud(front_cloud);
+    // The coefficients are consist with Hessian normal form : [normal_x normal_y normal_z d].
+    // ref : https://pointclouds.org/documentation/group__sample__consensus.html
+    seg.segment(*inliers, *coefficients);
+
+    Eigen::Vector4f plane;
+    for(int i =0; i <4; i++)
+      plane[i] = coefficients->values.at(i);
+    if(plane[2] > 0.) // Normal vector of box supposed to be negative depth direction.
+      plane.head<3>() = -plane.head<3>();
+
+    { // Filter front plane with inlier of RANSAC
+      //std::cout << front_cloud->size() << "->";
+      pcl::ExtractIndices<pcl::PointXYZ> extract;
+      extract.setInputCloud(front_cloud);
+      extract.setIndices(inliers);
+      extract.setNegative(false);
+      extract.filter(*front_cloud);
+      //std::cout << front_cloud->size() << std::endl;
+    }
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr all_cloud = allpoints.at(it.first);
+    {
+      //std::cout << all_cloud->size() << "->";
+      const float euclidean_tolerance = 0.05;
+      pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ>);
+      tree->setInputCloud(all_cloud);
+      std::vector<pcl::PointIndices> cluster_indices;
+      pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
+      ec.setClusterTolerance(euclidean_tolerance);
+      ec.setMinClusterSize(0);
+      ec.setMaxClusterSize(all_cloud->size());
+      ec.setSearchMethod(tree);
+      ec.setInputCloud(all_cloud);
+      ec.extract(cluster_indices);
+      std::sort(std::begin(cluster_indices),
+                std::end(cluster_indices),
+                [](const pcl::PointIndices& a, const pcl::PointIndices& b) {
+                return a.indices.size() > b.indices.size(); });
+      pcl::PointIndices inliers = cluster_indices[0];
+
+      pcl::ExtractIndices<pcl::PointXYZ> extract;
+      extract.setInputCloud(all_cloud);
+
+      pcl::PointIndices::Ptr ptr(new pcl::PointIndices);
+      ptr->indices = inliers.indices;
+      extract.setIndices(ptr);
+      extract.setNegative(false);
+      extract.filter(*all_cloud);
+      //std::cout << all_cloud->size() << std::endl;
+    }
+
+    // TODO Orientation from vertices
+    // vertices : uv of o, y, z
+    const Eigen::Matrix<float,6,1>& vertices = label2vertices.at(it.first);
+    Eigen::Vector3f pt_o = uv2eigen_xyz(vertices[0],vertices[1]);
+    Eigen::Vector3f r1 = plane.head<3>().normalized();
+
+    Eigen::Matrix<float,3,3> R0c; // TODO Rbc ? Rcb?
+    R0c.row(0) = r1.transpose();
+    if(vertices[2]>0.){
+      // Given x direction on image plane.
+      Eigen::Vector3f pt_y = uv2eigen_xyz(vertices[2],vertices[3]);
+      Eigen::Vector3f r2 = (pt_y - pt_o).normalized();
+      Eigen::Vector3f r3 = r1.cross(r2);
+      R0c.row(1) = r2.transpose();
+      R0c.row(2) = r3.transpose();
+    }
+    else{
+      // Given y direction on image plane.
+      Eigen::Vector3f pt_z = uv2eigen_xyz(vertices[4],vertices[5]);
+      Eigen::Vector3f r3 = (pt_z - pt_o).normalized();
+      Eigen::Vector3f r2 = r3.cross(r1);
+      R0c.row(1) = r2.transpose();
+      R0c.row(2) = r3.transpose();
+    }
+
+    Eigen::Vector3f t0c; {
+      Eigen::Matrix<float,3,3> Rc0 = R0c.transpose();
+      Eigen::Vector3f tc0 = pt_o;
+      t0c = - Rc0.transpose() * tc0;
+    }
+    // T0c -> Tbc,.. based on center position.
+    g2o::SE3Quat T0c;
+    T0c.setRotation(g2o::Quaternion(R0c.cast<double>() ) );
+    T0c.setTranslation(t0c.cast<double>() );
+
+    Eigen::Vector3d min_x0(inf, inf, inf);
+    Eigen::Vector3d max_x0(0, -inf, -inf);
+    // width height with front points
+    for(const pcl::PointXYZ& pt : *front_cloud){
+      Eigen::Vector3d x0 = T0c*Eigen::Vector3d(pt.x,pt.y,pt.z);
+      for(int k=1; k<3; k++){
+        min_x0[k] = std::min(min_x0[k], x0[k]);
+        max_x0[k] = std::max(max_x0[k], x0[k]);
+      }
+    }
+    // depth with all poitns.
+    for(const pcl::PointXYZ& pt : *all_cloud){
+      Eigen::Vector3d x0 = T0c*Eigen::Vector3d(pt.x,pt.y,pt.z);
+      const int k = 0; // x-axis assigned for normal direction.
+      min_x0[k] = std::min(min_x0[k], x0[k]);
+      max_x0[k] = std::max(max_x0[k], x0[k]);
+    }
+    const double min_depth = 0.01;
+    if(min_x0[0] > -min_depth)
+      min_x0[0] = -min_depth;
+
+    Eigen::Vector3f obb_size(max_x0[0]-min_x0[0], max_x0[1]-min_x0[1], max_x0[2]-min_x0[2]);
+    g2o::SE3Quat T0b; // TODO
+    T0b.setTranslation(obb_size.cast<double>()/2);
+    g2o::SE3Quat Tcb = T0c.inverse() * T0b; // {c} -> {box} 
+
+    // std::cout << Tcb.rotation().x() << std::endl;
+    // std::cout << Tcb.to_homogeneous_matrix().block<3,4>(0,0) << ", and " << obb_size.transpose() << std::endl;
+    OBB obb;
+    for(int k = 0; k < 3; k++){
+      obb.scale_[k] = obb_size[k];
+      obb.Tcb_xyz_qwxyz_[k] = Tcb.translation()[k];
+    }
+    obb.Tcb_xyz_qwxyz_[3] = Tcb.rotation().w();
+    obb.Tcb_xyz_qwxyz_[4] = Tcb.rotation().x();
+    obb.Tcb_xyz_qwxyz_[5] = Tcb.rotation().y();
+    obb.Tcb_xyz_qwxyz_[6] = Tcb.rotation().z();
+    output[it.first] = obb;
+  }
+  return output;
 }
+#endif
 
 bool SameSign(const float& v1, const float& v2){
   if(v1 > 0.)
@@ -684,24 +893,56 @@ py::array_t<float> PyGetDiscontinuousDepthEdge(py::array_t<float> inputdepth,
   return output;
 }
 
-py::tuple PyComputeOBB(py::array_t<int32_t> marker,
-                       py::array_t<float> depth){
+#ifndef WITHOUT_OBB
+py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
+                       py::array_t<int32_t> marker,
+                       py::list py_label2vertices,
+                       py::array_t<float> depth,
+                       py::dict info
+                       ){
   py::buffer_info buf_depth = depth.request();
   const float* ptr_depth = (const float*) buf_depth.ptr;
 
   py::buffer_info buf_marker = marker.request();
   const int32_t* ptr_marker = (const int32_t*) buf_marker.ptr;
 
-  size_t n_instance = ComputeOBB(buf_depth.shape, ptr_marker, ptr_depth);
+  py::buffer_info buf_frontmarker = frontmarker.request();
+  const int32_t* ptr_frontmarker = (const int32_t*) buf_frontmarker.ptr;
 
-  //py::array_t<float> output = py::array_t<float>(n_instance);
-  //py::buffer_info buf_output = output.request();
-  //float* ptr_output = (float*) buf_output.ptr;
-  //memset((void*)ptr_output,0, n_instance*sizeof(float));
+  EigenMap<int,Eigen::Matrix<float,6,1> > label2vertices; // org, x, y on 2D image plane
 
-  py::tuple results;
-  return results;
+  size_t n = py_label2vertices.size();
+  for(py::handle obj : py_label2vertices){
+    assert(obj.attr("__class__").cast<py::str>().cast<std::string>() == "<type \'list\'>");
+    py::list l = obj.cast<py::list>();
+
+    int idx = l[0].cast<int>();
+    py::array_t<float> vertices = l[1].cast<py::array_t<float> >();
+    float* vertices_ptr = (float*) vertices.request().ptr;
+    Eigen::Matrix<float,6,1> mat(vertices_ptr);
+    label2vertices[idx] = mat;
+  }
+  assert(info.contains("K"));
+  py::array_t<float> pyK = info["K"].cast<py::array_t<float> >();
+  cv::Mat K(3,3,CV_32FC1, pyK.request().ptr);
+  std::map<int, OBB> output = ComputeOBB(buf_depth.shape,
+                                         ptr_frontmarker,
+                                         ptr_marker,
+                                         ptr_depth,
+                                         label2vertices, K);
+  py::list list;
+  for(auto it : output){
+    const OBB& obb = it.second;
+    py::tuple pose = py::make_tuple(obb.Tcb_xyz_qwxyz_[0], obb.Tcb_xyz_qwxyz_[1],
+                                    obb.Tcb_xyz_qwxyz_[2], obb.Tcb_xyz_qwxyz_[3],
+                                    obb.Tcb_xyz_qwxyz_[4], obb.Tcb_xyz_qwxyz_[5],
+                                    obb.Tcb_xyz_qwxyz_[6]);
+    py::tuple scale = py::make_tuple(obb.scale_[0], obb.scale_[1], obb.scale_[2]);
+    list.append(py::make_tuple(it.first, pose, scale) );
+  }
+  return list;
 }
+#endif
 
 
 PYBIND11_MODULE(unet_ext, m) {
@@ -721,7 +962,13 @@ PYBIND11_MODULE(unet_ext, m) {
   m.def("UnprojectPointscloud", &PyUnprojectPointscloud, "Get rgbxyz and xyzi points cloud",
         py::arg("rgb"), py::arg("depth"), py::arg("labels"), py::arg("K"), py::arg("D"), py::arg("leaf_xy"), py::arg("leaf_z"));
 
+#ifndef WITHOUT_OBB
   m.def("ComputeOBB", &PyComputeOBB, "Compute OBB from given marker and depth map",
-        py::arg("marker"), py::arg("depth"));
-
+        py::arg("front_marker"),
+        py::arg("marker"),
+        py::arg("label2vertices"),
+        py::arg("depth"),
+        py::arg("info")
+        );
+#endif
 }
