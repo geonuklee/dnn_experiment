@@ -207,7 +207,7 @@ int main(int argc, char **argv) {
                                                                  cam_name,
                                                                  nh
                                                                 );
-    obb_estimators[cam_id] = std::make_shared<ObbEstimator>(camerainfos.at(cam_id) );
+    obb_estimators[cam_id] = std::make_shared<ObbEstimator>(segment2d.at(cam_id)->GetRectifiedIntrinsic() );
     pub_clouds[cam_id]   = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"/clouds",1);
     pub_boundary[cam_id] = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"/boundary",1);
     pub_vis_mask[cam_id] = nh.advertise<sensor_msgs::Image>(cam_name+"/vis_mask",1);

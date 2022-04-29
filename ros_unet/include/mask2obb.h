@@ -33,6 +33,8 @@
 #include <unloader_msgs/Object.h>
 #include <unloader_msgs/ObjectArray.h>
 
+#include "segment2d.h"
+
 /**
 @struct ObbParam
 @brief The structure is a set of parameters required for ComputeBoxOBB().
@@ -185,7 +187,7 @@ public:
   @param[in] camera_info The camera information..
   */
   ObbEstimator() {};
-  ObbEstimator(const sensor_msgs::CameraInfo& camera_info);
+  ObbEstimator(const MarkerCamera& marker_camera);
 
   /**
   @brief It computes segmented points cloud based 2D instance segmentation mask.

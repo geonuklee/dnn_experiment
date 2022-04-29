@@ -72,32 +72,33 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
                               const int32_t* ptr_marker,
                               const float* ptr_depth,
                               const EigenMap<int,Eigen::Matrix<float,6,1> >& label2vertices,
-                              const cv::Mat& K
+                              const float* ptr_numap,
+                              const float* ptr_nvmap 
                              ){
   int rows = shape[0];
   int cols = shape[1];
   cv::Mat frontmarker(rows,cols, CV_32SC1, (void*)ptr_frontmarker);
   cv::Mat marker(rows, cols, CV_32SC1, (void*)ptr_marker);
   cv::Mat depth(rows, cols, CV_32F, (void*)ptr_depth);
+  cv::Mat numap(rows, cols, CV_32F, (void*)ptr_numap);
+  cv::Mat nvmap(rows, cols, CV_32F, (void*)ptr_nvmap);
 
   // Euclidean cluster before thickness measurement
   std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr> allpoints;
   // For plane detection
   std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr> frontpoints;
 
-  auto uv2pclxyz = [&depth,K](int r, int c){
-    float u = c;
-    float v = r;
-    float nu = u/K.at<float>(0,0);
-    float nv = v/K.at<float>(1,1);
+  auto uv2pclxyz = [&depth, &numap, &nvmap](int r, int c){
+    float nu = numap.at<float>(r,c);
+    float nv = nvmap.at<float>(r,c);
     const float& d = depth.at<float>(r,c);
     return pcl::PointXYZ(nu*d,nv*d,d);
   };
-  auto uv2eigen_xyz = [&depth,K](float u, float v){
+  auto uv2eigen_xyz = [&depth,&numap, &nvmap](float u, float v){
     int c = u;
     int r = v;
-    float nu = u/K.at<float>(0,0);
-    float nv = v/K.at<float>(1,1);
+    float nu = numap.at<float>(r,c);
+    float nv = nvmap.at<float>(r,c);
     const float& d = depth.at<float>(r,c);
     return Eigen::Vector3f(nu*d,nv*d,d);
   };
@@ -153,7 +154,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     for(int i =0; i <4; i++)
       plane[i] = coefficients->values.at(i);
     if(plane[2] > 0.) // Normal vector of box supposed to be negative depth direction.
-      plane.head<3>() = -plane.head<3>();
+      plane = -plane;
 
     { // Filter front plane with inlier of RANSAC
       //std::cout << front_cloud->size() << "->";
@@ -196,13 +197,13 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       //std::cout << all_cloud->size() << std::endl;
     }
 
-    // TODO Orientation from vertices
+    // Orientation from vertices
     // vertices : uv of o, y, z
     const Eigen::Matrix<float,6,1>& vertices = label2vertices.at(it.first);
     Eigen::Vector3f pt_o = uv2eigen_xyz(vertices[0],vertices[1]);
     Eigen::Vector3f r1 = plane.head<3>().normalized();
 
-    Eigen::Matrix<float,3,3> R0c; // TODO Rbc ? Rcb?
+    Eigen::Matrix<float,3,3> R0c;
     R0c.row(0) = r1.transpose();
     if(vertices[2]>0.){
       // Given x direction on image plane.
@@ -232,7 +233,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     T0c.setTranslation(t0c.cast<double>() );
 
     Eigen::Vector3d min_x0(inf, inf, inf);
-    Eigen::Vector3d max_x0(0, -inf, -inf);
+    Eigen::Vector3d max_x0(0., -inf, -inf);
     // width height with front points
     for(const pcl::PointXYZ& pt : *front_cloud){
       Eigen::Vector3d x0 = T0c*Eigen::Vector3d(pt.x,pt.y,pt.z);
@@ -248,14 +249,18 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       min_x0[k] = std::min(min_x0[k], x0[k]);
       max_x0[k] = std::max(max_x0[k], x0[k]);
     }
-    const double min_depth = 0.01;
+    const double min_depth = 0.2;
     if(min_x0[0] > -min_depth)
       min_x0[0] = -min_depth;
 
     Eigen::Vector3f obb_size(max_x0[0]-min_x0[0], max_x0[1]-min_x0[1], max_x0[2]-min_x0[2]);
     g2o::SE3Quat T0b; // TODO
-    T0b.setTranslation(obb_size.cast<double>()/2);
+    T0b.setTranslation(Eigen::Vector3d(max_x0[0]+min_x0[0], max_x0[1]+min_x0[1], max_x0[2]+min_x0[2])/2);
+#if 1
     g2o::SE3Quat Tcb = T0c.inverse() * T0b; // {c} -> {box} 
+#else
+    g2o::SE3Quat Tcb = T0c.inverse();
+#endif
 
     // std::cout << Tcb.rotation().x() << std::endl;
     // std::cout << Tcb.to_homogeneous_matrix().block<3,4>(0,0) << ", and " << obb_size.transpose() << std::endl;
@@ -898,7 +903,8 @@ py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
                        py::array_t<int32_t> marker,
                        py::list py_label2vertices,
                        py::array_t<float> depth,
-                       py::dict info
+                       py::array_t<float> numap,
+                       py::array_t<float> nvmap
                        ){
   py::buffer_info buf_depth = depth.request();
   const float* ptr_depth = (const float*) buf_depth.ptr;
@@ -908,6 +914,12 @@ py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
 
   py::buffer_info buf_frontmarker = frontmarker.request();
   const int32_t* ptr_frontmarker = (const int32_t*) buf_frontmarker.ptr;
+
+  py::buffer_info buf_numap = numap.request();
+  const float* ptr_numap = (const float*) buf_numap.ptr;
+
+  py::buffer_info buf_nvmap = nvmap.request();
+  const float* ptr_nvmap = (const float*) buf_nvmap.ptr;
 
   EigenMap<int,Eigen::Matrix<float,6,1> > label2vertices; // org, x, y on 2D image plane
 
@@ -922,14 +934,17 @@ py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
     Eigen::Matrix<float,6,1> mat(vertices_ptr);
     label2vertices[idx] = mat;
   }
-  assert(info.contains("K"));
-  py::array_t<float> pyK = info["K"].cast<py::array_t<float> >();
-  cv::Mat K(3,3,CV_32FC1, pyK.request().ptr);
+  //assert(info.contains("K"));
+  //py::array_t<float> pyK = info["K"].cast<py::array_t<float> >();
+  //cv::Mat K(3,3,CV_32FC1, pyK.request().ptr);
   std::map<int, OBB> output = ComputeOBB(buf_depth.shape,
                                          ptr_frontmarker,
                                          ptr_marker,
                                          ptr_depth,
-                                         label2vertices, K);
+                                         label2vertices,
+                                         ptr_numap,
+                                         ptr_nvmap
+                                         );
   py::list list;
   for(auto it : output){
     const OBB& obb = it.second;
@@ -968,7 +983,8 @@ PYBIND11_MODULE(unet_ext, m) {
         py::arg("marker"),
         py::arg("label2vertices"),
         py::arg("depth"),
-        py::arg("info")
+        py::arg("nu_map"),
+        py::arg("nv_map")
         );
 #endif
 }

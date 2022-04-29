@@ -14,13 +14,16 @@ void GetCvMat(const sensor_msgs::CameraInfo& camera_info, cv::Mat& K, cv::Mat& D
   return;
 }
 
-ObbEstimator::ObbEstimator(const sensor_msgs::CameraInfo& camera_info){
-  cv::Mat K, D;
-  GetCvMat(camera_info, K, D);
-  nu_ = cv::Mat::zeros(camera_info.height, camera_info.width,CV_32F);
-  nv_ = cv::Mat::zeros(camera_info.height, camera_info.width,CV_32F);
-  for(int r = 0; r < camera_info.height; r++){
-    for(int c = 0; c < camera_info.width; c++){
+ObbEstimator::ObbEstimator(const MarkerCamera& marker_camera){
+  //cv::Mat K, D;
+  //GetCvMat(camera_info, K, D);
+  cv::Mat K = marker_camera.K_;
+  cv::Mat D = marker_camera.D_;
+
+  nu_ = cv::Mat::zeros(marker_camera.image_size_.height, marker_camera.image_size_.width,CV_32F);
+  nv_ = cv::Mat::zeros(marker_camera.image_size_.height, marker_camera.image_size_.width,CV_32F);
+  for(int r = 0; r < nu_.rows; r++){
+    for(int c = 0; c < nu_.cols; c++){
       cv::Point2f uv;
       uv.x = c;
       uv.y = r;

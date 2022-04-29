@@ -28,8 +28,12 @@ def ParseRosbag(fullfn):
     command  = "rosbag info %s"%fullfn
     command += "| grep image_raw"
     infos = os.popen(command).read()
-    depth_groups = re.findall("\ (\/(.*)\/(k4a|helios2)\/(depth|depth_to_rgb)\/image_raw)\ ", infos)
-    rgb_groups = re.findall("\ (\/(.*)\/(k4a|aligned)\/(rgb|rgb_to_depth)\/image_raw)\ ", infos)
+    if False:
+        depth_groups = re.findall("\ (\/(.*)\/(k4a|helios2)\/(depth|depth_to_rgb)\/image_raw)\ ", infos)
+        rgb_groups = re.findall("\ (\/(.*)\/(k4a|aligned)\/(rgb|rgb_to_depth)\/image_raw)\ ", infos)
+    else:
+        depth_groups = [('/cam0/helios2/depth/image_raw', 'cam0', 'helios2', 'depth')]
+        rgb_groups = [('/cam0/aligned/rgb_to_depth/image_raw', 'cam0', 'aligned', 'rgb_to_depth')]
     rgbs = {}
     bridge = CvBridge()
     dsize = (1280,960)
@@ -77,23 +81,30 @@ def ParseRosbag(fullfn):
                 break
         if b_pass:
             continue
-        #minirgb  = cv2.resize(orgb, (nr,nc))
-        gray = cv2.cvtColor(orgb,cv2.COLOR_BGR2GRAY)/2
-        depth0 = get_meterdepth(depth0)
-        #input_stack, grad, hessian, outline, convex_edge\
-        #    = ConvertDepth2input(depth0,fx=K[0,0],fy=K[1,1])
         nr,nc = depth0.shape[0], depth0.shape[1]
+        minirgb  = cv2.resize(orgb, (nc/2,nr/2))
+        gray = (0.8 * cv2.cvtColor(orgb,cv2.COLOR_BGR2GRAY)).astype(np.uint8)
         osize = (nc,nr) # width, height
+       
         newK,_ = cv2.getOptimalNewCameraMatrix(K,D,osize,1)
         mx,my = cv2.initUndistortRectifyMap(K,D,None,newK,osize,cv2.CV_32F)
         dst = np.stack((gray,gray,gray),axis=2)
         dst = cv2.remap(dst,mx,my,cv2.INTER_NEAREST)
-        depth = cv2.remap(depth0, mx,my,cv2.INTER_NEAREST)
+
+        depth0 = get_meterdepth(depth0)
+        depth0 = cv2.remap(depth0, mx,my,cv2.INTER_NEAREST)
+        dst[depth0<0.3,:2] = 100
+        #input_stack, grad, hessian, outline, convex_edge\
+        #    = ConvertDepth2input(depth0,fx=newK[0,0],fy=newK[1,1])
+        #dst = 100*np.ones((depth0.shape[0], depth0.shape[1]+minirgb.shape[1],3), np.uint8)
+        #dst[:nr,:nc,0] = 100*outline
+        #dst[:nr,:nc,1] = 100*convex_edge
+        #dst[:minirgb.shape[0],-minirgb.shape[1]:] = minirgb[:,:]
+
         name='tmp'
         cv2.imwrite("%s.png"%name, dst)
-        pickle.dump({"newK":newK, "depth":depth0, "fullfn":fullfn,
+        pickle.dump({"K":K, "D":D, "newK":newK, "depth":depth0, "rgb":orgb, "fullfn":fullfn,
             }, open("%s.pick"%name, "wb" ))
-
         callout = subprocess.call(['kolourpaint', "%s.png"%name] )
         #ParseGroundTruth(cv_gt=dst, rectK=newK, shape=(nr,nc))
         break
@@ -137,7 +148,7 @@ def GetScene(fn_rosbag):
     return orgb, depth0, info
 
 
-def ParseGroundTruth(cv_gt, depth, K, fn_rosbag):
+def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag):
     # 1) watershed, 꼭지점 따기.
     # 2) OBB - Roll angle 따기.
     # 3) unet_ext : Unprojection,
@@ -219,7 +230,23 @@ def ParseGroundTruth(cv_gt, depth, K, fn_rosbag):
     # Unrectified rgb,depth while cv_gt and depth are recitified.
     distorted_rgb, distorted_depth, info = GetScene(fn_rosbag)
     '''
-    obb_tuples = unet_ext.ComputeOBB(front_marker, marker, planemarker2vertices, depth, info={'K':K} )
+    # mask2obb, GetUV와 같은 normalization map.
+    nr, nc = marker.shape
+    nu_map = np.zeros((nr,nc),dtype=np.float)
+    nv_map = np.zeros((nr,nc),dtype=np.float)
+    for r in range(nr):
+        for c in range(nc):
+            if D is None:
+                u,v = float(c), float(r)
+                nu_map[r,c] = (u-K[0,2])/K[0,0]
+                nv_map[r,c] = (v-K[1,2])/K[1,1]
+            else:
+                pt = np.array((c,r),np.float).reshape((1,1,2))
+                nuv = cv2.undistortPoints(pt, K, D)
+                nu_map[r,c] = nuv[0,0,0]
+                nv_map[r,c] = nuv[0,0,1]
+
+    obb_tuples = unet_ext.ComputeOBB(front_marker, marker, planemarker2vertices, depth, nu_map, nv_map)
     obbs = []
     for idx, pose, scale in obb_tuples:
         #  pose = (x,y,z, qw,qx,qy,qz) for transform {camera} <- {box}
@@ -235,12 +262,13 @@ def ParseGroundTruth(cv_gt, depth, K, fn_rosbag):
             pt_org = tuple(arr_oyz[:2].astype(np.int32).tolist())
             if arr_oyz[2] > 0:
                 pt_y = tuple(arr_oyz[2:4].astype(np.int32).tolist())
-                cv2.line(dst,pt_org,pt_x, (255,255,255),2)
+                cv2.line(dst,pt_org,pt_y, (100,255,100),2)
             if arr_oyz[4] > 0:
                 pt_z = tuple(arr_oyz[4:].astype(np.int32).tolist())
-                cv2.line(dst,pt_org,pt_y, (255,255,255),2)
+                cv2.line(dst,pt_org,pt_z, (100,100,255),2)
             cv2.circle(dst,pt_org,3,(0,0,255),-1)
             #cv2.circle(dst,(cp[0],cp[1]),5,(150,150,150),2)
+        dst = cv2.addWeighted(dst, 0.4, rgb, 0.6, 0.)
         cv2.imshow("dst", dst)
         cv2.waitKey()
 
@@ -249,27 +277,21 @@ def ParseGroundTruth(cv_gt, depth, K, fn_rosbag):
 
 if __name__ == '__main__':
     if True:
-        # tmp1.png
-        #ParseRosbag('/home/geo/dataset/unloading/stc2021/stc_2021-09-02-10-28-32.bag')
-        # tmp2.png
-        #ParseRosbag('/home/geo/dataset/unloading/stc2021/stc_2021-08-19-17-10-55.bag')
-
         # TODO OBB from, above cv_gt
-        cv_gt = cv2.imread("tmp1.png")[:480,:640,:]
-        f = open('tmp1.pick','rb')
-        pick = pickle.load(f)
-        f.close()
-        obbs = ParseGroundTruth(cv_gt, pick['depth'], pick['newK'], pick['fullfn'])
-        pick['obbs'] = obbs
-        pickle.dump(pick, open('tmp1.pick','wb'))
-
-        #cv_gt = cv2.imread("tmp1.png")
-        #fn_rosbag = "/home/geo/dataset/unloading/stc2021/stc_2021-09-02-10-28-32.bag"
-        #ParseGroundTruth(cv_gt, fn_rosbag)
-        #cv_gt = cv2.imread("tmp2.png")
-        #fn_rosbag = "/home/geo/dataset/unloading/stc2021/stc_2021-08-19-17-10-55.bag"
-        #ParseGroundTruth(cv_gt, fn_rosbag)
-
+        if True:
+            # tmp1.png, Step 1
+            ParseRosbag('/home/geo/dataset/unloading/stc2021/stc_2021-09-02-10-28-32.bag')
+            # tmp2.png
+            #ParseRosbag('/home/geo/dataset/unloading/stc2021/stc_2021-08-19-17-10-55.bag')
+        else:
+            # Step 2
+            f = open('tmp1.pick','rb')
+            pick = pickle.load(f)
+            f.close()
+            cv_gt = cv2.imread("tmp1.png")[:pick['depth'].shape[0],:pick['depth'].shape[1],:]
+            obbs = ParseGroundTruth(cv_gt, pick['rgb'], pick['depth'], pick['newK'], None, pick['fullfn'])
+            pick['obbs'] = obbs
+            pickle.dump(pick, open('tmp1.pick','wb'))
 
     else:
         rosbag_path = '/home/geo/dataset/unloading/**/*.bag' # remove hardcoding .. 
