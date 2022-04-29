@@ -124,9 +124,9 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
         allpoints.at(l_front)->push_back(xyz);
       }
       else if(l_marker > 0){
-        if(!allpoints.count(l_front))
-          allpoints[l_front] = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>() );
-        allpoints.at(l_front)->push_back(xyz);
+        if(!allpoints.count(l_marker))
+          allpoints[l_marker] = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>() );
+        allpoints.at(l_marker)->push_back(xyz);
       }
     }
   }
@@ -155,6 +155,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       plane[i] = coefficients->values.at(i);
     if(plane[2] > 0.) // Normal vector of box supposed to be negative depth direction.
       plane = -plane;
+    Eigen::Vector3f n = plane.head<3>();
 
     { // Filter front plane with inlier of RANSAC
       //std::cout << front_cloud->size() << "->";
@@ -200,14 +201,17 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     // Orientation from vertices
     // vertices : uv of o, y, z
     const Eigen::Matrix<float,6,1>& vertices = label2vertices.at(it.first);
+    //Eigen::Vector3f o(0.,0., -plane[3]/plane[2]);
     Eigen::Vector3f pt_o = uv2eigen_xyz(vertices[0],vertices[1]);
-    Eigen::Vector3f r1 = plane.head<3>().normalized();
+    pt_o = pt_o - (pt_o.dot(n)+plane[3])*n;// projection on plane
+    Eigen::Vector3f r1 = n;
 
     Eigen::Matrix<float,3,3> R0c;
     R0c.row(0) = r1.transpose();
     if(vertices[2]>0.){
       // Given x direction on image plane.
       Eigen::Vector3f pt_y = uv2eigen_xyz(vertices[2],vertices[3]);
+      pt_y = pt_y - (pt_y.dot(n)+plane[3])*n;// projection on plane
       Eigen::Vector3f r2 = (pt_y - pt_o).normalized();
       Eigen::Vector3f r3 = r1.cross(r2);
       R0c.row(1) = r2.transpose();
@@ -216,6 +220,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     else{
       // Given y direction on image plane.
       Eigen::Vector3f pt_z = uv2eigen_xyz(vertices[4],vertices[5]);
+      pt_z = pt_z - (pt_z.dot(n)+plane[3])*n;// projection on plane
       Eigen::Vector3f r3 = (pt_z - pt_o).normalized();
       Eigen::Vector3f r2 = r3.cross(r1);
       R0c.row(1) = r2.transpose();
@@ -247,8 +252,8 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       Eigen::Vector3d x0 = T0c*Eigen::Vector3d(pt.x,pt.y,pt.z);
       const int k = 0; // x-axis assigned for normal direction.
       min_x0[k] = std::min(min_x0[k], x0[k]);
-      max_x0[k] = std::max(max_x0[k], x0[k]);
     }
+
     const double min_depth = 0.2;
     if(min_x0[0] > -min_depth)
       min_x0[0] = -min_depth;

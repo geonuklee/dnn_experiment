@@ -94,6 +94,8 @@ def ParseRosbag(fullfn):
         depth0 = get_meterdepth(depth0)
         depth0 = cv2.remap(depth0, mx,my,cv2.INTER_NEAREST)
         dst[depth0<0.3,:2] = 100
+
+        rect_rgb = cv2.remap(orgb,mx,my,cv2.INTER_NEAREST)
         #input_stack, grad, hessian, outline, convex_edge\
         #    = ConvertDepth2input(depth0,fx=newK[0,0],fy=newK[1,1])
         #dst = 100*np.ones((depth0.shape[0], depth0.shape[1]+minirgb.shape[1],3), np.uint8)
@@ -101,9 +103,9 @@ def ParseRosbag(fullfn):
         #dst[:nr,:nc,1] = 100*convex_edge
         #dst[:minirgb.shape[0],-minirgb.shape[1]:] = minirgb[:,:]
 
-        name='tmp'
+        name='tmp1'
         cv2.imwrite("%s.png"%name, dst)
-        pickle.dump({"K":K, "D":D, "newK":newK, "depth":depth0, "rgb":orgb, "fullfn":fullfn,
+        pickle.dump({"K":K, "D":D, "newK":newK, "depth":depth0, "rgb":rect_rgb, "fullfn":fullfn,
             }, open("%s.pick"%name, "wb" ))
         callout = subprocess.call(['kolourpaint', "%s.png"%name] )
         #ParseGroundTruth(cv_gt=dst, rectK=newK, shape=(nr,nc))
@@ -278,7 +280,7 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag):
 if __name__ == '__main__':
     if True:
         # TODO OBB from, above cv_gt
-        if True:
+        if False:
             # tmp1.png, Step 1
             ParseRosbag('/home/geo/dataset/unloading/stc2021/stc_2021-09-02-10-28-32.bag')
             # tmp2.png

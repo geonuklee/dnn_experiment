@@ -840,7 +840,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       {
         double w = max_x1[0]-min_x1[0];
         double h = max_x1[1]-min_x1[1];
-        double min_depth = 1. * std::min(w,h);
+        double min_depth = 0.2; // 1. * std::min(w,h);
         if(min_x1[2] > -min_depth)
           min_x1[2] = -min_depth;
       }
