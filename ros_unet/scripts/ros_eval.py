@@ -271,6 +271,11 @@ if __name__ == '__main__':
 
             # 정보 저장
             # iou - precision - recall - (gt)w - h - d - min_width - distance - iter - filename - gt_name
+            ''' Log below error for evaluation..
+            b0.scale
+            b0.rotation
+            dt = np.linalg.norm(cp_surf1-cp_surf0)
+            '''
             msg = "%.3f"%loss.iou()
             msg += ",%.3f"%precision
             msg += ",%.3f"%recall
@@ -278,7 +283,5 @@ if __name__ == '__main__':
             msg += ",%.3f"%obj0.scale.y
             msg += ",%.3f"%obj0.scale.z
             msg += "\n"
-
-
  
         rate.sleep()
