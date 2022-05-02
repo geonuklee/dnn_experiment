@@ -9,7 +9,7 @@ import numpy as np
 import cv2
 import glob2 # For recursive glob for python2
 from os import path as osp
-from cv_bridge import CvBridge
+#from cv_bridge import CvBridge #< doesn't work for python3
 import subprocess
 from util import *
 import unet_ext
@@ -42,7 +42,7 @@ def ParseRosbag(output_path, fullfn):
         #depth_groups = [('/cam0/helios2/depth/image_raw', 'cam0', 'helios2', 'depth')]
         #rgb_groups = [('/cam0/aligned/rgb_to_depth/image_raw', 'cam0', 'aligned', 'rgb_to_depth')]
     rgbs = {}
-    bridge = CvBridge()
+    #bridge = CvBridge()
     dsize = (1280,960)
 
     for topic, cam_id, _, rgb_type in rgb_groups:
@@ -56,7 +56,9 @@ def ParseRosbag(output_path, fullfn):
             continue
         cams.add(cam_id)
         depth_messages = get_topic(fullfn, topic)
-        depth0 = bridge.imgmsg_to_cv2(depth_messages[0], desired_encoding="32FC1")
+        #depth0 = bridge.imgmsg_to_cv2(depth_messages[0], desired_encoding="32FC1")
+        depth0 = depth_messages[0]
+        depth0 = np.frombuffer(depth0.data, dtype=np.float32).reshape(depth0.height, depth0.width)
         if depth0.shape[1] < 600: # Too small image
             continue
         if camera_type == "k4a": # Too poor
@@ -75,7 +77,8 @@ def ParseRosbag(output_path, fullfn):
         while not b_break_loop:
             c = 0
             for i, msg in enumerate(rgb_messages):
-                orgb = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8" )
+                #orgb = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8" )
+                orgb = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
                 dst_with_msg  = cv2.resize(orgb, dsize)
                 dst_with_msg[:12,:,:] = 255
                 cv2.putText(dst_with_msg, 'Do you accept this rosbag? y/n/q',
@@ -126,44 +129,6 @@ def ParseRosbag(output_path, fullfn):
         cv_gt = cv2.imread(label_fn)[:pick['depth'].shape[0],:pick['depth'].shape[1],:]
         ParseGroundTruth(cv_gt, pick['rgb'], pick['depth'], pick['newK'], None, pick['fullfn'])
     return
-
-def GetScene(fn_rosbag):
-    fn = osp.basename(fn_rosbag)
-    command  = "rosbag info %s"%fn_rosbag
-    command += "| grep image_raw"
-    infos = os.popen(command).read()
-    depth_groups = re.findall("\ (\/(.*)\/(k4a|helios2)\/(depth|depth_to_rgb)\/image_raw)\ ", infos)
-    rgb_groups = re.findall("\ (\/(.*)\/(k4a|aligned)\/(rgb|rgb_to_depth)\/image_raw)\ ", infos)
-    rgbs = {}
-    bridge = CvBridge()
-    for topic, cam_id, _, rgb_type in rgb_groups:
-        if cam_id not in rgbs:
-            rgbs[cam_id] = {}
-        rgbs[cam_id][rgb_type] = topic
-
-    for topic, cam_id, camera_type, depth_type in depth_groups:
-        depth_messages = get_topic(fn_rosbag, topic)
-        depth0 = bridge.imgmsg_to_cv2(depth_messages[0], desired_encoding="32FC1")
-
-        if depth0.shape[1] < 600: # Too small image
-            continue
-        if camera_type == "k4a": # Too poor
-            continue
-        if depth_type == 'depth_to_rgb':
-            rgb_topic = rgbs[cam_id]['rgb']
-        else:
-            rgb_topic = rgbs[cam_id]['rgb_to_depth']
-        rgb_messages = get_topic(fn_rosbag, rgb_topic)
-        ros_info = get_topic(fn_rosbag, "/%s/helios2/camera_info"%cam_id)[0]
-        K = np.array( ros_info.K ,dtype=np.float).reshape((3,3))
-        D = np.array( ros_info.D, dtype=np.float).reshape((-1,))
-        info = {"K":K, "D":D, "width":ros_info.width, "height":ros_info.height}
-        for i, msg in enumerate(rgb_messages):
-            orgb = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8" )
-            break
-        break
-    return orgb, depth0, info
-
 
 def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag):
     # 1) watershed, 꼭지점 따기.
@@ -243,10 +208,6 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag):
         marker[marker0==idx] = pidx
         front_marker[plane_marker0==pidx] = pidx
 
-    '''
-    # Unrectified rgb,depth while cv_gt and depth are recitified.
-    distorted_rgb, distorted_depth, info = GetScene(fn_rosbag)
-    '''
     # mask2obb, GetUV와 같은 normalization map.
     nr, nc = marker.shape
     nu_map = np.zeros((nr,nc),dtype=np.float)
