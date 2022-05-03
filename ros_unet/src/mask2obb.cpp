@@ -230,7 +230,8 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
 
 
   // Unproject cloud, boundary
-  int boundary = 10;
+  const int boundary = 5;
+  const float f_boundary = boundary;
   int max_idx = 0;
   for(int r = boundary; r < depth.rows-boundary; r++){
     for(int c = boundary; c < depth.cols-boundary; c++){
@@ -248,7 +249,7 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
       if(! GetXYZNormal(r,c, xyznormal) )
         continue;
 
-      if(pixel_distance > 5.){
+      if(pixel_distance > f_boundary){
         if(!clouds.count(idx)){
           pcl::PointCloud<pcl::PointXYZLNormal>::Ptr ptr_cloud(new pcl::PointCloud<pcl::PointXYZLNormal>());
           ptr_cloud->reserve(1000);
@@ -355,10 +356,10 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
   return;
 }
 
-ObbProcessVisualizer::ObbProcessVisualizer(int cam_id, ros::NodeHandle& nh)
+ObbProcessVisualizer::ObbProcessVisualizer(const std::string& cam_id, ros::NodeHandle& nh)
   : cam_id_(cam_id)
 {
-  std::string cam_name = "cam"+std::to_string(cam_id)+"/";
+  std::string cam_name = cam_id+"/";
   pub_mask     = nh.advertise<sensor_msgs::Image>(cam_name+"mask",0);
   pub_clouds   = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"clouds",0);
   pub_boundary = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"boundary",0);
@@ -585,7 +586,6 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
                 const ObbParam& param,
                 const Eigen::Vector3f& depth_dir,
                 const Eigen::Vector3f& t_wc,
-                int cam_id,
                 std::shared_ptr<unloader_msgs::Object> obj,
                 std::shared_ptr<ObbProcessVisualizer> visualizer
                )
@@ -598,7 +598,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
     pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud_hull(new pcl::PointCloud<pcl::PointXYZLNormal>);
     chull.reconstruct(*cloud_hull, polygons);
     if(cloud_hull->empty() ){
-      ROS_INFO("Failed to compute concavehull for yolact instance %d", obj->instance_id);
+      ROS_INFO("Failed to compute concavehull for instance %d", obj->instance_id);
       return false;
     }
 
@@ -758,7 +758,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       contour_marker.header.frame_id = "robot";
       contour_marker.id = obj->instance_id;
       //contour_marker.color = GetColor(obj->instance_id);
-      contour_marker.color = GetColor(cam_id+1);
+      contour_marker.color = GetColor(1);
 
       contour_marker.points.reserve(2*contour.size());
       for(size_t i =0; i < contour.size(); i++){
@@ -1019,7 +1019,7 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
                    const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds,
                    const ObbParam& param,
                    const g2o::SE3Quat& Tcw,
-                   int cam_id,
+                   const std::string& cam_id,
                    std::shared_ptr<ObbProcessVisualizer> visualizer
                    ) {
 
@@ -1054,7 +1054,7 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
       obj->visible_plane[i] = false;
     obj->point_cloud.header.frame_id = "robot";
 
-    if(! ComputeBoxOBB(cloud, boundary, param, depth_dir, t_wc, cam_id,  obj, visualizer) )
+    if(! ComputeBoxOBB(cloud, boundary, param, depth_dir, t_wc, obj, visualizer) )
       continue;
 
     // TODO Collect unsynced obb before matching.

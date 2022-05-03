@@ -137,7 +137,7 @@ def ConvertDepth2input(depth, fx, fy):
     #    print("hessian has nan")
     #    import pdb; pdb.set_trace()
 
-    threshold_curvature = 15.
+    threshold_curvature = 10.
     concave_edge = hessian < -threshold_curvature
     outline = np.logical_or(concave_edge, dd_edge > 0).astype(np.uint8)
     convex_edge = (hessian > 50).astype(np.uint8)

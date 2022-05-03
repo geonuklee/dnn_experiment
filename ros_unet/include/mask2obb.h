@@ -121,14 +121,14 @@ public:
   /**
   @brief The initialization without input parameter.
   */
-  ObbProcessVisualizer() :cam_id_(-1){ };
+  ObbProcessVisualizer() :cam_id_(""){ };
 
   /**
   @brief The initialization.
   @param[in] cam_id The index of camera.
   @param[in, out] nh The ros node handle is required to create ros topic publisher.
   */
-  ObbProcessVisualizer(int cam_id, ros::NodeHandle& nh);
+  ObbProcessVisualizer(const std::string& cam_id, ros::NodeHandle& nh);
 
   /**
   @brief It publish rostopic for segmented boundary points with distinctive colormap for unsynced instance id.
@@ -163,7 +163,7 @@ public:
   void Visualize();
 
 private:
-  const int cam_id_;
+  const std::string cam_id_;
   ros::Publisher pub_mask;
   ros::Publisher pub_boundary;
   ros::Publisher pub_clouds;
@@ -217,7 +217,7 @@ public:
                    const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds,
                    const ObbParam& param,
                    const g2o::SE3Quat& Tcw,
-                   int cam_id,
+                   const std::string& cam_id,
                    std::shared_ptr<ObbProcessVisualizer> visualizer
                   );
 

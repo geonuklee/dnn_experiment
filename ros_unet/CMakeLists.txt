@@ -19,10 +19,14 @@ find_package(catkin REQUIRED
   unloader_msgs
 )
 
+add_service_files(DIRECTORY FILES ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv)
+catkin_install_python(PROGRAMS scripts/ros_unet_server.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+generate_messages(DEPENDENCIES sensor_msgs std_msgs geometry_msgs)
+
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES ros_unet
-CATKIN_DEPENDS geometry_msgs roscpp rospy sensor_msgs std_msgs pcl_conversions pcl_ros visualization_msgs unloader_msgs
+CATKIN_DEPENDS geometry_msgs roscpp rospy sensor_msgs std_msgs pcl_conversions pcl_ros visualization_msgs unloader_msgs message_generation
 )
 
 ###########
@@ -35,10 +39,9 @@ include_directories(
   ${G2O_INCLUDE_DIR}
 )
 
-add_executable(pipeline
-  src/pipeline_node.cpp
+add_executable(obb_server
+  src/obb_server.cpp
   src/segment2d.cpp
-  src/segment2d_ml.cpp
   src/ros_util.cpp
   src/mask2obb.cpp)
-target_link_libraries(pipeline ${catkin_LIBRARIES} ${OpenCV_LIBS})
+target_link_libraries(obb_server ${catkin_LIBRARIES} ${OpenCV_LIBS})

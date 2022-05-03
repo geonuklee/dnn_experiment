@@ -31,13 +31,6 @@ sensor_msgs::CameraInfo MarkerCamera::AsCameraInfo() const {
   return info;
 }
 
-void Segment2DAbstract::Rectify(cv::Mat given_rgb,
-                                cv::Mat given_depth
-                               ) {
-  cv::remap(given_rgb, rectified_rgb_, map1_, map2_, cv::INTER_NEAREST);
-  cv::remap(given_depth, rectified_depth_, map1_, map2_, cv::INTER_NEAREST);
-}
-
 int Convert(const std::map<int,int>& convert_lists,
              const std::set<int>& leaf_seeds,
              const cv::Mat& filtered_edge, 
@@ -250,33 +243,16 @@ cv::Mat EstimateNormal(cv::Mat K, cv::Mat depth){
   return cosmap;
 }
 
-Segment2DAbstract::Segment2DAbstract(const sensor_msgs::CameraInfo& camera_info, cv::Size compute_size, std::string name)
+Segment2DAbstract::Segment2DAbstract(const std::string& name)
 : name_(name)
 {
 
-  cv::Mat K = cv::Mat::zeros(3,3,CV_32F);
-  for(int i = 0; i<K.rows; i++)
-    for(int j = 0; j < K.cols; j++)
-      K.at<float>(i,j) = camera_info.K.data()[3*i+j];
-  cv::Mat D = cv::Mat::zeros(camera_info.D.size(),1,CV_32F);
-  for (int j = 0; j < D.rows; j++)
-    D.at<float>(j,0) = camera_info.D.at(j);
-
-  cv::Size osize(camera_info.width, camera_info.height);
-  cv::Mat newK = cv::getOptimalNewCameraMatrix(K, D, osize, 1., compute_size);
-  camera_ = MarkerCamera(newK,cv::Mat::zeros(4,1,CV_32F), compute_size);
-
-  cv::initUndistortRectifyMap(K, D, cv::Mat::eye(3,3,CV_32F),
-                              camera_.K_, camera_.image_size_, CV_32F, map1_, map2_);
 }
 
-Segment2DEdgeBased::Segment2DEdgeBased(const sensor_msgs::CameraInfo& camera_info, cv::Size compute_size, std::string name)
-  : Segment2DAbstract(camera_info,compute_size, name)
+Segment2DEdgeBasedAbstract::Segment2DEdgeBasedAbstract(const std::string& name)
+  : Segment2DAbstract(name)
 {
-  cv::Mat src = 255*cv::Mat::ones(compute_size, CV_8UC1);
-  cv::rectangle(src, cv::Point(0,0), cv::Point(compute_size.width,compute_size.height), 0, 50);
-  src.convertTo(vignett32S_, CV_32SC1);
-  src.convertTo(vignett8U_, CV_8UC1);
+
 }
 
 cv::Mat GetDepthMask(const cv::Mat depth) {
@@ -319,26 +295,23 @@ cv::Mat GetValidMask(const cv::Mat depthmask) {
     return edge_mask;
 }
 
-bool Segment2DEdgeBased::Process(const cv::Mat rgb,
-                                 const cv::Mat given_depth,
+bool Segment2DEdgeBasedAbstract::Process(const cv::Mat rgb,
+                                 const cv::Mat depth,
                                  cv::Mat& marker,
                                  cv::Mat& convex_edge,
-                                 cv::Mat& depthmap,
                                  std::map<int,int>& instance2class,
                                  bool verbose){
-  Rectify(rgb, given_depth);
-  depthmap = GetRectifiedDepth();
-  cv::Mat rectified_rgb = GetRectifiedRgb();
-
   if(vignett32S_.empty() ){
-    vignett32S_ = 255*cv::Mat::ones(rectified_rgb.size(), CV_32SC1);
-    vignett8U_  = 255*cv::Mat::ones(rectified_rgb.size(), CV_8UC1);
+    cv::Mat src = 255*cv::Mat::ones(rgb.rows, rgb.cols, CV_8UC1);
+    cv::rectangle(src, cv::Point(0,0), cv::Point(rgb.cols,rgb.rows), 0, 50);
+    src.convertTo(vignett32S_, CV_32SC1);
+    src.convertTo(vignett8U_, CV_8UC1);
   }
 
-  return _Process(rectified_rgb, depthmap, marker, convex_edge, instance2class, verbose);
+  return _Process(rgb, depth, marker, convex_edge, instance2class, verbose);
 }
 
-bool Segment2DEdgeBased::_Process(cv::Mat rgb,
+bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
                         cv::Mat depth,
                         cv::Mat& marker,
                         cv::Mat& convex_edge,
@@ -376,7 +349,7 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
     cv::distanceTransform(divided, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
   }
 
-  cv::Mat seed = cv::Mat::zeros(camera_.image_size_, CV_32SC1);
+  cv::Mat seed = cv::Mat::zeros(depth.rows, depth.cols, CV_32SC1);
   cv::Mat seed_contours;
   std::set<int> leaf_seeds;
   int bg_idx = -1;
@@ -385,7 +358,7 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
     const int method = cv::CHAIN_APPROX_SIMPLE;
 
     int n = 15;
-    double dth = camera_.image_size_.width * 0.006;
+    double dth = depth.cols * 0.006;
     float min_width = 10.;
 
     std::map<int,std::set<int> > seed_childs;
@@ -562,6 +535,31 @@ bool Segment2DEdgeBased::_Process(cv::Mat rgb,
   return true;
 }
 
+
+Segment2DEdgeBased::Segment2DEdgeBased(const std::string& name) 
+: Segment2DEdgeBasedAbstract(name) {
+}
+
+void Segment2DEdgeBased::SetEdge(const cv::Mat outline_edge,
+                                 const cv::Mat convex_edge,
+                                 const cv::Mat surebox_mask) {
+  outline_edge_ = outline_edge;
+  convex_edge_ = convex_edge;
+  surebox_mask_ = surebox_mask;
+}
+void Segment2DEdgeBased::GetEdge(const cv::Mat rgb,
+                                 const cv::Mat depth,
+                                 const cv::Mat validmask,
+                                 cv::Mat& outline_edge,
+                                 cv::Mat& convex_edge,
+                                 cv::Mat& surebox_mask,
+                                 bool verbose){
+  outline_edge = outline_edge_;
+  convex_edge_ = convex_edge;
+  surebox_mask_ = surebox_mask;
+  return;
+}
+
 void Segment2Dthreshold::GetEdge(const cv::Mat rgb,
                                  const cv::Mat depth,
                                  const cv::Mat validmask,
@@ -574,12 +572,10 @@ void Segment2Dthreshold::GetEdge(const cv::Mat rgb,
   return;
 }
 
-Segment2Dthreshold::Segment2Dthreshold(const sensor_msgs::CameraInfo& camerainfo,
-                                       cv::Size compute_size,
-                                       std::string name,
+Segment2Dthreshold::Segment2Dthreshold(const std::string& name,
                                        double lap_depth_threshold
                                       ) :
-Segment2DEdgeBased(camerainfo, compute_size, name),
+Segment2DEdgeBasedAbstract(name),
 lap_depth_threshold_(lap_depth_threshold){
 
 }

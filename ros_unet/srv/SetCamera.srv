@@ -1,0 +1,4 @@
+std_msgs/String cam_id
+sensor_msgs/CameraInfo info
+---
+bool h

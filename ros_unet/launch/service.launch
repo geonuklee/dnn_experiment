@@ -1,0 +1,57 @@
+<launch>
+<arg name="verbose" default="false"/>
+<arg name="generate_points" default="true"/>
+<arg name="cameras" default="[0,]" />
+<arg name="sensor_model" default="helios"/>
+<arg name="voxel_leaf" value="0.05" />
+
+<arg name="weight_file" value="$(find ros_unet)/segment_dataset/dunet.pth"/>
+
+<node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
+    <rosparam subst_value="True">
+      input_ch: 6
+      weight_file: "$(arg weight_file)"
+    </rosparam>
+</node>
+
+<node name="pipeline" pkg="ros_unet" type="obb_server" output="screen" required="true">
+    <rosparam subst_value="True">
+      verbose: $(arg verbose)
+      min_z_floor: -0.83
+      min_points_of_cluster: 5
+      sensor_model: $(arg sensor_model)
+      voxel_leaf: $(arg voxel_leaf)
+      generate_points: $(arg generate_points)
+    </rosparam>
+</node>
+
+<node name="evaluator"  pkg="ros_unet" type="evaluator.py" output="screen" required="true">
+    <remap from="~PredictEdge" to="/unet_server/PredictEdge" />
+    <remap from="~SetCamera"   to="/pipeline/SetCamera" />
+    <remap from="~ComputeObb"  to="/pipeline/ComputeObb" />
+</node>
+
+<node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/unet.rviz" required="true"/>
+<arg name="load_config" default="true"/>
+<arg name="side" default="down"/>
+<group if="$(arg load_config)">
+  <node pkg="rostopic" type="rostopic" name="tilt"
+  args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
+  '{header: {seq: 0, stamp: {secs: 0, nsecs: 0}, frame_id: ''},
+    cam0_tilt: true,
+    cam1_tilt: true}' -r 10" required="true" if="$(eval side=='up')"/>
+  <node pkg="rostopic" type="rostopic" name="tilt"
+  args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
+  '{header: {seq: 0, stamp: {secs: 0, nsecs: 0}, frame_id: ''},
+    cam0_tilt: false,
+    cam1_tilt: false}' -r 10" required="true" if="$(eval side=='down')"/>
+  <node pkg="tf2_ros" type="static_transform_publisher" name="link0"
+  args="0 0 0 0 0 0 1 cam0_rgb_link cam0_rgb_camera_link"/>
+  <node pkg="tf2_ros" type="static_transform_publisher" name="link1"
+  args="0 0 0 0 0 0 1 cam1_rgb_link cam1_rgb_camera_link"/>
+</group>
+<include file="$(find unloader_calib)/launch/cam_tf_publisher.launch" if="$(arg load_config)"/>
+<rosparam command="load" file="$(find ros_unet)/config/calib_info_for_tf.yaml" if="$(arg load_config)"/>
+
+
+</launch>
