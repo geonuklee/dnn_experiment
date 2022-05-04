@@ -17,11 +17,12 @@ find_package(catkin REQUIRED
   pcl_conversions
   pcl_ros
   unloader_msgs
+  visualization_msgs
 )
 
-add_service_files(DIRECTORY FILES ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv)
+add_service_files(DIRECTORY srv FILES ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv)
 catkin_install_python(PROGRAMS scripts/ros_unet_server.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
-generate_messages(DEPENDENCIES sensor_msgs std_msgs geometry_msgs)
+generate_messages(DEPENDENCIES sensor_msgs std_msgs geometry_msgs visualization_msgs)
 
 catkin_package(
 #  INCLUDE_DIRS include

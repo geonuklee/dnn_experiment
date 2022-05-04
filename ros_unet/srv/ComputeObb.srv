@@ -4,4 +4,4 @@ sensor_msgs/Image edge
 geometry_msgs/Pose Twc
 std_msgs/String cam_id
 ---
-bool h
+visualization_msgs/MarkerArray output

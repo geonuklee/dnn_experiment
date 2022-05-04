@@ -29,7 +29,6 @@
 #include <pcl/common/transforms.h>
 
 #include <geometry_msgs/PoseArray.h>
-#include <visualization_msgs/MarkerArray.h>
 #include <unloader_msgs/Object.h>
 #include <unloader_msgs/ObjectArray.h>
 
@@ -157,6 +156,9 @@ public:
   @brief It collects unsynced OBB marker which will be published by ObbProcessVisualizer::Visualize().
   */
   void PutUnsyncedOBB(const visualization_msgs::Marker& unsynced_obb);
+  
+  visualization_msgs::MarkerArray GetUnsyncedOBB();
+
   /**
   @brief It publish collected topics at once to show intermediate process.
   */

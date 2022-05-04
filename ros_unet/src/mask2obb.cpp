@@ -445,27 +445,6 @@ void ObbProcessVisualizer::Visualize() {
     contours_current_.markers.clear();
   }
 
-  {
-    std::set<int> current, missing;
-    for(const auto& marker : obb_current_.markers)
-      current.insert(marker.id);
-    for(const auto& marker : obb_old_.markers){
-      if(!current.count(marker.id))
-        missing.insert(marker.id);
-    }
-    visualization_msgs::MarkerArray topic = obb_current_;
-    topic.markers.reserve(current.size()+missing.size());
-    for(int lid : missing){
-      visualization_msgs::Marker marker;
-      marker.id = lid;
-      marker.action = visualization_msgs::Marker::DELETE;
-      topic.markers.push_back(marker);
-    }
-    pub_unsynced_obb.publish(topic);
-    obb_old_ = obb_current_;
-    obb_current_.markers.clear();
-  }
-
   pose0_array_.header.frame_id = "robot";
   pub_pose0.publish(pose0_array_);
   pose0_array_.poses.clear();
@@ -476,6 +455,30 @@ void ObbProcessVisualizer::Visualize() {
 
   return;
 }
+
+visualization_msgs::MarkerArray ObbProcessVisualizer::GetUnsyncedOBB() {
+  std::set<int> current, missing;
+  for(const auto& marker : obb_current_.markers)
+    current.insert(marker.id);
+  for(const auto& marker : obb_old_.markers){
+    if(!current.count(marker.id))
+      missing.insert(marker.id);
+  }
+  visualization_msgs::MarkerArray output = obb_current_;
+  output.markers.reserve(current.size()+missing.size());
+  for(int lid : missing){
+    visualization_msgs::Marker marker;
+    marker.id = lid;
+    marker.action = visualization_msgs::Marker::DELETE;
+    output.markers.push_back(marker);
+  }
+  obb_old_ = obb_current_;
+  obb_current_.markers.clear();
+
+  pub_unsynced_obb.publish(output);
+  return output;
+}
+
 
 Eigen::Vector3d Cvt2EigenXYZ(const pcl::PointXYZLNormal& pt){
   return Eigen::Vector3d(pt.x, pt.y, pt.z);

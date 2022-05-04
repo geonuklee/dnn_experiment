@@ -68,7 +68,10 @@ def ParseRosbag(output_path, fullfn):
         else:
             rgb_topic = rgbs[cam_id]['rgb_to_depth']
         rgb_messages = get_topic(fullfn, rgb_topic)
-        ros_info = get_topic(fullfn, "/%s/helios2/camera_info"%cam_id)[0]
+        try:
+            ros_info = get_topic(fullfn, "/%s/helios2/camera_info"%cam_id)[0]
+        except:
+            continue
         K = np.array( ros_info.K ,dtype=np.float).reshape((3,3))
         D = np.array( ros_info.D, dtype=np.float).reshape((-1,))
         info = {"K":K, "D":D, "width":ros_info.width, "height":ros_info.height}
@@ -122,12 +125,12 @@ def ParseRosbag(output_path, fullfn):
         label_fn = osp.join(output_path,"%s_%s.png"%(name,cam_id) )
         pick_fn = osp.join(output_path,"%s_%s.pick"%(name,cam_id) )
         pick = {"K":K, "D":D, "newK":newK, "depth":rect_depth, "rgb":rect_rgb,
-                "fullfn":fullfn,}
+                "fullfn":fullfn, "cvgt_fn":osp.abspath(label_fn)}
         cv2.imwrite(label_fn, dst)
-        pickle.dump(pick, open(pick_fn, "wb" ))
         callout = subprocess.call(['kolourpaint', label_fn] )
         cv_gt = cv2.imread(label_fn)[:pick['depth'].shape[0],:pick['depth'].shape[1],:]
-        ParseGroundTruth(cv_gt, pick['rgb'], pick['depth'], pick['newK'], None, pick['fullfn'])
+        #pick['obbs'] = ParseGroundTruth(cv_gt, pick['rgb'], pick['depth'], pick['newK'], None, pick['fullfn'])
+        pickle.dump(pick, open(pick_fn, "wb" ))
     return
 
 def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag):
