@@ -190,16 +190,6 @@ class Evaluator:
             msg += "\n"
 
 
-####################################################################################
-#  TODO Erase all below
-
-class Collector:
-    def __init__(self):
-        self.msg = None
-
-    def callback(self, msg):
-        self.msg = msg
-
 def box2marker(obj_box):
     marker = Marker()
     marker.type = Marker.CUBE
