@@ -5,6 +5,10 @@
 <arg name="sensor_model" default="helios"/>
 <arg name="voxel_leaf" value="0.05" />
 <arg name="filename" default=""/>
+<arg name="rgb" default="aligned/rgb_to_depth/image_raw"/>
+<arg name="depth" default="helios2/depth/image_raw"/>
+<arg name="info" default="helios2/camera_info"/>
+<arg name="rviz_name" default="unet.rviz"/>
 
 <arg name="weight_file" value="$(find ros_unet)/segment_dataset/dunet.pth"/>
 
@@ -39,14 +43,14 @@
     <remap from="~SetCamera"   to="/pipeline/SetCamera" />
     <remap from="~ComputeObb"  to="/pipeline/ComputeObb" />
 
-    <remap from="~cam0/rgb"    to="/cam0/aligned/rgb_to_depth/image_raw" />
-    <remap from="~cam0/depth"  to="/cam0/helios2/depth/image_raw" />
-    <remap from="~cam0/info"   to="/cam0/helios2/camera_info" />
+    <remap from="~cam0/rgb"    to="/cam0/$(arg rgb)" />
+    <remap from="~cam0/depth"  to="/cam0/$(arg depth)" />
+    <remap from="~cam0/info"   to="/cam0/$(arg info)" />
 
 </node>
 
 
-<node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/unet.rviz" required="true"/>
+<node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>
 <arg name="load_config" default="true"/>
 <arg name="side" default="down"/>
 <group if="$(arg load_config)">

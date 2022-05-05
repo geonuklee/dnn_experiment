@@ -523,7 +523,7 @@ int GetBoxInlier(const g2o::SE3Quat& Twl, const Eigen::Vector3d& whd,
   for(const pcl::PointXYZLNormal& pt : *cloud){
     Eigen::Vector4d x1(pt.x,pt.y,pt.z,1.);
     Eigen::Vector3d pt_norm(pt.normal_x,pt.normal_y,pt.normal_z);
-    assert(pt_norm.norm() < 1e-5);
+    // assert(pt_norm.norm() < 1e-5);
     for(size_t i=0; i< planes.size(); i++){
       const auto& plane = planes.at(i);
       // Consider poor depth resolution for skewed plane.
@@ -976,10 +976,10 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
     n_inlier += GetBoxInlier(Twl, whd, boundary);
     N += boundary->size();
     float ratio = (float) n_inlier / (float) N;
-    if(ratio < 0.8){
-      ROS_INFO("Not enough inlier xyzl for instance %d", obj->instance_id);
-      return false;
-    }
+    //if(ratio < 0.8){
+    //  ROS_INFO("Not enough inlier xyzl for instance %d", obj->instance_id);
+    //  return false;
+    //}
 
     obj->center_pose.position.x = Twl.translation().x();
     obj->center_pose.position.y = Twl.translation().y();

@@ -83,7 +83,7 @@ public:
 
     cv::Mat instance_marker;
     std::map<int,int> ins2cls;
-    bool verbose = false;
+    bool verbose = true;
     segment2d->Process(rgb, depth, instance_marker, convex_edge, ins2cls, verbose);
 
     //std::cout << "Compute OBB" << std::endl;

@@ -1,46 +1,16 @@
 <launch>
-<arg name="filename" default="$(find ros_unet)/rosbag.bag"/>
-<arg name="weight_file" value="$(find ros_unet)/segment_dataset/dunet.pth"/>
+  <include file="$(find ros_unet)/launch/ex.launch">
+    <arg name="rgb" default="k4a/rgb_to_depth/image_raw"/>
+    <arg name="depth" default="k4a/depth/image_raw"/>
+    <arg name="info" default="k4a/depth/camera_info"/>
+    <arg name="rviz_name" defalut="k4a.rviz"/>
+  </include>
 
-<arg name="rgb"   value="k4a/rgb/image_raw" />
-<arg name="depth" value="k4a/depth_to_rgb/image_raw" />
-<arg name="info"   value="k4a/rgb/camera_info" />
-
-<arg name="verbose" default="false"/>
-<arg name="generate_points" default="true"/>
-<arg name="cameras" default="[0,1,2,3]" />
-<arg name="sensor_model" default="helios"/>
-<arg name="voxel_leaf" value="0.05" />
-
-<node name="rosbag" pkg="rosbag" type="play"
-    args="-r 1. --loop $(arg filename)" required="true" unless="$(eval filename=='')"/>
-
-<node name="unet_node" pkg="ros_unet" type="ros_unet.py" output="screen" required="true">
-    <remap from="~cam0/rgb"          to="/cam0/$(arg rgb)" />
-    <remap from="~cam0/depth"        to="/cam0/$(arg depth)" />
-    <remap from="~cam0/info"         to="/cam0/$(arg info)" />
-
-    <remap from="~cam1/rgb"          to="/cam1/$(arg rgb)" />
-    <remap from="~cam1/depth"        to="/cam1/$(arg depth)" />
-    <remap from="~cam1/info"         to="/cam1/$(arg info)" />
-
-    <remap from="~cam2/rgb"          to="/cam2/$(arg rgb)" />
-    <remap from="~cam2/depth"        to="/cam2/$(arg depth)" />
-    <remap from="~cam2/info"         to="/cam2/$(arg info)" />
-
-    <remap from="~cam3/rgb"          to="/cam3/$(arg rgb)" />
-    <remap from="~cam3/depth"        to="/cam3/$(arg depth)" />
-    <remap from="~cam3/info"         to="/cam3/$(arg info)" />
-
-    <rosparam subst_value="True">
-      input_ch: 3
-      cameras: $(arg cameras)
-      weight_file: "$(arg weight_file)"
-    </rosparam>
-</node>
-
-<node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/k4a.rviz" required="true"/>
-<!--node name="rqt_gui" pkg="rqt_gui" type="rqt_gui" required="true"/-->
-
-
+  <group ns="cam0">
+    <include file="$(find ros_unet)/launch/azure_driver.launch">
+      <arg name="sensor_sn" default="000350601812"/>
+      <arg name="namespace" default="cam0" />
+      <arg name="depth_enabled" default="true"/>
+    </include>
+  </group>
 </launch>

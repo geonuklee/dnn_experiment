@@ -51,13 +51,16 @@ def convert2pose(Twc):
     return pose
 
 def rectify(rgb_msg, depth_msg, mx, my, bridge):
-    rgb = np.frombuffer(rgb_msg.data, dtype=np.uint8).reshape(rgb_msg.height, rgb_msg.width, 3)
-    depth = np.frombuffer(depth_msg.data, dtype=np.float32).reshape(depth_msg.height, depth_msg.width)
+    #rgb = np.frombuffer(rgb_msg.data, dtype=np.uint8).reshape(rgb_msg.height, rgb_msg.width, 3)
+    #depth = np.frombuffer(depth_msg.data, dtype=np.float32).reshape(depth_msg.height, depth_msg.width)
+    rgb = bridge.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
+    depth = bridge.imgmsg_to_cv2(depth_msg, desired_encoding='32FC1')
+
     rgb = cv2.remap(rgb,mx,my,cv2.INTER_NEAREST)
     depth = cv2.remap(depth,mx,my,cv2.INTER_NEAREST)
 
-    rect_rgb_msg = bridge.cv2_to_imgmsg(rgb,encoding=rgb_msg.encoding)
-    rect_depth_msg = bridge.cv2_to_imgmsg(depth,encoding=depth_msg.encoding)
+    rect_rgb_msg = bridge.cv2_to_imgmsg(rgb,encoding='bgr8')
+    rect_depth_msg = bridge.cv2_to_imgmsg(depth,encoding='32FC1')
     return rect_rgb_msg, rect_depth_msg
 
 def get_Twc(cam_id):

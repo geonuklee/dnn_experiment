@@ -331,7 +331,6 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     cv::morphologyEx(sureground, sureground, cv::MORPH_CLOSE, element5);
 
     cv::bitwise_and(validmask, sureground,  validmask);
-    //cv::imshow("sureground", sureground*255);
   }
 
   if(! vignett32S_.empty() )
@@ -510,12 +509,12 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
     cv::imshow(name_+"seed", GetColoredLabel(seed) );
     cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
-    //cv::imshow(name_+"final_marker", GetColoredLabel(marker) );
+    cv::imshow(name_+"final_marker", GetColoredLabel(marker) );
     // cv::imshow(name_+"groove", 255*groove );
     //cv::flip(dst,dst,0);
     //cv::flip(dst,dst,1);
     //cv::imshow(name_+"dst", dst);
-    //cv::imshow(name_+"outline_edge", 255*outline_edge);
+    cv::imshow(name_+"outline_edge", 255*outline_edge);
     cv::waitKey(1);
 
     cv::Mat norm_depth, norm_dist;
