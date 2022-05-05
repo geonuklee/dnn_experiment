@@ -26,7 +26,7 @@
     </rosparam>
 </node>
 
-<node name="rosbag" pkg="rosbag" type="play" args="-r 10 --loop $(arg filename)" required="true" unless="$(eval filename=='')"/>
+<node name="rosbag" pkg="rosbag" type="play" args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')"/>
 
 <!--node name="evaluator"  pkg="ros_unet" type="ros_eval.py" output="screen" required="true">
     <remap from="~PredictEdge" to="/unet_server/PredictEdge" />
@@ -48,7 +48,7 @@
 
 <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/unet.rviz" required="true"/>
 <arg name="load_config" default="true"/>
-<arg name="side" default="up"/>
+<arg name="side" default="down"/>
 <group if="$(arg load_config)">
   <node pkg="rostopic" type="rostopic" name="tilt"
   args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 

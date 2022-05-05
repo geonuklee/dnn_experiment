@@ -67,28 +67,20 @@ def get_Twc(cam_id):
 
 class Sub:
     def __init__(self, rgb, depth, info):
-        self.sub_depth = rospy.Subscriber(depth, Image, self.cb_depth, queue_size=1)
-        self.sub_rgb   = rospy.Subscriber(rgb, Image, self.cb_rgb, queue_size=1)
-        self.sub_info  = rospy.Subscriber(info, CameraInfo, self.cb_info, queue_size=1)
+        self.sub_depth = rospy.Subscriber(depth, Image, self.cb_depth, queue_size=30)
+        self.sub_rgb   = rospy.Subscriber(rgb, Image, self.cb_rgb, queue_size=30)
+        self.sub_info  = rospy.Subscriber(info, CameraInfo, self.cb_info, queue_size=30)
         self.depth = None
         self.rgb = None
         self.info = None
 
     def cb_depth(self, msg):
-        if self.depth is not None:
-            return
         self.depth = msg
-        #self.depth = ros_numpy.numpify(topic)
 
     def cb_rgb(self, msg):
-        if self.rgb is not None:
-            return
         self.rgb = msg
-        #self.rgb = ros_numpy.numpify(topic)[:,:,:3]
 
     def cb_info(self, msg):
-        if self.info is not None:
-            return
         self.info = msg
 
 if __name__=="__main__":
@@ -108,7 +100,7 @@ if __name__=="__main__":
     rect_info_msgs = {}
     remap_maps = {}
 
-    #rate = rospy.Rate(hz=30)
+    rate = rospy.Rate(hz=1)
     while not rospy.is_shutdown():
         if sub.info is None:
             continue
@@ -129,7 +121,8 @@ if __name__=="__main__":
         obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
                 Twc, std_msgs.msg.String(cam_id))
         t1 = time.time()
-        print("etime = ", t1-t0)
+        #print("etime = ", t1-t0)
+        rate.sleep()
 
         #cvrgb = np.frombuffer(rect_rgb_msg.data, dtype=np.uint8).reshape(rect_rgb_msg.height, rect_rgb_msg.width, 3)
         #cvedge = np.frombuffer(edge_resp.mask.data, dtype=np.uint8).reshape(edge_resp.mask.height, edge_resp.mask.width, 2)

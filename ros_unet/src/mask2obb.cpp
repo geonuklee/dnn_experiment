@@ -498,6 +498,50 @@ double GetError(const g2o::SE3Quat& T1w,
   return err;
 }
 
+int GetBoxInlier(const g2o::SE3Quat& Twl, const Eigen::Vector3d& whd,
+                 pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud
+                 ){
+  const g2o::SE3Quat Tlw = Twl.inverse();
+  const Eigen::Vector3d cp = Twl.translation();
+  Eigen::Matrix3d Rlw = Tlw.rotation().matrix();
+  EigenVector<Eigen::Vector4d> planes;
+  planes.reserve(6);
+  for(int i=0; i<3; i++){
+    for(int k = 0; k <2; k++){
+      Eigen::Vector3d nvec = Rlw.row(i);
+      if(k > 0)
+        nvec = -nvec;
+      Eigen::Vector3d x = cp + 0.5 * whd[i] * nvec;
+      Eigen::Vector4d plane;
+      plane.head<3>() = nvec;
+      plane[3] = - nvec.dot(x);
+      planes.push_back(plane);
+    }
+  }
+
+  int n_inlier = 0;
+  for(const pcl::PointXYZLNormal& pt : *cloud){
+    Eigen::Vector4d x1(pt.x,pt.y,pt.z,1.);
+    Eigen::Vector3d pt_norm(pt.normal_x,pt.normal_y,pt.normal_z);
+    assert(pt_norm.norm() < 1e-5);
+    for(size_t i=0; i< planes.size(); i++){
+      const auto& plane = planes.at(i);
+      // Consider poor depth resolution for skewed plane.
+      double max_dist_err = (i==0) ? 0.01 : 0.02;
+      double min_cos      = (i==0) ? 0.9 : 0.9;
+      double dist_err = std::abs( plane.dot(x1) ); 
+      if(dist_err > max_dist_err) // TODO parameterize hard coded param
+        continue;
+      double cos = pt_norm.dot(plane.head<3>() );
+      if(cos < min_cos)
+        continue;
+      n_inlier++;
+      break;
+    }
+  }
+  return n_inlier;
+}
+
 std_msgs::ColorRGBA GetColor(int id){
   const auto& color = colors.at(id%colors.size());
   std_msgs::ColorRGBA rgba;
@@ -692,10 +736,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       for(int i =0; i <4; i++)
         plane[i] = coefficients->values.at(i);
 
-      // Normalize normal vector.
-      const float norm = plane.head<3>().norm();
-      for(int i =0; i <4; i++)
-        plane[i] /= norm;
+      assert( std::abs( plane.head<3>().norm()-1.) < 1e-5 );
 
       // If normal vector is inverted, correct it.
       Eigen::Vector4f a(t_wc[0],t_wc[1],t_wc[2],1.);
@@ -929,6 +970,17 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
     // Twl : {l} coordinate is the final local coordinate of OBB,
     // which has aligned axis on OBB and origin is positioned at center of OBB.
     Twl.setRotation(g2o::Quaternion(Rwl));
+
+    int n_inlier = GetBoxInlier(Twl, whd, cloud);
+    int N = cloud->size();
+    n_inlier += GetBoxInlier(Twl, whd, boundary);
+    N += boundary->size();
+    float ratio = (float) n_inlier / (float) N;
+    if(ratio < 0.8){
+      ROS_INFO("Not enough inlier xyzl for instance %d", obj->instance_id);
+      return false;
+    }
+
     obj->center_pose.position.x = Twl.translation().x();
     obj->center_pose.position.y = Twl.translation().y();
     obj->center_pose.position.z = Twl.translation().z();
