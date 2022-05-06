@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.4...3.18)
 project(ros_unet)
 set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_EXPORT_COMPILE_COMMANDS On)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 #add_compile_options(-std=c++11)
@@ -22,7 +23,7 @@ find_package(catkin REQUIRED
 
 add_service_files(DIRECTORY srv FILES ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv)
 catkin_install_python(PROGRAMS scripts/ros_unet_server.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
-generate_messages(DEPENDENCIES sensor_msgs std_msgs geometry_msgs visualization_msgs)
+generate_messages(DEPENDENCIES sensor_msgs std_msgs geometry_msgs visualization_msgs ros_unet)
 
 catkin_package(
 #  INCLUDE_DIRS include
