@@ -319,13 +319,48 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
     clouds[it_cloud.first] = filtered_cloud;
   }
 
-  for(auto it_cloud : boundary_clouds){
-    if(erase_list.count(it_cloud.first) )
+  float max_sqr_distance = 2.*param.voxel_leaf;
+  max_sqr_distance *= max_sqr_distance;
+
+  for(auto it_boundary : boundary_clouds){
+    if(erase_list.count(it_boundary.first) )
       continue;
+    if(!clouds.count(it_boundary.first)){
+      erase_list.insert(it_boundary.first);
+      continue;
+    }
     pcl::VoxelGrid<pcl::PointXYZLNormal> sor;
-    sor.setInputCloud(it_cloud.second);
+    sor.setInputCloud(it_boundary.second);
     sor.setLeafSize (param.voxel_leaf, param.voxel_leaf, param.voxel_leaf);
-    sor.filter(*it_cloud.second);
+    sor.filter(*it_boundary.second);
+
+    pcl::search::KdTree<pcl::PointXYZLNormal>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZLNormal>);
+    pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud = clouds.at(it_boundary.first);
+    tree->setInputCloud(cloud);
+    pcl::PointIndices::Ptr indices(new pcl::PointIndices);
+    indices->indices.reserve(it_boundary.second->size());
+    for(int i=0; i < it_boundary.second->size(); i++){
+      const auto& pt = it_boundary.second->at(i);
+      std::vector<int> kindices;
+      std::vector<float> kdists;
+      tree->nearestKSearch(pt, 1, kindices, kdists);
+      if(kindices.empty())
+        continue;
+      if(kdists.at(0) < max_sqr_distance)
+        indices->indices.push_back(i);
+    }
+
+    pcl::PointCloud<pcl::PointXYZLNormal>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZLNormal>);
+    pcl::ExtractIndices<pcl::PointXYZLNormal> extract;
+    extract.setInputCloud(it_boundary.second);
+    extract.setIndices(indices);
+    extract.setNegative(false);
+    extract.filter(*filtered_cloud);
+    if(filtered_cloud->empty()){
+      erase_list.insert(it_boundary.first);
+      continue;
+    }
+    boundary_clouds[it_boundary.first] = filtered_cloud;
   }
 
   // Remove instance without enough number of points at cluster output.
