@@ -3,5 +3,7 @@ sensor_msgs/Image rgb
 sensor_msgs/Image edge
 geometry_msgs/Pose Twc
 std_msgs/String cam_id
+float32 fx
+float32 fy
 ---
 visualization_msgs/MarkerArray output

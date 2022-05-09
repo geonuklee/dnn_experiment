@@ -63,7 +63,29 @@ public:
     pub_clouds_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/clouds",1);
     pub_boundary_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/boundary",1);
     pub_vis_mask_[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/vis_mask",1);
+    pub_expanded_outline_[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/expanded_outline",1);
+    pub_vis_mask_[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/vis_mask",1);
     return true;
+  }
+
+  cv::Mat ExpandOutline(const cv::Mat depth, const cv::Mat outline, float fx, float fy) const {
+    const float radius = 0.02; // exapnd range [meter]
+    const float f_radius = std::max(fx,fy) * radius;
+    cv::Mat expanded_outline = cv::Mat::zeros(depth.rows, depth.cols, CV_8UC1);
+    cv::Mat dist_transform;
+    cv::distanceTransform(~outline, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
+    //std::cout << "input outline shape = " << outline.rows << "," << outline.cols << std::endl;
+    for(int r = 0; r < depth.rows; r++){
+      for(int c = 0; c < depth.cols; c++){
+        const float& d = depth.at<float>(r,c);
+        if(d == 0)
+          continue;
+        int dr = f_radius/d;
+        if( dist_transform.at<float>(r,c) < dr )
+          expanded_outline.at<unsigned char>(r,c) = 1;
+      }
+    }
+    return expanded_outline;
   }
 
   bool ComputeObb(ros_unet::ComputeObb::Request  &req,
@@ -79,11 +101,16 @@ public:
 
     cv::Mat depth, rgb, convex_edge, outline_edge, surebox;
     GetCvMat(req, depth, rgb, convex_edge, outline_edge, surebox);
+#if 1
+    cv::Mat exp_outline = ExpandOutline(depth, outline_edge, req.fx, req.fy);
+    segment2d->SetEdge(exp_outline, convex_edge, surebox);
+#else
     segment2d->SetEdge(outline_edge, convex_edge, surebox);
+#endif
 
     cv::Mat instance_marker;
     std::map<int,int> ins2cls;
-    bool verbose = true;
+    bool verbose = false;
     segment2d->Process(rgb, depth, instance_marker, convex_edge, ins2cls, verbose);
 
     //std::cout << "Compute OBB" << std::endl;
@@ -110,6 +137,23 @@ public:
     obb_process_visualizer->Visualize();
 
     // TODO Future works : matching, publixh xyzrgb
+    if(pub_expanded_outline_.at(cam_id).getNumSubscribers() > 0) {
+      cv::Mat dst = rgb.clone();
+      for(int r=0; r<depth.rows; r++)
+        for(int c=0; c<depth.cols; c++)
+          if(outline_edge.at<unsigned char>(r,c)){
+            dst.at<cv::Vec3b>(r,c)[2]=255;
+            dst.at<cv::Vec3b>(r,c)[0]=dst.at<cv::Vec3b>(r,c)[1]=0;
+          }
+          else if(exp_outline.at<unsigned char>(r,c)){
+            dst.at<cv::Vec3b>(r,c)[0]=255;
+            dst.at<cv::Vec3b>(r,c)[1]=dst.at<cv::Vec3b>(r,c)[2]=0;
+          }
+      cv_bridge::CvImage msg;
+      msg.encoding = sensor_msgs::image_encodings::TYPE_8UC3;
+      msg.image    = dst;
+      pub_expanded_outline_.at(cam_id).publish(msg.toImageMsg());
+    }
     if(pub_vis_mask_.at(cam_id).getNumSubscribers() > 0) {
       cv::Mat dst = Overlap(rgb, instance_marker);
       cv_bridge::CvImage msg;
@@ -176,6 +220,7 @@ private:
   std::map<std::string, std::shared_ptr<ObbEstimator> > obb_estimator_;
   std::map<std::string, std::shared_ptr<ObbProcessVisualizer> > obb_process_visualizer_;
   std::map<std::string, ros::Publisher> pub_clouds_, pub_boundary_, pub_vis_mask_;
+  std::map<std::string, ros::Publisher> pub_expanded_outline_;
   ros::Publisher pub_xyzrgb; // TODO <<- 이건 각 카메라 별이 아니라, 전체 카메라 묶어서.
   cv::Mat mx_, my_;
 };
@@ -200,7 +245,7 @@ int main(int argc, char **argv) {
     = nh.advertiseService("ClearCamera", &BoxDetector::ClearCamera, &box_detector);
 
 
-  ros::ServiceServer s2 
+  ros::ServiceServer s2
     = nh.advertiseService("ComputeObb", &BoxDetector::ComputeObb, &box_detector);
 
   ros::spin();

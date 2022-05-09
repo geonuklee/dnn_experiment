@@ -72,7 +72,7 @@ struct ObbParam{
   /**
   @brief The minimum inner product between noraml direction of front plane and depth direction.
   */
-  double min_cos_dir = std::cos( 45. /180. * M_PI);
+  double min_cos_dir = std::cos( 80. /180. * M_PI);
 
   /**
   */

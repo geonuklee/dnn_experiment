@@ -122,7 +122,7 @@ if __name__=="__main__":
         rect_rgb_msg, rect_depth_msg = rectify(sub.rgb, sub.depth, mx, my, bridge)
         edge_resp = predict_edge(rect_rgb_msg, rect_depth_msg, fx, fy)
         obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
-                Twc, std_msgs.msg.String(cam_id))
+                Twc, std_msgs.msg.String(cam_id), fx, fy)
         t1 = time.time()
         #print("etime = ", t1-t0)
         rate.sleep()

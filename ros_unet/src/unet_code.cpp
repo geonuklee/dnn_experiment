@@ -348,7 +348,8 @@ int GetFilteredDepth(const float* depth,
     MEDIAN,
     MEAN_EXCLUDE_EXTREM
   };
-  SAMPLE_METHOD sample_method = MEAN_EXCLUDE_EXTREM;
+  //SAMPLE_METHOD sample_method = sample_width > 4 ? MEAN_EXCLUDE_EXTREM : MEAN;
+  SAMPLE_METHOD sample_method = MEAN;
   auto GetValue = [&sample_method](std::vector<float>& values){
     if(sample_method == MEAN){
       // Mean - 실험결과 mean 이 더 정확했음.

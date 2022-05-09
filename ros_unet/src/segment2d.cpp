@@ -356,8 +356,9 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     const int mode   = cv::RETR_TREE; // RETR_CCOMP -> RETR_EXTERNAL
     const int method = cv::CHAIN_APPROX_SIMPLE;
 
-    int n = 15;
     double dth = depth.cols * 0.006;
+    int n = 20./dth; // max level should be limitted.
+    //int n = 1;
     float min_width = 10.;
 
     std::map<int,std::set<int> > seed_childs;
