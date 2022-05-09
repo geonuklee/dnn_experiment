@@ -3,7 +3,7 @@
 <arg name="generate_points" default="true"/>
 <arg name="cameras" default="[0,]" />
 <arg name="sensor_model" default="helios"/>
-<arg name="voxel_leaf" value="0.05" />
+<arg name="voxel_leaf" value="0.01" />
 <arg name="filename" default=""/>
 <arg name="rgb" default="aligned/rgb_to_depth/image_raw"/>
 <arg name="depth" default="helios2/depth/image_raw"/>

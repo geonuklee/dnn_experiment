@@ -470,7 +470,7 @@ int FindEdge(const unsigned char *arr_in, const std::vector<long int>& shape,
 
 void GetGradient(const float* filtered_depth,
                  const std::vector<long int>& shape,
-                 int sample_offset,
+                 float sample_offset,
                  float fx,
                  float fy,
                  float* grad,
@@ -480,8 +480,8 @@ void GetGradient(const float* filtered_depth,
   const int cols = shape[1];
   const int size = rows*cols;
 
-  int boader = sample_offset;
-  float doffset = 2*sample_offset;
+  int boader = 10;
+  //float doffset = 2*sample_offset;
   memset((void*)grad, 0, 2*size*sizeof(float));
   memset((void*)valid, 0, size*sizeof(unsigned char));
 
@@ -492,10 +492,13 @@ void GetGradient(const float* filtered_depth,
       int idx0 = 2*vidx0;
 
       const float& dcp = filtered_depth[idx0];
-      int c0 = cc-sample_offset;
-      int r0 = rc-sample_offset;
-      int c1 = cc+sample_offset;
-      int r1 = rc+sample_offset;
+      const int pixel_offset = std::max<int>(1, (int) (fx*sample_offset/dcp) );
+      int c0 = cc-pixel_offset;
+      int r0 = rc-pixel_offset;
+      int c1 = cc+pixel_offset;
+      int r1 = rc+pixel_offset;
+      if(c0 < 0 ||  r0 < 0 || c1 >= cols || r1 >= rows)
+        continue;
 
       const float& dx0 = filtered_depth[2*(rc*cols+c0)];
       const float& dx1 = filtered_depth[2*(rc*cols+c1)];
@@ -513,8 +516,10 @@ void GetGradient(const float* filtered_depth,
       else if(dy1 == 0.f)
         continue;
 
-      float dx = doffset * dcp / fx;
-      float dy = doffset * dcp / fy;
+      float du = c1 - c0;
+      float dv = r1 - r0;
+      float dx = du * dcp / fx;
+      float dy = dv * dcp / fy;
 
       valid[vidx0] = true;
       grad[idx0] = (dx1 - dx0) / dx; // gx
@@ -656,7 +661,7 @@ py::array_t<unsigned char> PyFindEdge(py::array_t<unsigned char> inputmask) {
 }
 
 py::tuple PyGetGradient(py::array_t<float> filtered_depth,
-                                 int sample_offset,
+                                 float sample_offset,
                                  float fx,
                                  float fy
                                  ) {

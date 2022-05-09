@@ -123,8 +123,8 @@ class SplitAdapter:
 
 def ConvertDepth2input(depth, fx, fy):
     dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.1)
-    fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
-    grad, valid = cpp_ext.GetGradient(fd, sample_offset=7,fx=fx,fy=fy) # TODO sample offset depends on pyhsical distance.
+    fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=9)
+    grad, valid = cpp_ext.GetGradient(fd, sample_offset=0.012, fx=fx,fy=fy)
     hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
 
     #if np.isnan(fd.sum()):
@@ -137,7 +137,7 @@ def ConvertDepth2input(depth, fx, fy):
     #    print("hessian has nan")
     #    import pdb; pdb.set_trace()
 
-    threshold_curvature = 20.
+    threshold_curvature = 15.
     concave_edge = hessian < -threshold_curvature
     outline = np.logical_or(concave_edge, dd_edge > 0).astype(np.uint8)
     convex_edge = (hessian > 50).astype(np.uint8)

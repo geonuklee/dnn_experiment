@@ -23,7 +23,7 @@ def get_rectification(camera_info):
     D = np.array( camera_info.D, dtype=np.float).reshape((-1,))
 
     osize = (camera_info.width,camera_info.height)
-    newK,_ = cv2.getOptimalNewCameraMatrix(K,D,osize,1)
+    newK,_ = cv2.getOptimalNewCameraMatrix(K,D,osize,0)
     mx,my = cv2.initUndistortRectifyMap(K,D,None,newK,osize,cv2.CV_32F)
 
     new_info = CameraInfo()
@@ -120,7 +120,7 @@ if __name__=="__main__":
 
         t0 = time.time()
         rect_rgb_msg, rect_depth_msg = rectify(sub.rgb, sub.depth, mx, my, bridge)
-        edge_resp = predict_edge(rect_depth_msg, fx, fy)
+        edge_resp = predict_edge(rect_rgb_msg, rect_depth_msg, fx, fy)
         obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
                 Twc, std_msgs.msg.String(cam_id))
         t1 = time.time()

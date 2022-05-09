@@ -890,8 +890,6 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       }
 
 
-      // TODO Normal을 고려한 outlier 제거 추가.
-
       // If points on front plane are too less considering size of it,
       //  exclude it from candidates because something is wrong.
       double area = (max_x1[0]-min_x1[0])*(max_x1[1]-min_x1[1]);
