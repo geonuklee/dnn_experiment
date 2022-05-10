@@ -27,7 +27,7 @@ def get_topic(filename, topic):
 def get_base(fullfn):
     return osp.splitext(osp.basename(fullfn))[0]
 
-def ParseRosbag(output_path, fullfn):
+def ParseRosbag(output_path, fullfn, max_z):
     print('Check file %s ...'%fullfn)
     fn = osp.basename(fullfn)
     command  = "rosbag info %s"%fullfn
@@ -56,10 +56,10 @@ def ParseRosbag(output_path, fullfn):
             continue
         cams.add(cam_id)
         depth_messages = get_topic(fullfn, topic)
-        #depth0 = bridge.imgmsg_to_cv2(depth_messages[0], desired_encoding="32FC1")
-        depth0 = depth_messages[0]
-        depth0 = np.frombuffer(depth0.data, dtype=np.float32).reshape(depth0.height, depth0.width)
-        if depth0.shape[1] < 600: # Too small image
+        #depth = bridge.imgmsg_to_cv2(depth_messages[0], desired_encoding="32FC1")
+        depth = depth_messages[0]
+        depth = np.frombuffer(depth.data, dtype=np.float32).reshape(depth.height, depth.width)
+        if depth.shape[1] < 600: # Too small image
             continue
         if camera_type == "k4a": # Too poor
             continue
@@ -100,23 +100,23 @@ def ParseRosbag(output_path, fullfn):
         if b_ignore_thisfile:
             continue
         # For each depth groups..
-        nr,nc = depth0.shape[0], depth0.shape[1]
+        nr,nc = depth.shape[0], depth.shape[1]
         minirgb  = cv2.resize(orgb, (nc/2,nr/2))
         gray = (0.8 * cv2.cvtColor(orgb,cv2.COLOR_BGR2GRAY)).astype(np.uint8)
         osize = (nc,nr) # width, height
        
-        newK,_ = cv2.getOptimalNewCameraMatrix(K,D,osize,1)
+        newK,_ = cv2.getOptimalNewCameraMatrix(K,D,osize,0)
         mx,my = cv2.initUndistortRectifyMap(K,D,None,newK,osize,cv2.CV_32F)
         dst = np.stack((gray,gray,gray),axis=2)
         dst = cv2.remap(dst,mx,my,cv2.INTER_NEAREST)
 
-        depth0 = get_meterdepth(depth0)
-        rect_depth = cv2.remap(depth0, mx,my,cv2.INTER_NEAREST)
+        depth = get_meterdepth(depth)
+        rect_depth = cv2.remap(depth, mx,my,cv2.INTER_NEAREST)
         dst[rect_depth<0.3,:2] = 100
         rect_rgb = cv2.remap(orgb,mx,my,cv2.INTER_NEAREST)
         #input_stack, grad, hessian, outline, convex_edge\
-        #    = ConvertDepth2input(depth0,fx=newK[0,0],fy=newK[1,1])
-        #dst = 100*np.ones((depth0.shape[0], depth0.shape[1]+minirgb.shape[1],3), np.uint8)
+        #    = ConvertDepth2input(depth,fx=newK[0,0],fy=newK[1,1])
+        #dst = 100*np.ones((depth.shape[0], depth.shape[1]+minirgb.shape[1],3), np.uint8)
         #dst[:nr,:nc,0] = 100*outline
         #dst[:nr,:nc,1] = 100*convex_edge
         #dst[:minirgb.shape[0],-minirgb.shape[1]:] = minirgb[:,:]
@@ -129,7 +129,10 @@ def ParseRosbag(output_path, fullfn):
         cv2.imwrite(label_fn, dst)
         callout = subprocess.call(['kolourpaint', label_fn] )
         cv_gt = cv2.imread(label_fn)[:pick['depth'].shape[0],:pick['depth'].shape[1],:]
-        #pick['obbs'] = ParseGroundTruth(cv_gt, pick['rgb'], pick['depth'], pick['newK'], None, pick['fullfn'])
+
+        depth = pick['depth'].copy()
+        depth[depth > max_z] = 0.
+        pick['obbs'] = ParseGroundTruth(cv_gt, pick['rgb'], depth, pick['newK'], None, pick['fullfn'])
         pickle.dump(pick, open(pick_fn, "wb" ))
     return
 
@@ -272,22 +275,12 @@ def make_dataset_dir(name='obb_dataset'):
             exist_files.add(get_base(rosbagfn))
     return output_path, exist_files
 
-if __name__ == '__main__':
-    #if False:
-    #    ParseRosbag('/home/geo/dataset/unloading/stc2021/stc_2021-09-02-10-28-32.bag')
-    #else:
-    #    # Step 2
-    #    f = open('tmp1.pick','rb')
-    #    pick = pickle.load(f)
-    #    f.close()
-    #    cv_gt = cv2.imread("tmp1.png")[:pick['depth'].shape[0],:pick['depth'].shape[1],:]
-    #    obbs = ParseGroundTruth(cv_gt, pick['rgb'], pick['depth'], pick['newK'], None, pick['fullfn'])
-    #    pick['obbs'] = obbs
-    #    pickle.dump(pick, open('tmp1.pick','wb'))
-
+def rosbag2pick(max_z):
     output_path, exist_labels = make_dataset_dir(name='obb_dataset')
-    rosbag_path = '/home/geo/dataset/unloading/**/*.bag' # remove hardcoding .. 
+    #rosbag_path = '/home/geo/dataset/unloading/**/*.bag' # remove hardcoding .. 
+    rosbag_path = '/home/geo/catkin_ws/src/ros_unet/rosbag/**/*.bag'
     rosbagfiles = glob2.glob(rosbag_path,recursive=True)
+
     dsize = (1280,960)
     script_fn = osp.abspath(__file__)
     pkg_dir = str('/').join(script_fn.split('/')[:-3])
@@ -295,5 +288,21 @@ if __name__ == '__main__':
     for fullfn in rosbagfiles:
         if get_base(fullfn) in exist_labels:
             continue
-        ParseRosbag(output_path, fullfn)
+        ParseRosbag(output_path, fullfn, max_z)
 
+if __name__ == '__main__':
+    max_z=2.
+    if False:
+        # Overwrite pick['obbs'] for specific file.
+        fn = 'obb_dataset/helios_2022-05-06-20-26-37_cam0.%s' #.pick'
+        f = open(fn%'pick','rb')
+        pick = pickle.load(f)
+        f.close()
+        depth = pick['depth'].copy()
+        depth[depth > max_z] = 0.
+        cv_gt = cv2.imread(fn%'png')[:pick['depth'].shape[0],:pick['depth'].shape[1],:]
+        obbs = ParseGroundTruth(cv_gt, pick['rgb'], depth, pick['newK'], None, pick['fullfn'])
+        pick['obbs'] = obbs
+        pickle.dump(pick, open(fn%'pick','wb'))
+    else:
+        rosbag2pick(max_z)

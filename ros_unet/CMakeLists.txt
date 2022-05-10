@@ -21,8 +21,12 @@ find_package(catkin REQUIRED
   visualization_msgs
 )
 
-add_service_files(DIRECTORY srv FILES ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv)
-catkin_install_python(PROGRAMS scripts/ros_unet_server.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+add_service_files(DIRECTORY srv FILES
+  ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv ComputeFloor.srv)
+catkin_install_python(PROGRAMS
+    scripts/ros_unet_server.py
+    scripts/ros_client.py
+    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 generate_messages(DEPENDENCIES sensor_msgs std_msgs geometry_msgs visualization_msgs ros_unet)
 
 catkin_package(
@@ -47,3 +51,6 @@ add_executable(obb_server
   src/ros_util.cpp
   src/mask2obb.cpp)
 target_link_libraries(obb_server ${catkin_LIBRARIES} ${OpenCV_LIBS})
+
+add_executable(floor_detector src/floor_detector.cpp)
+target_link_libraries(floor_detector ${catkin_LIBRARIES} ${OpenCV_LIBS})

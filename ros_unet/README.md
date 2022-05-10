@@ -19,15 +19,27 @@ sudo apt install ros-melodic-ros-numpy
     * cache
 ##
 
-# Generate Dataset
-
+# DUNet
+## Generate dataset
 ```bash
 python2 scripts/unet/gen_labeling.py
 ```
 
-# Train UNet
-
+## Train
 ```bash
 python3 scripts/unet/train_dunet.py
 ```
 
+# OBB
+## Generate dataset - for evaluation
+```bash
+python2 scripts/unet/gen_obblabeling.py
+```
+* Whilte line for outline
+* Yellow line for convex edge
+* red-green dot for y axis of OBB orientation
+  * Or, red-lue dot for z axis of OBB orientation
+## Evaluation
+```bash
+roslaunch ros_unet eval.launch
+```

@@ -105,7 +105,6 @@ struct ObbParam{
   MATCHMETHOD match_method;
   SENSORMODEL sensor_model;
 
-  double min_z_floor; // Get it from rosparam
   double min_visible_ratio_of_frontplane = 0.;
   double voxel_leaf;  // voxel leaf size of input points.
   double forcing_iou_method_z_threshold = -0.4;
@@ -220,7 +219,8 @@ public:
                    const ObbParam& param,
                    const g2o::SE3Quat& Tcw,
                    const std::string& cam_id,
-                   std::shared_ptr<ObbProcessVisualizer> visualizer
+                   std::shared_ptr<ObbProcessVisualizer> visualizer,
+                   const std::vector<float>& floor_plane
                   );
 
 protected:

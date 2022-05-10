@@ -669,7 +669,8 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
                 const Eigen::Vector3f& depth_dir,
                 const Eigen::Vector3f& t_wc,
                 std::shared_ptr<unloader_msgs::Object> obj,
-                std::shared_ptr<ObbProcessVisualizer> visualizer
+                std::shared_ptr<ObbProcessVisualizer> visualizer,
+                const std::vector<float>& floor_plane
                )
 {
     // Compute concavehull for (inner) cloud.
@@ -1014,6 +1015,16 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
     //  return false;
     //}
 
+    if(!floor_plane.empty()){
+      // Check whether the box is floor or not.
+      Eigen::Vector4d plane(floor_plane[0], floor_plane[1], floor_plane[2], floor_plane[3]);
+      //std::cout << "floor_plane = " << plane.transpose() << std::endl;
+      const auto& t = Twl.translation();
+      Eigen::Vector4d cp(t[0], t[1], t[2], 1.);
+      if(plane.dot(cp) < 0.)
+        return false;
+    }
+
     obj->center_pose.position.x = Twl.translation().x();
     obj->center_pose.position.y = Twl.translation().y();
     obj->center_pose.position.z = Twl.translation().z();
@@ -1108,7 +1119,8 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
                    const ObbParam& param,
                    const g2o::SE3Quat& Tcw,
                    const std::string& cam_id,
-                   std::shared_ptr<ObbProcessVisualizer> visualizer
+                   std::shared_ptr<ObbProcessVisualizer> visualizer,
+                   const std::vector<float>& floor_plane
                    ) {
 
   Eigen::Vector3f depth_dir, t_wc;
@@ -1142,7 +1154,7 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
       obj->visible_plane[i] = false;
     obj->point_cloud.header.frame_id = "robot";
 
-    if(! ComputeBoxOBB(cloud, boundary, param, depth_dir, t_wc, obj, visualizer) )
+    if(! ComputeBoxOBB(cloud, boundary, param, depth_dir, t_wc, obj, visualizer, floor_plane) )
       continue;
 
     // TODO Collect unsynced obb before matching.

@@ -32,7 +32,6 @@ public:
   bool SetCamera(ros_unet::SetCamera::Request  &req,
                  ros_unet::SetCamera::Response &res)
   {
-    std::cout << "Set camera" << std::endl;
     const std::vector<double>& D = req.info.D;
     double v_max = 0.;
     for(const double& v : D)
@@ -131,7 +130,8 @@ public:
                                param_,
                                Tcw,
                                cam_id,
-                               obb_process_visualizer
+                               obb_process_visualizer,
+                               req.plane
                               );
     res.output = obb_process_visualizer->GetUnsyncedOBB();
     obb_process_visualizer->Visualize();
@@ -231,7 +231,6 @@ int main(int argc, char **argv) {
   ros::NodeHandle nh("~");
   ObbParam param;
   //std::vector<int> cameras = GetRequiredParamVector<int>(nh, "cameras");
-  param.min_z_floor = GetRequiredParam<double>(nh, "min_z_floor");
   param.min_points_of_cluster = GetRequiredParam<double>(nh, "min_points_of_cluster");
   param.voxel_leaf = GetRequiredParam<double>(nh, "voxel_leaf");
   param.euclidean_filter_tolerance = 2.* param.voxel_leaf;

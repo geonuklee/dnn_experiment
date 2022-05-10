@@ -18,6 +18,8 @@ from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as rotation_util
 import time
 
+from ros_client import *
+
 def get_rectification(camera_info):
     K = np.array( camera_info.K ,dtype=np.float).reshape((3,3))
     D = np.array( camera_info.D, dtype=np.float).reshape((-1,))
@@ -50,6 +52,23 @@ def convert2pose(Twc):
     pose.orientation.w = quat[3]
     return pose
 
+def convert_plane(pose, plane0):
+    q = pose.orientation
+    rot = rotation_util.from_quat( (q.x,q.y,q.z,q.w) )
+    t = pose.position
+    T = np.zeros((3,4), np.float32)
+    T[:,:3] = rot.as_dcm()
+    T[:,3] = np.array((t.x,t.y,t.z)).reshape((3,))
+
+    nvec = np.matmul(T[:,:3], np.array(plane0[:3]).reshape((3,1)) ).reshape((3,))
+    # For xz plane, y value, because assume no much roll fo camera.
+    y0 = - plane0[3]/plane0[1]
+    pt_a = np.matmul(T,  np.array((0,y0,0,1.),np.float).reshape((4,1)) ).reshape((3,))
+    d = - nvec.dot(pt_a)
+
+    #import pdb; pdb.set_trace()
+    return (nvec[0], nvec[1], nvec[2], d)
+
 def rectify(rgb_msg, depth_msg, mx, my, bridge):
     #rgb = np.frombuffer(rgb_msg.data, dtype=np.uint8).reshape(rgb_msg.height, rgb_msg.width, 3)
     #depth = np.frombuffer(depth_msg.data, dtype=np.float32).reshape(depth_msg.height, depth_msg.width)
@@ -61,7 +80,7 @@ def rectify(rgb_msg, depth_msg, mx, my, bridge):
 
     rect_rgb_msg = bridge.cv2_to_imgmsg(rgb,encoding='bgr8')
     rect_depth_msg = bridge.cv2_to_imgmsg(depth,encoding='32FC1')
-    return rect_rgb_msg, rect_depth_msg
+    return rect_rgb_msg, rect_depth_msg, depth
 
 def get_Twc(cam_id):
     Twc = rospy.get_param("/%s/base_T_cam"%cam_id)
@@ -96,6 +115,12 @@ if __name__=="__main__":
 
     rospy.wait_for_service('~ComputeObb')
     compute_obb = rospy.ServiceProxy('~ComputeObb', ros_unet.srv.ComputeObb)
+
+    rospy.wait_for_service('~FloorDetector/SetCamera')
+    floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
+    rospy.wait_for_service('~FloorDetector/ComputeFloor')
+    compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
+
     bridge = CvBridge()
 
     cam_id = "cam0"
@@ -110,6 +135,7 @@ if __name__=="__main__":
         rect_info_msgs[cam_id], mx, my = get_rectification(sub.info)
         remap_maps[cam_id] = (mx, my)
         set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
+        floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
         break
 
     Twc = get_Twc(cam_id)
@@ -117,20 +143,25 @@ if __name__=="__main__":
         if sub.rgb is None or sub.depth is None or sub.info is None:
             continue
         fx, fy = rect_info_msgs[cam_id].K[0], rect_info_msgs[cam_id].K[4]
+        rect_rgb_msg, rect_depth_msg, rect_depth = rectify(sub.rgb, sub.depth, mx, my, bridge)
+
+        # Remove depth of floor
+        y0, max_z = 50, 2.
+        floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, y0, max_z)
+        floor_mask = floor_msg.mask
+        floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
+        rect_depth[floor>0] = 0.
+        rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
 
         t0 = time.time()
-        rect_rgb_msg, rect_depth_msg = rectify(sub.rgb, sub.depth, mx, my, bridge)
         edge_resp = predict_edge(rect_rgb_msg, rect_depth_msg, fx, fy)
+        plane_w = convert_plane(Twc, floor_msg.plane) # empty plane = no floor filter.
         obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
-                Twc, std_msgs.msg.String(cam_id), fx, fy)
+                Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
         t1 = time.time()
+        #print(plane_w)
+        #print(floor_msg.plane)
+        #print(-plane_w[3]/plane_w[2])
         #print("etime = ", t1-t0)
         rate.sleep()
 
-        #cvrgb = np.frombuffer(rect_rgb_msg.data, dtype=np.uint8).reshape(rect_rgb_msg.height, rect_rgb_msg.width, 3)
-        #cvedge = np.frombuffer(edge_resp.mask.data, dtype=np.uint8).reshape(edge_resp.mask.height, edge_resp.mask.width, 2)
-        #cv2.imshow("rgb", cvrgb)
-        #cv2.imshow("edge", (cvedge[:,:,0]==1).astype(np.uint8)*255 )
-        #c = cv2.waitKey(1)
-        #if c == ord('q'):
-        #    exit(1)

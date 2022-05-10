@@ -14,11 +14,13 @@ from Objectron import box, iou
 from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation as rotation_util
 
-#from unet.gen_obblabeling 
+from unet.gen_obblabeling import ParseGroundTruth
 
 class Evaluator:
     def __init__(self, pick, Twc, cam_id, verbose=True):
         self.pick = pick
+        #cv_gt = cv2.imread(pick['cvgt_fn'])[:pick['depth'].shape[0],:pick['depth'].shape[1],:]
+        #gt_obbs = ParseGroundTruth(cv_gt, pick['rgb'], pick['depth'], pick['newK'], None, pick['fullfn'])
         gt_obbs = pick['obbs']
         # Convert OBB to world(frame_id='robot) coordinate.
         q,t = Twc.orientation, Twc.position
