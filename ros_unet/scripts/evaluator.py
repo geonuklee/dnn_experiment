@@ -16,6 +16,61 @@ from scipy.spatial.transform import Rotation as rotation_util
 
 from unet.gen_obblabeling import ParseGroundTruth
 
+def GetCorrespondenceMarker():
+    correspondence = Marker()
+    correspondence.type = Marker.LINE_LIST
+    correspondence.header.frame_id = "robot"
+    correspondence.pose.orientation.w = 1.
+    correspondence.scale.x = 0.01
+    correspondence.color.a = 1.
+    correspondence.color.r = 1.
+    return correspondence
+
+def GetInfoMarker(obj, precision, recall, loss, index):
+    info = Marker()
+    info.text = "type=%d"%obj.type
+    info.text = "precision=%.2f"%precision
+    info.text += "\nrecall=%.2f"%recall
+    info.text += "\nIoU=%.2f"%loss.iou()
+    info.header.frame_id = "robot"
+    info.type = Marker.TEXT_VIEW_FACING
+    info.scale.z = 0.04
+    info.color.r = info.color.g = info.color.b = 1.
+    info.color.a = 1.
+    info.pose = obj.pose
+    info.id = index
+    return info
+
+def GetBoxMarker(given_box, index):
+    marker = box2marker(given_box)
+    marker.id = index
+    marker.color.a = 0.8
+    marker.color.r = 1.
+    marker.color.g = marker.color.b = 0.2
+    marker.header.frame_id = "robot"
+    return marker
+
+def GetDepthOptimizedBox(target_box, ref_box, daxis):
+    Rwb0 = target_box.rotation
+
+    # World좌표계의 depth 축에 가장 가까운것.
+    optimized_axis = np.argmax(np.abs(Rwb0[daxis,:]))
+
+    # depth axis의 반대방향으로
+    sign = -np.sign(Rwb0[daxis,optimized_axis])
+
+    optimized_gt_whd = target_box.scale.copy()
+    axis1 = np.argmax(np.abs(ref_box.rotation[daxis,:]))
+    optimized_val = min(optimized_gt_whd[optimized_axis], ref_box.scale[axis1])
+    optimized_gt_whd[optimized_axis] = optimized_val
+
+    offset = np.zeros((3,) )
+    offset[optimized_axis] = sign*0.5*(target_box.scale[optimized_axis]-optimized_val)
+    dX = np.matmul(Rwb0,offset).reshape((-1,))
+    optimized_gt_xyz = target_box.translation + dX
+    w0 = box.Box()
+    return w0.from_transformation(Rwb0, optimized_gt_xyz, optimized_gt_whd)
+
 class Evaluator:
     def __init__(self, pick, Twc, cam_id, verbose=True):
         self.pick = pick
@@ -52,38 +107,34 @@ class Evaluator:
             self.pub_marker_optmized_gt = rospy.Publisher("~%s/optimized_gt"%cam_id, MarkerArray, queue_size=1)
             self.pub_marker_converted_pred = rospy.Publisher("~%s/marker_converted_pred"%cam_id, MarkerArray, queue_size=1)
 
-    def put(self, obj_array):
+    def put(self, obj_array1):
         radius = 1. # serach radius[meter] for center of obj.
         # daxis : World좌표계 축 중, depth 축에 가장 가까운것. 0,1,2<-x,y,z
         #daxis = rospy.get_param("~daxis") #TODO
         daxis = 0
 
         gt_obbs = self.pick['obbs']
-        vis_pose, vis_obb = VisualizeGt(gt_obbs)
-        correspondence = Marker()
-        correspondence.type = Marker.LINE_LIST
-        correspondence.header.frame_id = "robot"
-        correspondence.pose.orientation.w = 1.
-        correspondence.scale.x = 0.01
-        correspondence.color.a = 1.
-        correspondence.color.r = 1.
+        center_poses0, obj_array0 = VisualizeGt(gt_obbs)
+        correspondence = GetCorrespondenceMarker()
         infos = MarkerArray()
         marker_optmized_gt = MarkerArray()
         marker_converted_pred = MarkerArray()
-        for obj in obj_array.markers:
-            if obj.action == Marker.DELETE:
+
+        gt2prediction_pairs = {}
+        for obj1 in obj_array1.markers:
+            if obj1.action == Marker.DELETE:
                 continue
-            xyz1 = np.array( [obj.pose.position.x,
-                             obj.pose.position.y,
-                             obj.pose.position.z])
-            b1 = marker2box(obj)
+            xyz1 = np.array( [obj1.pose.position.x,
+                             obj1.pose.position.y,
+                             obj1.pose.position.z])
+            b1 = marker2box(obj1)
             candidates = self.tree.query_ball_point(xyz1, radius)
 
             if len(candidates) == 0:
                 continue
             kv = []
             for j in candidates:
-                b0 = marker2box(vis_obb.markers[j])
+                b0 = marker2box(obj_array0.markers[j])
                 loss = iou.IoU(b0, b1)
                 try :
                     a = loss.intersection()
@@ -91,14 +142,13 @@ class Evaluator:
                     continue
                 if a > 0.:
                     dx = b0.translation-b1.translation
-                    kv.append((j, -np.linalg.norm(dx)))
-                    #kv.append( (j, loss.intersection() ) )
+                    kv.append((j, np.linalg.norm(dx)))
+                    #kv.append( (j, -loss.intersection() ) )
             if len(kv) == 0:
                 continue
-
-            kv = sorted(kv, key=lambda x: x[1] , reverse=True)
+            kv = sorted(kv, key=lambda x: x[1] , reverse=False)
             j = kv[0][0]
-            obj0 = vis_obb.markers[j]
+            obj0 = obj_array0.markers[j]
             b0 = marker2box(obj0)
             loss = iou.IoU(b0, b1)
 
@@ -106,70 +156,31 @@ class Evaluator:
             if vol_intersection < 0.05*b1.volume:
                 continue
 
-            Rwb0 = b0.rotation
-
-            # World좌표계의 depth 축에 가장 가까운것.
-            optimized_axis = np.argmax(np.abs(Rwb0[daxis,:]))
-
-            # depth axis의 반대방향으로
-            sign = -np.sign(Rwb0[daxis,optimized_axis])
-
-            optimized_gt_whd = b0.scale.copy()
-            axis1 = np.argmax(np.abs(b1.rotation[daxis,:]))
-            optimized_val = min(optimized_gt_whd[optimized_axis], b1.scale[axis1])
-            optimized_gt_whd[optimized_axis] = optimized_val
-
-            offset = np.zeros((3,) )
-            offset[optimized_axis] = sign*0.5*(b0.scale[optimized_axis]-optimized_val)
-            dX = np.matmul(Rwb0,offset).reshape((-1,))
-            optimized_gt_xyz = b0.translation + dX
-            w0 = box.Box()
-            b0 = w0.from_transformation(Rwb0, optimized_gt_xyz, optimized_gt_whd)
-
+            b0 = GetDepthOptimizedBox(b0, b1, daxis)
             loss = iou.IoU(b0, b1)
             vol_intersection = loss.intersection()
             precision = vol_intersection /b1.volume 
             recall = vol_intersection / b0.volume
             if precision < 0.1 or recall < 0.1:
                 continue
-            info = Marker()
-            info.text = "type=%d"%obj.type
-            info.text = "precision=%.2f"%precision
-            info.text += "\nrecall=%.2f"%recall
-            info.text += "\nIoU=%.2f"%loss.iou()
-            info.header.frame_id = "robot"
-            info.type = Marker.TEXT_VIEW_FACING
-            info.scale.z = 0.04
-            info.color.r = info.color.g = info.color.b = 1.
-            info.color.a = 1.
-            info.pose = obj.pose
-            info.id = len(infos.markers)
+
+            info = GetInfoMarker(obj1, precision, recall, loss, len(infos.markers) )
             infos.markers.append(info)
 
-            ogt_marker = box2marker(b0)
-            ogt_marker.id = info.id
-            ogt_marker.color.a = 0.8
-            ogt_marker.color.r = 1.
-            ogt_marker.color.g = ogt_marker.color.b = 0.2
-            ogt_marker.header.frame_id = "robot"
+            ogt_marker = GetBoxMarker(b0, info.id)
             marker_optmized_gt.markers.append(ogt_marker)
 
-            pred_marker = box2marker(b1)
-            pred_marker.id = info.id
-            pred_marker.color.a = 0.8
-            pred_marker.color.b = 1.
-            pred_marker.color.r = ogt_marker.color.b = 0.2
-            pred_marker.header.frame_id = "robot"
+            pred_marker = GetBoxMarker(b1, info.id)
             marker_converted_pred.markers.append(pred_marker)
 
             cp_surf0 = GetSurfCenterPoint(obj0,daxis)
-            cp_surf1 = GetSurfCenterPoint(obj, daxis)
+            cp_surf1 = GetSurfCenterPoint(obj1,daxis)
             correspondence.points.append(Point(cp_surf0[0], cp_surf0[1], cp_surf0[2])) # Front center
             correspondence.points.append(Point(cp_surf1[0], cp_surf1[1], cp_surf1[2]))
        
             if hasattr(self, 'pub_infos'):
-                self.pub_gt_pose.publish(vis_pose)
-                self.pub_gt_obb.publish(vis_obb)
+                self.pub_gt_pose.publish(center_poses0)
+                self.pub_gt_obb.publish(obj_array0)
 
                 self.pub_infos.publish(infos)
                 self.pub_correspondence.publish(correspondence)
