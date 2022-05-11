@@ -71,11 +71,65 @@ def GetDepthOptimizedBox(target_box, ref_box, daxis):
     w0 = box.Box()
     return w0.from_transformation(Rwb0, optimized_gt_xyz, optimized_gt_whd)
 
+def CountDetection(indices0, pairs0to1, pair_infos, min_iou):
+    n_detection = 0
+    for i0 in indices0:
+        detected = False
+        for i1 in pairs0to1[i0]:
+            if pair_infos[(i0,i1)]['iou'] > min_iou:
+                detected = True
+                break
+        if detected:
+            n_detection += 1
+    return n_detection
+
+def CountUndersegmentation(indices1, pairs1to0, pair_infos, min_recall):
+    n_underseg = 0
+    for i1 in indices1:
+        n = 0
+        for i0 in pairs1to0[i1]:
+            recall = pair_infos[(i0,i1)]['recall']
+            if recall > .5:
+                n += 1
+        if n > 1:
+            n_underseg += 1
+    return n_underseg
+
+def CountOversegmentation(indices0, pairs0to1, pair_infos, min_prec):
+    n_overseg = 0
+    for i0 in indices0:
+        n = 0
+        for i1 in pairs0to1[i0]:
+            precision = pair_infos[(i0,i1)]['precision']
+            if precision > min_prec:
+                n += 1
+        if n > 1:
+            n_overseg += 1
+    return n_overseg
+
+def GetErrors(indices0, pairs0to1, pair_infos, min_iou):
+    trans_errors = []
+    deg_errors = []
+    for i0 in indices0:
+        for i1 in pairs0to1[i0]:
+            info =pair_infos[(i0,i1)]
+            if info['iou'] > min_iou:
+                cp_surf0, rwb0  = info['surf0']
+                cp_surf1, rwb1  = info['surf1']
+                t_err = np.linalg.norm( cp_surf1-cp_surf0 )
+                trans_errors.append(t_err)
+                dr = rwb1.inv()* rwb0
+                deg_err = np.rad2deg( np.linalg.norm(dr.as_rotvec()) )
+                if deg_err > 45.:
+                    import pdb; pdb.set_trace()
+                deg_errors.append(deg_err)
+                break
+    return trans_errors, deg_errors
+
+
 class Evaluator:
     def __init__(self, pick, Twc, cam_id, verbose=True):
         self.pick = pick
-        #cv_gt = cv2.imread(pick['cvgt_fn'])[:pick['depth'].shape[0],:pick['depth'].shape[1],:]
-        #gt_obbs = ParseGroundTruth(cv_gt, pick['rgb'], pick['depth'], pick['newK'], None, pick['fullfn'])
         gt_obbs = pick['obbs']
         # Convert OBB to world(frame_id='robot) coordinate.
         q,t = Twc.orientation, Twc.position
@@ -107,7 +161,7 @@ class Evaluator:
             self.pub_marker_optmized_gt = rospy.Publisher("~%s/optimized_gt"%cam_id, MarkerArray, queue_size=1)
             self.pub_marker_converted_pred = rospy.Publisher("~%s/marker_converted_pred"%cam_id, MarkerArray, queue_size=1)
 
-    def put(self, obj_array1):
+    def GetMatches(self, obj_array1):
         radius = 1. # serach radius[meter] for center of obj.
         # daxis : World좌표계 축 중, depth 축에 가장 가까운것. 0,1,2<-x,y,z
         #daxis = rospy.get_param("~daxis") #TODO
@@ -120,8 +174,20 @@ class Evaluator:
         marker_optmized_gt = MarkerArray()
         marker_converted_pred = MarkerArray()
 
-        gt2prediction_pairs = {}
-        for obj1 in obj_array1.markers:
+        pairs0to1, pairs1to0, pair_infos = {}, {}, {}
+        indices1 = set()
+        for i1, obj1 in enumerate(obj_array1.markers):
+            if obj1.action == Marker.DELETE:
+                continue
+            indices1.add(i1)
+            pairs1to0[i1] = []
+
+        indices0 = set()
+        for i0 in range(len(obj_array0.markers)):
+            indices0.add(i0)
+            pairs0to1[i0] = []
+
+        for i1, obj1 in enumerate(obj_array1.markers):
             if obj1.action == Marker.DELETE:
                 continue
             xyz1 = np.array( [obj1.pose.position.x,
@@ -133,8 +199,8 @@ class Evaluator:
             if len(candidates) == 0:
                 continue
             kv = []
-            for j in candidates:
-                b0 = marker2box(obj_array0.markers[j])
+            for i0 in candidates:
+                b0 = marker2box(obj_array0.markers[i0])
                 loss = iou.IoU(b0, b1)
                 try :
                     a = loss.intersection()
@@ -142,65 +208,105 @@ class Evaluator:
                     continue
                 if a > 0.:
                     dx = b0.translation-b1.translation
-                    kv.append((j, np.linalg.norm(dx)))
-                    #kv.append( (j, -loss.intersection() ) )
+                    kv.append((i0, np.linalg.norm(dx)))
+                    #kv.append( (i0, -loss.intersection() ) )
+
             if len(kv) == 0:
                 continue
             kv = sorted(kv, key=lambda x: x[1] , reverse=False)
-            j = kv[0][0]
-            obj0 = obj_array0.markers[j]
-            b0 = marker2box(obj0)
-            loss = iou.IoU(b0, b1)
+            #i0 = kv[0][0]
+            for rank, (i0,_) in enumerate(kv):
+                obj0 = obj_array0.markers[i0]
+                b0 = marker2box(obj0)
+                loss = iou.IoU(b0, b1)
 
-            vol_intersection = loss.intersection()
-            if vol_intersection < 0.05*b1.volume:
-                continue
+                vol_intersection = loss.intersection()
+                if vol_intersection < 0.05*b1.volume:
+                    continue
 
-            b0 = GetDepthOptimizedBox(b0, b1, daxis)
-            loss = iou.IoU(b0, b1)
-            vol_intersection = loss.intersection()
-            precision = vol_intersection /b1.volume 
-            recall = vol_intersection / b0.volume
-            if precision < 0.1 or recall < 0.1:
-                continue
+                b0 = GetDepthOptimizedBox(b0, b1, daxis)
+                loss = iou.IoU(b0, b1)
+                vol_intersection = loss.intersection()
+                precision = vol_intersection /b1.volume 
+                recall = vol_intersection / b0.volume
 
-            info = GetInfoMarker(obj1, precision, recall, loss, len(infos.markers) )
-            infos.markers.append(info)
+                if vol_intersection <= 0.:
+                    continue
 
-            ogt_marker = GetBoxMarker(b0, info.id)
-            marker_optmized_gt.markers.append(ogt_marker)
+                cp_surf0, rwb0 = GetSurfCenterPoint(obj0,daxis)
+                cp_surf1, rwb1 = GetSurfCenterPoint(obj1,daxis)
 
-            pred_marker = GetBoxMarker(b1, info.id)
-            marker_converted_pred.markers.append(pred_marker)
+                pairs0to1[i0].append(i1)
+                pairs1to0[i1].append(i0)
 
-            cp_surf0 = GetSurfCenterPoint(obj0,daxis)
-            cp_surf1 = GetSurfCenterPoint(obj1,daxis)
-            correspondence.points.append(Point(cp_surf0[0], cp_surf0[1], cp_surf0[2])) # Front center
-            correspondence.points.append(Point(cp_surf1[0], cp_surf1[1], cp_surf1[2]))
-       
-            if hasattr(self, 'pub_infos'):
-                self.pub_gt_pose.publish(center_poses0)
-                self.pub_gt_obb.publish(obj_array0)
+                pair_infos[(i0,i1)] = { 'iou':loss.iou(), 'precision':precision, 'recall':recall, 
+                        'b0':b0, 'b1':b1, 'surf0':(cp_surf0,rwb0), 'surf1':(cp_surf1,rwb1), }
+                if rank != 0:
+                    continue
 
-                self.pub_infos.publish(infos)
-                self.pub_correspondence.publish(correspondence)
-                self.pub_marker_optmized_gt.publish(marker_optmized_gt)
-                self.pub_marker_converted_pred.publish(marker_converted_pred)
+                if precision < 0.1 or recall < 0.1:
+                    continue
 
-            # 정보 저장
-            # iou - precision - recall - (gt)w - h - d - min_width - distance - iter - filename - gt_name
-            ''' Log below error for evaluation..
-            b0.scale
-            b0.rotation
-            dt = np.linalg.norm(cp_surf1-cp_surf0)
-            '''
-            msg = "%.3f"%loss.iou()
-            msg += ",%.3f"%precision
-            msg += ",%.3f"%recall
-            msg += ",%.3f"%obj0.scale.x
-            msg += ",%.3f"%obj0.scale.y
-            msg += ",%.3f"%obj0.scale.z
-            msg += "\n"
+                info = GetInfoMarker(obj1, precision, recall, loss, len(infos.markers) )
+                infos.markers.append(info)
+
+                ogt_marker = GetBoxMarker(b0, info.id)
+                marker_optmized_gt.markers.append(ogt_marker)
+
+                pred_marker = GetBoxMarker(b1, info.id)
+                marker_converted_pred.markers.append(pred_marker)
+
+                correspondence.points.append(Point(cp_surf0[0], cp_surf0[1], cp_surf0[2])) # Front center
+                correspondence.points.append(Point(cp_surf1[0], cp_surf1[1], cp_surf1[2]))
+   
+        if hasattr(self, 'pub_infos'):
+            self.pub_gt_pose.publish(center_poses0)
+            self.pub_gt_obb.publish(obj_array0)
+
+            self.pub_infos.publish(infos)
+            self.pub_correspondence.publish(correspondence)
+            self.pub_marker_optmized_gt.publish(marker_optmized_gt)
+            self.pub_marker_converted_pred.publish(marker_converted_pred)
+
+        return (indices0, indices1, pairs0to1, pairs1to0, pair_infos)
+
+
+    def put(self, obj_array1):
+        # indices0 for ground truth instances
+        # indices1 for prediction instances
+        indices0, indices1, pairs0to1, pairs1to0, pair_infos = self.GetMatches(obj_array1)
+        '''
+        TODO
+        * [x] Detection recall for each min IoU
+        * [x] Detection precision for each min IoU
+
+        * [ ] Mean, std error of center points and rotation of front surface for min IoU
+
+        * [x]  Under segmentation / number of gt instance
+            * 한 obb prediction이 둘이상 gt obb에 대해 recall > .5 인 경우.
+        * [x] Over segmentation  / number of gt instance
+            * 한 gt obb가 둘 이상 obb prediction에 대해, precision > .5 인 경우.
+        '''
+        n0 = len(indices0)
+        n1 = len(indices1)
+
+        min_iou = .5
+        # Count detection over min_iou
+        n_detection = CountDetection(indices0, pairs0to1, pair_infos, min_iou)
+        trans_errors, deg_errors = GetErrors(indices0, pairs0to1, pair_infos, min_iou)
+
+        # ratio_recall    = float(n_detection)/float(n0)
+        # ratio_precision = float(n_detection)/float(n1)
+        # t_mean, t_std = np.mean(trans_errors), np.std(trans_errors)
+        # deg_mean, deg_std = np.mean(deg_errors), np.std(deg_errors)
+
+        # Count undersegmentation
+        th = .5
+        n_underseg = CountUndersegmentation(indices1, pairs1to0, pair_infos, min_recall=th)
+        n_overseg  = CountOversegmentation(indices0, pairs0to1, pair_infos, min_prec=th)
+
+        return
+        
 
 
 def box2marker(obj_box):
@@ -249,7 +355,7 @@ def GetSurfCenterPoint(marker, daxis):
     scale = (marker.scale.x, marker.scale.y, marker.scale.z)
     surf_offset[daxis_on_boxcoord] = sign*0.5*scale[daxis_on_boxcoord]
     cp_surf = np.matmul(Rwb,surf_offset) + twb
-    return cp_surf
+    return cp_surf, rot
 
 def VisualizeGt(gt_obbs):
     poses = PoseArray()

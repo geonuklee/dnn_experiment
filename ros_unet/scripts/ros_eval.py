@@ -60,7 +60,7 @@ if __name__=="__main__":
     
     #cameras = ['cam0', 'cam1'] # For multiple camera test.
 
-    rate = rospy.Rate(hz=2)
+    rate = rospy.Rate(hz=.5)
 
     for gt_fn in gt_files:
         pick = get_pick(gt_fn)
@@ -85,7 +85,7 @@ if __name__=="__main__":
             set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
             floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
             Twc = get_Twc(cam_id)
-            evaluators[cam_id] = Evaluator(pick, Twc, cam_id)
+            evaluators[cam_id] = Evaluator(pick, Twc, cam_id, verbose=True)
 
         rgb_msgs, depth_msgs  = {}, {}
         topic2cam = {}

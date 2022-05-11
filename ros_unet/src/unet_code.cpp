@@ -73,7 +73,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
                               const float* ptr_depth,
                               const EigenMap<int,Eigen::Matrix<float,6,1> >& label2vertices,
                               const float* ptr_numap,
-                              const float* ptr_nvmap 
+                              const float* ptr_nvmap
                              ){
   int rows = shape[0];
   int cols = shape[1];
@@ -104,7 +104,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
   };
 
 
-  // TODO label 별, front points, side points, 
+  // label 별, front points, side points,
   for(int r=0; r<rows; r++){
     for(int c=0; c<cols; c++){
       const int32_t& l_marker = marker.at<int32_t>(r,c);
@@ -153,7 +153,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     Eigen::Vector4f plane;
     for(int i =0; i <4; i++)
       plane[i] = coefficients->values.at(i);
-    if(plane[2] > 0.) // Normal vector of box supposed to be negative depth direction.
+    if(plane[2] > 0.5 ) // Normal vector of box supposed to be negative depth direction.
       plane = -plane;
     Eigen::Vector3f n = plane.head<3>();
 
@@ -213,6 +213,8 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       Eigen::Vector3f pt_y = uv2eigen_xyz(vertices[2],vertices[3]);
       pt_y = pt_y - (pt_y.dot(n)+plane[3])*n;// projection on plane
       Eigen::Vector3f r2 = (pt_y - pt_o).normalized();
+      if(r2[2] > 0.)
+        r2 = -r2;
       Eigen::Vector3f r3 = r1.cross(r2);
       R0c.row(1) = r2.transpose();
       R0c.row(2) = r3.transpose();
@@ -222,6 +224,8 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       Eigen::Vector3f pt_z = uv2eigen_xyz(vertices[4],vertices[5]);
       pt_z = pt_z - (pt_z.dot(n)+plane[3])*n;// projection on plane
       Eigen::Vector3f r3 = (pt_z - pt_o).normalized();
+      if(r3[0] > 0.)
+        r3 = -r3;
       Eigen::Vector3f r2 = r3.cross(r1);
       R0c.row(1) = r2.transpose();
       R0c.row(2) = r3.transpose();
@@ -262,7 +266,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     g2o::SE3Quat T0b; // TODO
     T0b.setTranslation(Eigen::Vector3d(max_x0[0]+min_x0[0], max_x0[1]+min_x0[1], max_x0[2]+min_x0[2])/2);
 #if 1
-    g2o::SE3Quat Tcb = T0c.inverse() * T0b; // {c} -> {box} 
+    g2o::SE3Quat Tcb = T0c.inverse() * T0b; // {c} -> {box}
 #else
     g2o::SE3Quat Tcb = T0c.inverse();
 #endif
@@ -706,7 +710,7 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
   py::buffer_info buf_labels = _labels.request();
 
   assert(buf_labels.shape.size() == buf_depth.shape.size());
-  for(int i = 0; i < buf_labels.shape.size(); ++i) 
+  for(int i = 0; i < buf_labels.shape.size(); ++i)
     assert(buf_labels.shape.at(i)==buf_depth.shape.at(i));
 
 
