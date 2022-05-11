@@ -208,12 +208,34 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
 
     Eigen::Matrix<float,3,3> R0c;
     R0c.row(0) = r1.transpose();
+#if 1
+    // TODO
+    Eigen::Vector3f pt_a = vertices[2]>0.
+      ? uv2eigen_xyz(vertices[2],vertices[3])
+      : uv2eigen_xyz(vertices[4],vertices[5]);
+    pt_a = pt_a - (pt_a.dot(n)+plane[3])*n;// projection on plane
+    Eigen::Vector3f delta = (pt_a - pt_o).normalized();
+    Eigen::Vector3f r2, r3;
+    if(std::abs(delta[1]) > std::abs(delta[0]) ){
+      // pt_a should be y-axis
+      r2 = delta[1] > 0. ? -delta : delta;
+      r3 = r1.cross(r2);
+    }
+    else{
+      // pt_a should be z-axis
+      r3 = delta[0] > 0. ? -delta : delta;
+      r2 = r3.cross(r1);
+    }
+    R0c.row(1) = r2.transpose();
+    R0c.row(2) = r3.transpose();
+#else
+    // Assume green, blue dots of ground truth label image is correct.
     if(vertices[2]>0.){
       // Given x direction on image plane.
       Eigen::Vector3f pt_y = uv2eigen_xyz(vertices[2],vertices[3]);
       pt_y = pt_y - (pt_y.dot(n)+plane[3])*n;// projection on plane
       Eigen::Vector3f r2 = (pt_y - pt_o).normalized();
-      if(r2[2] > 0.)
+      if(r2[2] > 0.) // Fix wrong direction
         r2 = -r2;
       Eigen::Vector3f r3 = r1.cross(r2);
       R0c.row(1) = r2.transpose();
@@ -224,12 +246,13 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       Eigen::Vector3f pt_z = uv2eigen_xyz(vertices[4],vertices[5]);
       pt_z = pt_z - (pt_z.dot(n)+plane[3])*n;// projection on plane
       Eigen::Vector3f r3 = (pt_z - pt_o).normalized();
-      if(r3[0] > 0.)
+      if(r3[0] > 0.) // Fix wrong direction
         r3 = -r3;
       Eigen::Vector3f r2 = r3.cross(r1);
       R0c.row(1) = r2.transpose();
       R0c.row(2) = r3.transpose();
     }
+#endif
 
     Eigen::Vector3f t0c; {
       Eigen::Matrix<float,3,3> Rc0 = R0c.transpose();
