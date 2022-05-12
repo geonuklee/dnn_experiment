@@ -395,13 +395,13 @@ ObbProcessVisualizer::ObbProcessVisualizer(const std::string& cam_id, ros::NodeH
   : cam_id_(cam_id)
 {
   std::string cam_name = cam_id+"/";
-  pub_mask     = nh.advertise<sensor_msgs::Image>(cam_name+"mask",0);
-  pub_clouds   = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"clouds",0);
-  pub_boundary = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"boundary",0);
-  pub_contour  = nh.advertise<visualization_msgs::MarkerArray>(cam_name+"contour",0);
-  pub_pose0  = nh.advertise<geometry_msgs::PoseArray>(cam_name+"pose0",0);
-  pub_pose  = nh.advertise<geometry_msgs::PoseArray>(cam_name+"pose",0);
-  pub_unsynced_obb  = nh.advertise<visualization_msgs::MarkerArray>(cam_name+"unsynced_obb",0);
+  pub_mask     = nh.advertise<sensor_msgs::Image>(cam_name+"mask",2);
+  pub_clouds   = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"clouds",2);
+  pub_boundary = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"boundary",2);
+  pub_contour  = nh.advertise<visualization_msgs::MarkerArray>(cam_name+"contour",2);
+  pub_pose0  = nh.advertise<geometry_msgs::PoseArray>(cam_name+"pose0",2);
+  pub_pose  = nh.advertise<geometry_msgs::PoseArray>(cam_name+"pose",2);
+  pub_unsynced_obb  = nh.advertise<visualization_msgs::MarkerArray>(cam_name+"unsynced_obb",2);
 }
 
 sensor_msgs::PointCloud2 ObbProcessVisualizer::Convert(const std::map<int,
@@ -453,28 +453,23 @@ void ObbProcessVisualizer::PutPose(const geometry_msgs::Pose& pose) {
 }
 
 void ObbProcessVisualizer::PutUnsyncedOBB(const visualization_msgs::Marker& unsynced_obb) {
+  assert(unsynced_obb.type == visualization_msgs::Marker::CUBE);
   obb_current_.markers.push_back(unsynced_obb);
+}
+
+ObbProcessVisualizer::~ObbProcessVisualizer() {
 }
 
 void ObbProcessVisualizer::Visualize() {
 
   {
-    std::set<int> current, missing;
-    for(const auto& marker : contours_current_.markers)
-      current.insert(marker.id);
-    for(const auto& marker : contours_old_.markers){
-      if(!current.count(marker.id))
-        missing.insert(marker.id);
-    }
+    visualization_msgs::Marker a;
+    a.action = visualization_msgs::Marker::DELETEALL;
 
     visualization_msgs::MarkerArray topic = contours_current_;
-    topic.markers.reserve(current.size()+missing.size());
-    for(int lid : missing){
-      visualization_msgs::Marker marker;
-      marker.id = lid;
-      marker.action = visualization_msgs::Marker::DELETE;
-      topic.markers.push_back(marker);
-    }
+    topic.markers.push_back(a);
+    std::reverse(topic.markers.begin(), topic.markers.end());
+
     pub_contour.publish(topic);
     contours_old_ = contours_current_;
     contours_current_.markers.clear();
@@ -492,22 +487,12 @@ void ObbProcessVisualizer::Visualize() {
 }
 
 visualization_msgs::MarkerArray ObbProcessVisualizer::GetUnsyncedOBB() {
-  std::set<int> current, missing;
-  for(const auto& marker : obb_current_.markers)
-    current.insert(marker.id);
-  for(const auto& marker : obb_old_.markers){
-    if(!current.count(marker.id))
-      missing.insert(marker.id);
-  }
+  visualization_msgs::Marker a;
+  a.action = visualization_msgs::Marker::DELETEALL;
+
   visualization_msgs::MarkerArray output = obb_current_;
-  output.markers.reserve(current.size()+missing.size());
-  for(int lid : missing){
-    visualization_msgs::Marker marker;
-    marker.id = lid;
-    marker.action = visualization_msgs::Marker::DELETE;
-    output.markers.push_back(marker);
-  }
-  obb_old_ = obb_current_;
+  output.markers.push_back(a);
+  std::reverse(output.markers.begin(), output.markers.end());
   obb_current_.markers.clear();
 
   pub_unsynced_obb.publish(output);

@@ -130,6 +130,11 @@ def ParseRosbag(output_path, fullfn, max_z):
         callout = subprocess.call(['kolourpaint', label_fn] )
         cv_gt = cv2.imread(label_fn)[:pick['depth'].shape[0],:pick['depth'].shape[1],:]
 
+        dst_with_msg[:12,:,:] = 255
+        cv2.putText(dst_with_msg, 'Computing OBB is inprogress...',
+                (5,10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255))
+        cv2.imshow("sample", dst_with_msg)
+
         depth = pick['depth'].copy()
         depth[depth > max_z] = 0.
         pick['obbs'] = ParseGroundTruth(cv_gt, pick['rgb'], depth, pick['newK'], None, pick['fullfn'])
@@ -294,7 +299,9 @@ if __name__ == '__main__':
     max_z=2.
     if False:
         # Overwrite pick['obbs'] for specific file.
-        fn = 'obb_dataset/helios_2022-05-06-20-26-37_cam0.%s' #.pick'
+        fn = 'obb_dataset/helios_2022-05-06-20-17-44_cam0.%s' #.pick'
+        callout = subprocess.call(['kolourpaint', fn%'png'] )
+
         f = open(fn%'pick','rb')
         pick = pickle.load(f)
         f.close()
@@ -303,6 +310,7 @@ if __name__ == '__main__':
         cv_gt = cv2.imread(fn%'png')[:pick['depth'].shape[0],:pick['depth'].shape[1],:]
         obbs = ParseGroundTruth(cv_gt, pick['rgb'], depth, pick['newK'], None, pick['fullfn'])
         pick['obbs'] = obbs
+        # TODO Visualization of obb
         pickle.dump(pick, open(fn%'pick','wb'))
     else:
         rosbag2pick(max_z)

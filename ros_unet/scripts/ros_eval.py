@@ -17,7 +17,7 @@ import cv2
 from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as rotation_util
 
-from evaluator import Evaluator # TODO change file
+from evaluator import Evaluator, SceneEval # TODO change file
 from ros_client import *
 
 def get_pick(fn):
@@ -61,6 +61,7 @@ if __name__=="__main__":
     #cameras = ['cam0', 'cam1'] # For multiple camera test.
 
     rate = rospy.Rate(hz=.5)
+    evaluator = Evaluator()
 
     for gt_fn in gt_files:
         pick = get_pick(gt_fn)
@@ -69,7 +70,6 @@ if __name__=="__main__":
         rect_info_msgs = {}
         remap_maps = {}
         cameras = [get_camid(gt_fn)] # For each file test.
-        evaluators = {}
         for cam_id in cameras:
             rgb_topics[cam_id], depth_topics[cam_id], info_topics[cam_id] \
                     = get_topicnames(pick['fullfn'], bag, given_camid=cam_id)
@@ -84,8 +84,6 @@ if __name__=="__main__":
             remap_maps[cam_id] = (mx, my)
             set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
             floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
-            Twc = get_Twc(cam_id)
-            evaluators[cam_id] = Evaluator(pick, Twc, cam_id, verbose=True)
 
         rgb_msgs, depth_msgs  = {}, {}
         topic2cam = {}
@@ -111,7 +109,6 @@ if __name__=="__main__":
                 continue
             Twc = get_Twc(cam_id)
             fx, fy = rect_info_msgs[cam_id].K[0], rect_info_msgs[cam_id].K[4]
-            #rect_rgb_msg, rect_depth_msg = rectify(rgb_msg, depth_msg, mx, my, bridge)
             rect_rgb_msg, rect_depth_msg, rect_depth = rectify(rgb_msg, depth_msg, mx, my, bridge)
 
             y0, max_z = 50, 2.
@@ -122,10 +119,14 @@ if __name__=="__main__":
             rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
 
             edge_resp = predict_edge(rect_rgb_msg,rect_depth_msg, fx, fy)
-            plane_w = convert_plane(Twc, floor_msg.plane) # empty plane = no floor filter.
+            plane_c = floor_msg.plane
+            plane_w = convert_plane(Twc, plane_c) # empty plane = no floor filter.
             obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
-            evaluators[cam_id].put(obb_resp.output)
+
+            sceneeval = SceneEval(pick, Twc, cam_id, plane_c, max_z, verbose=True)
+            sceneeval.GetMatches(obb_resp.output)
+            evaluator.PutScene(pick['fullfn'], sceneeval)
             rate.sleep()
 
             # TODO remove below visualizer..
@@ -135,3 +136,6 @@ if __name__=="__main__":
             #c = cv2.waitKey()
             #if c == ord('q'):
             #    exit(1)
+
+        evaluator.Evaluate()
+

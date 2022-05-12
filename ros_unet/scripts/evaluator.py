@@ -6,7 +6,7 @@ import numpy as np
 from sensor_msgs.msg import Image, CameraInfo
 from visualization_msgs.msg import *
 from geometry_msgs.msg import Point, Quaternion, Vector3
-from geometry_msgs.msg import PoseArray
+from geometry_msgs.msg import PoseArray, Pose
 import cv2
 
 import pickle
@@ -15,6 +15,18 @@ from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation as rotation_util
 
 from unet.gen_obblabeling import ParseGroundTruth
+from os import path as osp
+
+import matplotlib.pyplot as plt
+
+
+th_seg = .3
+def IsOversegmentation(precision, recall):
+    return (precision-recall) > th_seg
+
+def IsUndersegmentation(precision, recall):
+    return (recall-precision) > th_seg
+
 
 def GetCorrespondenceMarker():
     correspondence = Marker()
@@ -29,13 +41,23 @@ def GetCorrespondenceMarker():
 def GetInfoMarker(obj, precision, recall, loss, index):
     info = Marker()
     info.text = "type=%d"%obj.type
-    info.text = "precision=%.2f"%precision
-    info.text += "\nrecall=%.2f"%recall
+    info.text = "pr=%.2f"%precision
+    info.text += "\nre=%.2f"%recall
     info.text += "\nIoU=%.2f"%loss.iou()
     info.header.frame_id = "robot"
     info.type = Marker.TEXT_VIEW_FACING
-    info.scale.z = 0.04
-    info.color.r = info.color.g = info.color.b = 1.
+    info.scale.z = 0.02
+    if IsOversegmentation(precision,recall):
+        info.color.r = 1.
+        info.color.g = info.color.b = 0.
+        pass
+    elif IsUndersegmentation(precision,recall):
+        info.color.b = 1.
+        info.color.r = info.color.b = 0.
+        pass
+    else:
+        info.color.r = info.color.g = info.color.b = 1.
+
     info.color.a = 1.
     info.pose = obj.pose
     info.id = index
@@ -83,27 +105,29 @@ def CountDetection(indices0, pairs0to1, pair_infos, min_iou):
             n_detection += 1
     return n_detection
 
-def CountUndersegmentation(indices1, pairs1to0, pair_infos, min_recall):
+def CountUndersegmentation(indices1, pairs1to0, pair_infos):
     n_underseg = 0
     for i1 in indices1:
         n = 0
         for i0 in pairs1to0[i1]:
             recall = pair_infos[(i0,i1)]['recall']
-            if recall > .5:
+            precision = pair_infos[(i0,i1)]['precision']
+            if IsUndersegmentation(precision,recall):
                 n += 1
-        if n > 1:
+        if n > 0:
             n_underseg += 1
     return n_underseg
 
-def CountOversegmentation(indices0, pairs0to1, pair_infos, min_prec):
+def CountOversegmentation(indices0, pairs0to1, pair_infos):
     n_overseg = 0
     for i0 in indices0:
         n = 0
         for i1 in pairs0to1[i0]:
+            recall = pair_infos[(i0,i1)]['recall']
             precision = pair_infos[(i0,i1)]['precision']
-            if precision > min_prec:
+            if IsOversegmentation(precision,recall):
                 n += 1
-        if n > 1:
+        if n > 0: # 모서리 귀퉁이에 oversegmentation이 겹친경우.
             n_overseg += 1
     return n_overseg
 
@@ -120,31 +144,95 @@ def GetErrors(indices0, pairs0to1, pair_infos, min_iou):
                 trans_errors.append(t_err)
                 dr = rwb1.inv()* rwb0
                 deg_err = np.rad2deg( np.linalg.norm(dr.as_rotvec()) )
-                if deg_err > 45.:
-                    import pdb; pdb.set_trace()
+                #if deg_err > 45.:
+                #    import pdb; pdb.set_trace()
                 deg_errors.append(deg_err)
                 break
     return trans_errors, deg_errors
 
-
 class Evaluator:
-    def __init__(self, pick, Twc, cam_id, verbose=True):
+    def __init__(self):
+        self.scene_evals = {}
+        self.n_frame = 0
+        pass
+
+    def PutScene(self, fn, sceneeval):
+        base = osp.splitext( osp.basename(fn) )[0]
+
+        if not self.scene_evals.has_key(base):
+            self.scene_evals[base] = []
+        self.scene_evals[base].append(sceneeval)
+        
+        if True: # For debug
+            self.n_frame += 1
+            if self.n_frame > 10:
+                self.Evaluate()
+        return
+
+    def Evaluate(self):
+        scene_evals= []
+        for k, v in self.scene_evals.items():
+            scene_evals += v
+        
+        if True:
+            n0, n1, n_underseg, n_overseg = 0,0,0,0
+            for scene in scene_evals:
+                _n0, _n1, _n_underseg, _n_overseg = scene.CountUnderOverSegmentation()
+                n0 += _n0
+                n1 += _n1
+                n_underseg += _n_underseg
+                n_overseg += _n_overseg
+            prob_under = float(n_underseg) / float(n0)
+            prob_over = float(n_overseg) / float(n0)
+            print("prob(under, over segmntation) = %.4f, %.4f" % (prob_under, prob_over) )
+            # TODO : Write prob text on matplotlib.
+
+        if True:
+            for min_iou in [.5, ] :
+                n0, n1, n_detectiont, trans_errors, deg_errors = 0, 0, 0, [], []
+                for scene in scene_evals:
+                    _n0, _n1, _n_detection, _trans_errors, _deg_errors = scene.GetStatics(min_iou)
+                    n0 += _n0
+                    n1 += _n1
+                    n_detection += _n_detection
+                    trans_errors += _trans_errors
+                    deg_errors += _deg_errors
+                # TODO Mat plotlib
+                import pdb; pdb.set_trace()
+
+        pass
+
+class SceneEval:
+    def __init__(self, pick, Twc, cam_id, plane_c, max_z, verbose=True):
         self.pick = pick
-        gt_obbs = pick['obbs']
         # Convert OBB to world(frame_id='robot) coordinate.
         q,t = Twc.orientation, Twc.position
         Rwc = rotation_util.from_quat([q.x, q.y, q.z, q.w])
         twc = np.array((t.x,t.y,t.z))
-        for i, obj in enumerate(gt_obbs):
+
+        gt_obbs = []
+        plane_c = np.array(plane_c)
+        for i, obj in enumerate(pick['obbs']):
+            pose_msg = Posetuple2Rosmsg(obj['pose'])
+            surf_cp, _ = GetSurfCenterPoint0(pose_msg, obj['scale'], daxis=0)
+            if surf_cp[2] > max_z:
+                continue
             # Tcb -> Trc * Tcb
             pose_cb = obj['pose']
+            tcb = np.array( pose_cb[:3]+(1.,)  ).reshape((-1,))
+            d = plane_c.dot(tcb)
+            if d > .1:
+                gt_obbs.append(obj)
+            tcb = tcb[:3]
+
             Rcb = rotation_util.from_quat([pose_cb[4], pose_cb[5], pose_cb[6], pose_cb[3] ])
-            tcb = np.array( pose_cb[:3] ).reshape((3,))
             Rwb = Rwc*Rcb
             twb = np.matmul(Rwc.as_dcm(),tcb) + twc
             q_xyzw = Rwb.as_quat()
             pose_wb = (twb[0], twb[1], twb[2], q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2])
             obj['pose_wb'] = pose_wb
+            gt_obbs.append(obj)
+        self.gt_obbs = gt_obbs
 
         # Build KDTree for center position
         centers = np.zeros( (len(gt_obbs),3) )
@@ -152,7 +240,7 @@ class Evaluator:
             xyz_qwxyz = gt_obb['pose_wb']
             centers[i,:] = np.array(xyz_qwxyz[:3]).reshape((1,3))
         self.tree = KDTree(centers)
-        
+
         if verbose:
             self.pub_gt_obb = rospy.Publisher("~%s/gt_obb"%cam_id, MarkerArray, queue_size=1)
             self.pub_gt_pose = rospy.Publisher("~%s/gt_pose"%cam_id, PoseArray, queue_size=1)
@@ -166,8 +254,7 @@ class Evaluator:
         # daxis : World좌표계 축 중, depth 축에 가장 가까운것. 0,1,2<-x,y,z
         #daxis = rospy.get_param("~daxis") #TODO
         daxis = 0
-
-        gt_obbs = self.pick['obbs']
+        gt_obbs = self.gt_obbs
         center_poses0, obj_array0 = VisualizeGt(gt_obbs)
         correspondence = GetCorrespondenceMarker()
         infos = MarkerArray()
@@ -177,7 +264,7 @@ class Evaluator:
         pairs0to1, pairs1to0, pair_infos = {}, {}, {}
         indices1 = set()
         for i1, obj1 in enumerate(obj_array1.markers):
-            if obj1.action == Marker.DELETE:
+            if obj1.type != Marker.CUBE or obj1.action != Marker.ADD:
                 continue
             indices1.add(i1)
             pairs1to0[i1] = []
@@ -188,7 +275,7 @@ class Evaluator:
             pairs0to1[i0] = []
 
         for i1, obj1 in enumerate(obj_array1.markers):
-            if obj1.action == Marker.DELETE:
+            if obj1.type != Marker.CUBE or obj1.action != Marker.ADD:
                 continue
             xyz1 = np.array( [obj1.pose.position.x,
                              obj1.pose.position.y,
@@ -227,7 +314,7 @@ class Evaluator:
                 b0 = GetDepthOptimizedBox(b0, b1, daxis)
                 loss = iou.IoU(b0, b1)
                 vol_intersection = loss.intersection()
-                precision = vol_intersection /b1.volume 
+                precision = vol_intersection /b1.volume
                 recall = vol_intersection / b0.volume
 
                 if vol_intersection <= 0.:
@@ -239,7 +326,7 @@ class Evaluator:
                 pairs0to1[i0].append(i1)
                 pairs1to0[i1].append(i0)
 
-                pair_infos[(i0,i1)] = { 'iou':loss.iou(), 'precision':precision, 'recall':recall, 
+                pair_infos[(i0,i1)] = { 'iou':loss.iou(), 'precision':precision, 'recall':recall,
                         'b0':b0, 'b1':b1, 'surf0':(cp_surf0,rwb0), 'surf1':(cp_surf1,rwb1), }
                 if rank != 0:
                     continue
@@ -258,39 +345,43 @@ class Evaluator:
 
                 correspondence.points.append(Point(cp_surf0[0], cp_surf0[1], cp_surf0[2])) # Front center
                 correspondence.points.append(Point(cp_surf1[0], cp_surf1[1], cp_surf1[2]))
-   
+
         if hasattr(self, 'pub_infos'):
             self.pub_gt_pose.publish(center_poses0)
+            self.pub_correspondence.publish(correspondence)
+
+            a = Marker()
+            a.action = Marker.DELETEALL
+            obj_array0.markers.append(a)
+            obj_array0.markers.reverse()
             self.pub_gt_obb.publish(obj_array0)
 
+            infos.markers.append(a)
+            infos.markers.reverse()
             self.pub_infos.publish(infos)
-            self.pub_correspondence.publish(correspondence)
+
+            marker_optmized_gt.markers.append(a)
+            marker_optmized_gt.markers.reverse()
             self.pub_marker_optmized_gt.publish(marker_optmized_gt)
+
+            marker_converted_pred.markers.append(a)
+            marker_converted_pred.markers.reverse()
             self.pub_marker_converted_pred.publish(marker_converted_pred)
 
-        return (indices0, indices1, pairs0to1, pairs1to0, pair_infos)
+        self.indices0, self.indices1, self.pairs0to1, self.pairs1to0, self.pair_infos = \
+                indices0, indices1, pairs0to1, pairs1to0, pair_infos
+        return
 
-
-    def put(self, obj_array1):
+    def GetStatics(self, min_iou=.5):
         # indices0 for ground truth instances
         # indices1 for prediction instances
-        indices0, indices1, pairs0to1, pairs1to0, pair_infos = self.GetMatches(obj_array1)
-        '''
-        TODO
-        * [x] Detection recall for each min IoU
-        * [x] Detection precision for each min IoU
 
-        * [ ] Mean, std error of center points and rotation of front surface for min IoU
+        indices0, indices1, pairs0to1, pairs1to0, pair_infos \
+                = self.indices0, self.indices1, self.pairs0to1, self.pairs1to0, self.pair_infos
 
-        * [x]  Under segmentation / number of gt instance
-            * 한 obb prediction이 둘이상 gt obb에 대해 recall > .5 인 경우.
-        * [x] Over segmentation  / number of gt instance
-            * 한 gt obb가 둘 이상 obb prediction에 대해, precision > .5 인 경우.
-        '''
         n0 = len(indices0)
         n1 = len(indices1)
 
-        min_iou = .5
         # Count detection over min_iou
         n_detection = CountDetection(indices0, pairs0to1, pair_infos, min_iou)
         trans_errors, deg_errors = GetErrors(indices0, pairs0to1, pair_infos, min_iou)
@@ -299,14 +390,17 @@ class Evaluator:
         # ratio_precision = float(n_detection)/float(n1)
         # t_mean, t_std = np.mean(trans_errors), np.std(trans_errors)
         # deg_mean, deg_std = np.mean(deg_errors), np.std(deg_errors)
+        return n0, n1, n_detection, trans_errors, deg_errors
 
+    def CountUnderOverSegmentation(self):
+        indices0, indices1, pairs0to1, pairs1to0, pair_infos \
+                = self.indices0, self.indices1, self.pairs0to1, self.pairs1to0, self.pair_infos
+        n0 = len(indices0)
+        n1 = len(indices1)
         # Count undersegmentation
-        th = .5
-        n_underseg = CountUndersegmentation(indices1, pairs1to0, pair_infos, min_recall=th)
-        n_overseg  = CountOversegmentation(indices0, pairs0to1, pair_infos, min_prec=th)
-
-        return
-        
+        n_underseg = CountUndersegmentation(indices1, pairs1to0, pair_infos)
+        n_overseg  = CountOversegmentation(indices0, pairs0to1, pair_infos)
+        return n0, n1, n_underseg, n_overseg
 
 
 def box2marker(obj_box):
@@ -338,24 +432,39 @@ def marker2box(marker):
     return b
 
 
-def GetSurfCenterPoint(marker, daxis):
-    # Transform {w}orld <- {b}ox 
-    twb = marker.pose.position
+def Posetuple2Rosmsg(tuplepose):
+    pose = Pose()
+    pose.position.x    = tuplepose[0]
+    pose.position.y    = tuplepose[1]
+    pose.position.z    = tuplepose[2]
+    pose.orientation.w = tuplepose[3]
+    pose.orientation.x = tuplepose[4]
+    pose.orientation.y = tuplepose[5]
+    pose.orientation.z = tuplepose[6]
+    return pose
+
+def GetSurfCenterPoint0(pose, scale, daxis):
+    # Transform {w}orld <- {b}ox
+    twb = pose.position
     twb = np.array((twb.x,twb.y,twb.z))
-    q =marker.pose.orientation
+    q = pose.orientation
     # rotation_util : qx qy qz qw
     rot = rotation_util.from_quat([q.x, q.y, q.z, q.w])
     Rwb = rot.as_dcm()
-    
+
     # World좌표계의 depth축(daxis)에 가장 가까운것.
     daxis_on_boxcoord = np.argmax(np.abs(Rwb[daxis,:]))
 
     surf_offset = np.zeros((3,))
     sign = -np.sign(Rwb[daxis,daxis_on_boxcoord])
-    scale = (marker.scale.x, marker.scale.y, marker.scale.z)
     surf_offset[daxis_on_boxcoord] = sign*0.5*scale[daxis_on_boxcoord]
     cp_surf = np.matmul(Rwb,surf_offset) + twb
     return cp_surf, rot
+
+def GetSurfCenterPoint(marker, daxis):
+    pose = marker.pose
+    scale = (marker.scale.x, marker.scale.y, marker.scale.z)
+    return GetSurfCenterPoint0(pose, scale, daxis)
 
 def VisualizeGt(gt_obbs):
     poses = PoseArray()

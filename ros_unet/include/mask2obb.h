@@ -120,6 +120,7 @@ public:
   @brief The initialization without input parameter.
   */
   ObbProcessVisualizer() :cam_id_(""){ };
+  ~ObbProcessVisualizer();
 
   /**
   @brief The initialization.

@@ -138,7 +138,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     pcl::PointCloud<pcl::PointXYZ>::Ptr front_cloud = it.second;
     // Do RANSACT for plane detection.
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
-    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    pcl::PointIndices::Ptr front_inliers(new pcl::PointIndices);
     pcl::SACSegmentation<pcl::PointXYZ> seg;
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_PLANE);
@@ -148,7 +148,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     seg.setInputCloud(front_cloud);
     // The coefficients are consist with Hessian normal form : [normal_x normal_y normal_z d].
     // ref : https://pointclouds.org/documentation/group__sample__consensus.html
-    seg.segment(*inliers, *coefficients);
+    seg.segment(*front_inliers, *coefficients);
 
     Eigen::Vector4f plane;
     for(int i =0; i <4; i++)
@@ -161,7 +161,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       //std::cout << front_cloud->size() << "->";
       pcl::ExtractIndices<pcl::PointXYZ> extract;
       extract.setInputCloud(front_cloud);
-      extract.setIndices(inliers);
+      extract.setIndices(front_inliers);
       extract.setNegative(false);
       extract.filter(*front_cloud);
       //std::cout << front_cloud->size() << std::endl;
@@ -169,7 +169,6 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr all_cloud = allpoints.at(it.first);
     {
-      //std::cout << all_cloud->size() << "->";
       const float euclidean_tolerance = 0.05;
       pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ>);
       tree->setInputCloud(all_cloud);
@@ -185,17 +184,32 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
                 std::end(cluster_indices),
                 [](const pcl::PointIndices& a, const pcl::PointIndices& b) {
                 return a.indices.size() > b.indices.size(); });
-      pcl::PointIndices inliers = cluster_indices[0];
 
-      pcl::ExtractIndices<pcl::PointXYZ> extract;
-      extract.setInputCloud(all_cloud);
-
-      pcl::PointIndices::Ptr ptr(new pcl::PointIndices);
-      ptr->indices = inliers.indices;
-      extract.setIndices(ptr);
-      extract.setNegative(false);
-      extract.filter(*all_cloud);
-      //std::cout << all_cloud->size() << std::endl;
+      bool contact_with_plane = false;
+      for(int i = 0; i < cluster_indices.size(); i++){
+        pcl::PointIndices inliers = cluster_indices[i];
+        for(int j : inliers.indices){
+          const auto& pt = all_cloud->at(j);
+          float d = Eigen::Vector4f(pt.x,pt.y,pt.z,1.).dot(plane);
+          if( std::abs(d) < 0.02){
+            contact_with_plane = true;
+            break;
+          }
+        }
+        if(!contact_with_plane)
+          continue;
+        pcl::ExtractIndices<pcl::PointXYZ> extract;
+        extract.setInputCloud(all_cloud);
+        pcl::PointIndices::Ptr ptr(new pcl::PointIndices);
+        ptr->indices = inliers.indices;
+        extract.setIndices(ptr);
+        extract.setNegative(false);
+        extract.filter(*all_cloud);
+        break;
+      }
+      if(! contact_with_plane ){
+        // TODO?
+      }
     }
 
     // Orientation from vertices
