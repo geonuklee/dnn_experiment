@@ -17,7 +17,7 @@ import cv2
 from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as rotation_util
 
-from evaluator import Evaluator, SceneEval # TODO change file
+from evaluator import Evaluator, FrameEval # TODO change file
 from ros_client import *
 
 def get_pick(fn):
@@ -124,9 +124,9 @@ if __name__=="__main__":
             obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
 
-            sceneeval = SceneEval(pick, Twc, cam_id, plane_c, max_z, verbose=True)
-            sceneeval.GetMatches(obb_resp.output)
-            evaluator.PutScene(pick['fullfn'], sceneeval)
+            frame_eval = FrameEval(pick, Twc, cam_id, plane_c, max_z, verbose=True)
+            frame_eval.GetMatches(obb_resp.output)
+            evaluator.PutFrame(pick['fullfn'], frame_eval)
             rate.sleep()
 
             # TODO remove below visualizer..

@@ -18,7 +18,12 @@ from unet.gen_obblabeling import ParseGroundTruth
 from os import path as osp
 
 import matplotlib.pyplot as plt
+from tabulate import tabulate
 
+# ref : https://stackoverflow.com/a/21819324
+def fields_view(arr, fields):
+    dtype2 = np.dtype({name:arr.dtype.fields[name] for name in fields})
+    return np.ndarray(arr.shape, dtype2, arr, 0, arr.strides)
 
 th_seg = .3
 def IsOversegmentation(precision, recall):
@@ -152,63 +157,172 @@ def GetErrors(indices0, pairs0to1, pair_infos, min_iou):
 
 class Evaluator:
     def __init__(self):
-        self.scene_evals = {}
+        self.frame_evals = {}
         self.n_frame = 0
         pass
 
-    def PutScene(self, fn, sceneeval):
+    def PutFrame(self, fn, frame_eval):
         base = osp.splitext( osp.basename(fn) )[0]
 
-        if not self.scene_evals.has_key(base):
-            self.scene_evals[base] = []
-        self.scene_evals[base].append(sceneeval)
+        if not self.frame_evals.has_key(base):
+            self.frame_evals[base] = []
+        self.frame_evals[base].append(frame_eval)
         
-        if True: # For debug
-            self.n_frame += 1
-            if self.n_frame > 10:
-                self.Evaluate()
+        self.n_frame += 1
+        # TODO Remove after debug
+        if self.n_frame > 1:
+            self.Evaluate()
         return
 
-    def Evaluate(self):
-        scene_evals= []
-        for k, v in self.scene_evals.items():
-            scene_evals += v
+    def Evaluate(self, arr=None, headers=None):
+        if arr is None:
+            arr, headers = self.GetTables()
+            f = open('/home/geo/catkin_ws/src/ros_unet/tmp.pick','wb')
+            pickle.dump({'arr':arr,'headers':headers}, f)
+            f.close()
+
+
+        '''
+        * [x] Accumulative graph : minIoU - Recall ratio
+            * ref: https://matplotlib.org/stable/gallery/statistics/histogram_cumulative.html
+        * [ ] Histogram : min(w,h) - n(UnderSeg)*, n(OverSeg) << for skew less than 20deg
+        * [ ] Histogram : skew angle - n(UnderSeg), n(OverSeg)* << for min(w,h) over 10cm
+        * [ ] Table : 
+            * all : n(frame) - n(Box) - prob(OverSeg) - prob(UnderSeg) std(trans) over IoU>.7 - std(Deg) over IoU>.7
+            * random only : "
+            * aligned only : "
+
+        * No FP detection - due to no consideration for unbox object yet.
+        '''
+
+        # TODO
+        n_instance = arr.shape[0]
+        iou_column = fields_view(arr, ['maxIoU'] )
+        iou_column = np.sort(iou_column, order='maxIoU',)[::-1] # Descending order.
+        iou_column = iou_column.astype(np.float32)
+        n_arr = (np.arange(0,n_instance,dtype=np.float32) + 1.)/float(n_instance)
+        iou_recall = np.stack( (iou_column, n_arr), axis=1 )[::-1]
+        r0 = np.array( (0., 1.) ).reshape((1,2))
+        rend = np.array( (1., 0.) ).reshape((1,2))
+        iou_recall = np.vstack( (r0, iou_recall, rend) )
+        #print(iou_recall)
+        plt.subplot(221).title.set_text('(minIoU-Recall) of detection')
+        plt.xlabel('minIoU')
+        plt.ylabel('Recall')
+        plt.plot(iou_recall[:,0], iou_recall[:,1])
+
+        plt.show()
+        exit(1)
+
         
-        if True:
-            n0, n1, n_underseg, n_overseg = 0,0,0,0
-            for scene in scene_evals:
-                _n0, _n1, _n_underseg, _n_overseg = scene.CountUnderOverSegmentation()
-                n0 += _n0
-                n1 += _n1
-                n_underseg += _n_underseg
-                n_overseg += _n_overseg
-            prob_under = float(n_underseg) / float(n0)
-            prob_over = float(n_overseg) / float(n0)
-            print("prob(under, over segmntation) = %.4f, %.4f" % (prob_under, prob_over) )
-            # TODO : Write prob text on matplotlib.
+        #table = tabulate(arr, headers)
+        #if False:
+        #    n0, n1, n_underseg, n_overseg = 0,0,0,0
+        #    for frame in frame_evals:
+        #        _n0, _n1, _n_underseg, _n_overseg = frame.CountUnderOverSegmentation()
+        #        n0 += _n0
+        #        n1 += _n1
+        #        n_underseg += _n_underseg
+        #        n_overseg += _n_overseg
+        #    prob_under = float(n_underseg) / float(n0)
+        #    prob_over = float(n_overseg) / float(n0)
+        #    print("prob(under, over segmntation) = %.4f, %.4f" % (prob_under, prob_over) )
+        #    # TODO : Write prob text on matplotlib.
 
-        if True:
-            for min_iou in [.5, ] :
-                n0, n1, n_detectiont, trans_errors, deg_errors = 0, 0, 0, [], []
-                for scene in scene_evals:
-                    _n0, _n1, _n_detection, _trans_errors, _deg_errors = scene.GetStatics(min_iou)
-                    n0 += _n0
-                    n1 += _n1
-                    n_detection += _n_detection
-                    trans_errors += _trans_errors
-                    deg_errors += _deg_errors
-                # TODO Mat plotlib
-                import pdb; pdb.set_trace()
+        return
 
-        pass
+    def GetTables(self):
+        frame_evals= []
+        for k, v in self.frame_evals.items():
+            frame_evals += v
 
-class SceneEval:
+        dtype = [('maxIoU', float),
+                 ('recall', float),
+                 ('precision', float),
+                 ('t_err', float),
+                 ('deg_err', float),
+                 ('max_wh_err', float),
+                 ('min_wh_gt', float),
+                 ('z_gt', float),
+                 ('degskew_gt', float),
+                 ('overseg', bool),
+                 ('underseg', bool),
+                 ('under(frame,i1)', tuple), # frame and prediction index for unique
+                 ]
+        headers, values = [], []
+        for name,_ in dtype[1:]:
+            headers.append(name)
+        for frame_i, frame in enumerate(frame_evals):
+            for i0 in frame.indices0:
+                #1) Get Best IoU and w0, h0,
+                #2) Get Best IoU's 'w1, h1, b(IsOverseg), b(IsUnderseg), t_err, r_err, Twb'
+                best_i1, max_iou = -1, 0.
+                for i1 in frame.pairs0to1[i0]:
+                    iou = frame.pair_infos[(i0,i1)]['iou']
+                    if iou > max_iou:
+                        best_i1, max_iou = i1, iou
+
+                if best_i1 < 0:
+                    recall, precision = 0., 0.
+                    t_err, deg_err, max_wh_err = 0., 0., 0.
+                    min_wh_gt, z_gt, degskew_gt = 0., 0., 0.
+                    overseg, underseg, underseg_frame_i1 = False, False, ()
+                else:
+                    info = frame.pair_infos[(i0,i1)]
+                    recall    = info['recall']
+                    precision = info['precision']
+                    b0, b1 = info['b0'], info['b1']
+
+                    rwb0 = rotation_util.from_dcm(b0.rotation)
+                    rwb1 = rotation_util.from_dcm(b1.rotation)
+                    dr = rwb1.inv()* rwb0
+                    deg_err = np.rad2deg( np.linalg.norm(dr.as_rotvec()) )
+
+                    # surf_cp is twp for cente 'p'ointr of front plane on 'w'orld frame.
+                    t_err = info['surf1'][0] - info['surf0'][0]
+                    t_err = np.linalg.norm(t_err)
+
+                    # Denote that x-axis is assigned to normal of front plane.
+                    max_wh_err = max( (b1.scale-b0.scale)[1:] ) # [meter]
+                    min_wh_gt = min(b0.scale[1:])
+                    # Center 'p'oint of ground truth on 'c'amera frame.
+                    (rwc, twc) = frame.Twc
+                    twp0 = info['surf0'][0]
+                    rcw , tcw = rwc.inv(), -np.matmul(rwc.inv().as_dcm(), twc)
+                    tcp0 = np.matmul(rcw.as_dcm(), twp0) + tcw
+                    z_gt = tcp0[2]
+
+                    # Denote that x-axis is assigned to normal of front plane.
+                    nvec0_w = rwb0.as_dcm()[:,0]
+                    depthvec_w = rwc.as_dcm()[:,2]
+                    degskew_gt = np.arcsin( np.linalg.norm( np.cross(-nvec0_w, depthvec_w) ) )
+                    degskew_gt = np.rad2deg(degskew_gt)
+
+                    overseg = IsOversegmentation( precision, recall)
+                    underseg= IsUndersegmentation(precision, recall)
+                    if underseg:
+                        underseg_frame_i1 = (frame_i, i1)
+                    else:
+                        underseg_frame_i1 = (-1,-1)
+
+                arr = ( max_iou, recall, precision,
+                        t_err, deg_err, max_wh_err, min_wh_gt, z_gt, degskew_gt,
+                        overseg, underseg, underseg_frame_i1
+                        )
+                values.append(arr)
+                # for i0 in frame.indices0
+            # for frame
+        arr = np.array(values, dtype=dtype) # create a structured array
+        return arr, headers
+
+class FrameEval:
     def __init__(self, pick, Twc, cam_id, plane_c, max_z, verbose=True):
         self.pick = pick
         # Convert OBB to world(frame_id='robot) coordinate.
         q,t = Twc.orientation, Twc.position
         Rwc = rotation_util.from_quat([q.x, q.y, q.z, q.w])
         twc = np.array((t.x,t.y,t.z))
+        self.Twc = (Rwc, twc)
 
         gt_obbs = []
         plane_c = np.array(plane_c)
@@ -372,20 +486,23 @@ class SceneEval:
                 indices0, indices1, pairs0to1, pairs1to0, pair_infos
         return
 
-    def GetStatics(self, min_iou=.5):
+    def CountDetection(self, min_iou):
+        n_detection = CountDetection(self.indices0, self.pairs0to1, self.pair_infos, self.min_iou)
+        return n_detection
+
+    def GetErrors(self, min_iou):
+        trans_errors, deg_errors = GetErrors(self.indices0, self.pairs0to1, self.pair_infos, min_iou)
+        return trans_errors, deg_errors
+
+    def Depricate(self, min_iou=.5):
         # indices0 for ground truth instances
         # indices1 for prediction instances
-
-        indices0, indices1, pairs0to1, pairs1to0, pair_infos \
-                = self.indices0, self.indices1, self.pairs0to1, self.pairs1to0, self.pair_infos
-
-        n0 = len(indices0)
-        n1 = len(indices1)
+        n0 = len(self.indices0)
+        n1 = len(self.indices1)
 
         # Count detection over min_iou
-        n_detection = CountDetection(indices0, pairs0to1, pair_infos, min_iou)
-        trans_errors, deg_errors = GetErrors(indices0, pairs0to1, pair_infos, min_iou)
-
+        n_detection = self.CountDetection(min_iou)
+        trans_errors, deg_errors = self.GetErrors(self.indices0, self.pairs0to1, self.pair_infos, min_iou)
         # ratio_recall    = float(n_detection)/float(n0)
         # ratio_precision = float(n_detection)/float(n1)
         # t_mean, t_std = np.mean(trans_errors), np.std(trans_errors)
@@ -492,4 +609,12 @@ def VisualizeGt(gt_obbs):
         markers.markers.append(marker)
         poses.poses.append(marker.pose)
     return poses, markers
+
+if __name__ == '__main__':
+    # For debug
+    f = open('/home/geo/catkin_ws/src/ros_unet/tmp.pick','rb')
+    pick = pickle.load(f)
+    f.close()
+    evaluator = Evaluator()
+    evaluator.Evaluate(pick['arr'], pick['headers'] )
 
