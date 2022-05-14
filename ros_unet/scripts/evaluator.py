@@ -159,6 +159,7 @@ class Evaluator:
     def __init__(self):
         self.frame_evals = {}
         self.n_frame = 0
+        self.n_evaluate = 0
         pass
 
     def PutFrame(self, fn, frame_eval):
@@ -169,44 +170,52 @@ class Evaluator:
         self.frame_evals[base].append(frame_eval)
         
         self.n_frame += 1
-        # TODO Remove after debug
-        if self.n_frame > 1:
+        ## TODO Remove after debug
+        if self.n_frame % 10 == 0:
             self.Evaluate()
         return
 
-    def Evaluate(self, arr=None, headers=None):
+    def Evaluate(self, arr_scense=None, arr_frames=None, arr=None, is_final=False):
+        self.n_evaluate += 1
         if arr is None:
-            arr, headers = self.GetTables()
+            arr_scense, arr_frames, arr = self.GetTables()
             f = open('/home/geo/catkin_ws/src/ros_unet/tmp.pick','wb')
-            pickle.dump({'arr':arr,'headers':headers}, f)
+            pickle.dump({
+                'arr_scense':arr_scense,
+                'arr_frames':arr_frames,
+                'arr':arr,
+                }, f)
             f.close()
-
 
         '''
         * [x] Accumulative graph : minIoU - Recall ratio
             * ref: https://matplotlib.org/stable/gallery/statistics/histogram_cumulative.html
         * [x] Histogram : min(w,h) - prob(UnderSeg)*, prob(OverSeg) << for skew less than 20deg
         * [x] Histogram : skew angle - prob(UnderSeg), prob(OverSeg)* << for min(w,h) over 10cm
-        * [ ] Table : 
+        * [ ] Add histogram - 'IoU > .7 ratio for each cases'
+        * [x] Table : 
             * all : n(frame) - n(Box) - prob(OverSeg) - prob(UnderSeg) std(trans) over IoU>.7 - std(Deg) over IoU>.7
             * random only : "
             * aligned only : "
 
         * No FP detection - due to no consideration for unbox object yet.
         '''
+        if not hasattr(self, 'fig'):
+            self.fig = plt.figure(figsize=(20, 8))
+        else:
+            plt.clf()
+        fig = self.fig
 
-
-        sub_rc = (2,3)
-        fig = plt.figure(figsize=(20, 8))
+        sub_rc = (2,2)
         ax = fig.add_subplot(sub_rc[0], sub_rc[1], 1)
         DrawIouRecall(arr,ax)
         overseg   = arr['overseg']
         undersegk = arr['under(frame,i1)']
         underseg  = arr['underseg']
-        underseg[3] = True
-        underseg[10] = True
-        overseg[0] = True
-        overseg[4] = overseg[7] = True
+        #underseg[3] = True
+        #underseg[10] = True
+        #overseg[0] = True
+        #overseg[4] = overseg[7] = True
 
         num_bins = 5
         ax = fig.add_subplot(sub_rc[0], sub_rc[1], 2)
@@ -221,19 +230,29 @@ class Evaluator:
         ax.title.set_text('skew angle - wrong segment')
         DrawOverUnderHistogram(ax, num_bins, overseg, underseg, undersegk, arr['degskew_gt'], '[deg]')
 
+        n_instance = arr_scense['n_instance']
+        etimes = arr_frames['elapsed_time']
+        print('n(Scene) : %d' %  arr_scense.shape[0])
+        print('n(Frame) : %d' %  arr_frames.shape[0])
+        print('n(Box) : ~N(%.2f,%.2f)' % (np.mean(n_instance), np.std(n_instance)) )
 
+        dtype = [('param',object), ('min',float),('max',float),('median',float) ]
+        values = []
+        tp = arr['maxIoU'] > .7
+        for param in ['deg_err', 't_err', 'max_wh_err']:
+            data = arr[param][tp]
+            value = (param, np.min(data), np.max(data), np.median(data) )
+            values.append(value)
+        values.append( ('elapsed time', np.min(etimes), np.max(etimes), np.median(etimes) ) )
+        arr_values = np.array(values,dtype=dtype)
+        tb = tabulate( arr_values, arr_values.dtype.names )
+        print(tb)
 
-        plt.show()
-        #import pdb; pdb.set_trace()
-        exit(1)
-
+        plt.draw()
+        plt.show(block=is_final) # block if this is final call to check.
         return
 
     def GetTables(self):
-        frame_evals= []
-        for k, v in self.frame_evals.items():
-            frame_evals += v
-
         dtype = [('maxIoU', float),
                  ('recall', float),
                  ('precision', float),
@@ -246,11 +265,41 @@ class Evaluator:
                  ('overseg', bool),
                  ('underseg', bool),
                  ('under(frame,i1)', tuple), # frame and prediction index for unique
+                 ('scene_basename', object),
                  ]
-        headers, values = [], []
-        for name,_ in dtype[1:]:
-            headers.append(name)
+
+        scene_dtype = [ 
+                ('scene_basename', object),
+                ('rosbag_fn', object),
+                ('cvgt_fn', object),
+                ('n_instance', int),
+                 ]
+
+        frame_dtype = [
+                ('scene_basename', object),
+                ('elapsed_time',float),
+                ]
+
+        scenes = []
+        frames = []
+        frame_evals= []
+        for base, frame_evals_of_a_scene in self.frame_evals.items():
+            frame_evals += frame_evals_of_a_scene
+            pick = frame_evals_of_a_scene[0].pick
+            n_instance = len(pick['obbs'])
+            n_frames = len(frame_evals_of_a_scene)
+            scenes.append( (base, pick['fullfn'], pick['cvgt_fn'], n_instance) )
+            for frame_eval in frame_evals_of_a_scene:
+                etime = frame_eval.elapsed_time
+                frames.append( (base, etime) )
+        arr_scenes = np.array(scenes, dtype=scene_dtype)
+        arr_frames = np.array(frames, dtype=frame_dtype)
+
+        values = []
         for frame_i, frame in enumerate(frame_evals):
+            pick = frame.pick
+            rosbag_fn, cvgt_fn = pick['fullfn'], pick['cvgt_fn']
+            scene_basename = osp.split(osp.basename(rosbag_fn))[1]
             for i0 in frame.indices0:
                 #1) Get Best IoU and w0, h0,
                 #2) Get Best IoU's 'w1, h1, b(IsOverseg), b(IsUnderseg), t_err, r_err, Twb'
@@ -281,7 +330,9 @@ class Evaluator:
                     t_err = np.linalg.norm(t_err)
 
                     # Denote that x-axis is assigned to normal of front plane.
-                    max_wh_err = max( (b1.scale-b0.scale)[1:] ) # [meter]
+                    s_err = (b1.scale-b0.scale)[1:]
+                    s_err = np.abs(s_err)
+                    max_wh_err = max( s_err ) # [meter]
                     min_wh_gt = min(b0.scale[1:])
                     # Center 'p'oint of ground truth on 'c'amera frame.
                     (rwc, twc) = frame.Twc
@@ -303,18 +354,20 @@ class Evaluator:
                     else:
                         underseg_frame_i1 = (-1,-1)
 
-                arr = ( max_iou, recall, precision,
+                value = ( max_iou, recall, precision,
                         t_err, deg_err, max_wh_err, min_wh_gt, z_gt, degskew_gt,
-                        overseg, underseg, underseg_frame_i1
+                        overseg, underseg, underseg_frame_i1,
+                        scene_basename,
                         )
-                values.append(arr)
+                values.append(value)
                 # for i0 in frame.indices0
             # for frame
-        arr = np.array(values, dtype=dtype) # create a structured array
-        return arr, headers
+        arr = np.array(values, dtype=dtype)
+        return arr_scenes, arr_frames, arr
 
 class FrameEval:
-    def __init__(self, pick, Twc, cam_id, plane_c, max_z, verbose=True):
+    def __init__(self, pick, Twc, cam_id, plane_c, max_z, elapsed_time, verbose=True):
+        self.elapsed_time = elapsed_time
         self.pick = pick
         # Convert OBB to world(frame_id='robot) coordinate.
         q,t = Twc.orientation, Twc.position
@@ -627,7 +680,7 @@ def DrawIouRecall(arr, ax):
 def DrawOverUnderHistogram(ax, num_bins, overseg, underseg, undersegk, param, xlabel):
     min_max = param.min(), param.max()
     nbox_hist, bound = np.histogram(param, num_bins, range=min_max)
-    nbox_hist[nbox_hist==0] = 1
+    no_samples = nbox_hist==0
 
     over_hist = np.histogram(param[overseg] , num_bins, range=min_max)[0].astype(np.float)
 
@@ -637,13 +690,15 @@ def DrawOverUnderHistogram(ax, num_bins, overseg, underseg, undersegk, param, xl
     underseg_param = underseg_param[indices]
     under_hist = np.histogram(underseg_param , num_bins, range=min_max)[0].astype(np.float)
 
-    xlabels = []
-    for i in range(num_bins):
-        xlabels.append('%.2f~%.2f\nn(box)=%d'%(bound[i],bound[i+1],nbox_hist[i]))
     x = np.arange(num_bins)
+    nbox_hist[no_samples] = 1 # To prevent divide by zero
     ax.bar(x-.2, width=.4, height=(over_hist/nbox_hist.astype(np.float))*100.,  alpha=.5, label='oversegment')
     ax.bar(x+.2, width=.4, height=(under_hist/nbox_hist.astype(np.float))*100., alpha=.5, label='undersegment')
 
+    xlabels = []
+    nbox_hist[no_samples] = 0 # To show true number
+    for i in range(num_bins):
+        xlabels.append('%.2f~%.2f\nn(box)=%d'%(bound[i],bound[i+1],nbox_hist[i]))
     ax.set_ylabel('[%]',rotation=0, fontweight='bold')
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=10)
     ax.xaxis.set_label_coords(1.05, -0.02)
@@ -691,13 +746,11 @@ def hist1(arr):
     plt.legend()
 
 
-
-
 if __name__ == '__main__':
     # For debug
     f = open('/home/geo/catkin_ws/src/ros_unet/tmp.pick','rb')
     pick = pickle.load(f)
     f.close()
     evaluator = Evaluator()
-    evaluator.Evaluate(pick['arr'], pick['headers'] )
+    evaluator.Evaluate(pick['arr_scense'], pick['arr_frames'], pick['arr'] )
 

@@ -112,6 +112,7 @@ if __name__=="__main__":
             rect_rgb_msg, rect_depth_msg, rect_depth = rectify(rgb_msg, depth_msg, mx, my, bridge)
 
             y0, max_z = 50, 2.
+            t0 = time.time()
             floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, y0, max_z)
             floor_mask = floor_msg.mask
             floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
@@ -123,8 +124,8 @@ if __name__=="__main__":
             plane_w = convert_plane(Twc, plane_c) # empty plane = no floor filter.
             obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
-
-            frame_eval = FrameEval(pick, Twc, cam_id, plane_c, max_z, verbose=True)
+            t1 = time.time()
+            frame_eval = FrameEval(pick, Twc, cam_id, plane_c, max_z, t1-t0, verbose=True)
             frame_eval.GetMatches(obb_resp.output)
             evaluator.PutFrame(pick['fullfn'], frame_eval)
             rate.sleep()
@@ -136,6 +137,7 @@ if __name__=="__main__":
             #c = cv2.waitKey()
             #if c == ord('q'):
             #    exit(1)
-
-        evaluator.Evaluate()
+    if evaluator.n_evaluate > 0:
+        print("~~~~~~~~~~Final evaluation~~~~~~~~~~~")
+        evaluator.Evaluate(is_final=True)
 

@@ -37,7 +37,7 @@
 
 <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>
 <arg name="load_config" default="true"/>
-<arg name="side" default="up"/>
+<arg name="side" default="down"/>
 <group if="$(arg load_config)">
   <node pkg="rostopic" type="rostopic" name="tilt"
   args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
