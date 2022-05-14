@@ -130,14 +130,11 @@ if __name__=="__main__":
             evaluator.PutFrame(pick['fullfn'], frame_eval)
             rate.sleep()
 
-            # TODO remove below visualizer..
-            #cvedge = np.frombuffer(edge_resp.mask.data, dtype=np.uint8).reshape(edge_resp.mask.height, edge_resp.mask.width, 2)
-            #cv2.imshow("rgb", cvrgb)
-            #cv2.imshow("edge", (cvedge[:,:,0]==1).astype(np.uint8)*255 )
-            #c = cv2.waitKey()
-            #if c == ord('q'):
-            #    exit(1)
-    if evaluator.n_evaluate > 0:
+        # Draw for after evaluating a rosbag file.
+        if evaluator.n_frame > 0:
+            evaluator.Evaluate(is_final=False)
+
+    if evaluator.n_frame > 0:
         print("~~~~~~~~~~Final evaluation~~~~~~~~~~~")
         evaluator.Evaluate(is_final=True)
 
