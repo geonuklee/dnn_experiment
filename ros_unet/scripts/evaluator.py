@@ -185,8 +185,8 @@ class Evaluator:
         '''
         * [x] Accumulative graph : minIoU - Recall ratio
             * ref: https://matplotlib.org/stable/gallery/statistics/histogram_cumulative.html
-        * [ ] Histogram : min(w,h) - n(UnderSeg)*, n(OverSeg) << for skew less than 20deg
-        * [ ] Histogram : skew angle - n(UnderSeg), n(OverSeg)* << for min(w,h) over 10cm
+        * [x] Histogram : min(w,h) - prob(UnderSeg)*, prob(OverSeg) << for skew less than 20deg
+        * [x] Histogram : skew angle - prob(UnderSeg), prob(OverSeg)* << for min(w,h) over 10cm
         * [ ] Table : 
             * all : n(frame) - n(Box) - prob(OverSeg) - prob(UnderSeg) std(trans) over IoU>.7 - std(Deg) over IoU>.7
             * random only : "
@@ -195,39 +195,37 @@ class Evaluator:
         * No FP detection - due to no consideration for unbox object yet.
         '''
 
-        # TODO
-        n_instance = arr.shape[0]
-        iou_column = fields_view(arr, ['maxIoU'] )
-        iou_column = np.sort(iou_column, order='maxIoU',)[::-1] # Descending order.
-        iou_column = iou_column.astype(np.float32)
-        n_arr = (np.arange(0,n_instance,dtype=np.float32) + 1.)/float(n_instance)
-        iou_recall = np.stack( (iou_column, n_arr), axis=1 )[::-1]
-        r0 = np.array( (0., 1.) ).reshape((1,2))
-        rend = np.array( (1., 0.) ).reshape((1,2))
-        iou_recall = np.vstack( (r0, iou_recall, rend) )
-        #print(iou_recall)
-        plt.subplot(221).title.set_text('(minIoU-Recall) of detection')
-        plt.xlabel('minIoU')
-        plt.ylabel('Recall')
-        plt.plot(iou_recall[:,0], iou_recall[:,1])
+
+        sub_rc = (2,3)
+        fig = plt.figure(figsize=(20, 8))
+        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 1)
+        DrawIouRecall(arr,ax)
+        overseg   = arr['overseg']
+        undersegk = arr['under(frame,i1)']
+        underseg  = arr['underseg']
+        underseg[3] = True
+        underseg[10] = True
+        overseg[0] = True
+        overseg[4] = overseg[7] = True
+
+        num_bins = 5
+        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 2)
+        ax.title.set_text('min(w,h) - wrong segment')
+        DrawOverUnderHistogram(ax, num_bins, overseg, underseg, undersegk, arr['min_wh_gt'], '[m]')
+
+        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 3)
+        ax.title.set_text('center depth - wrong segment')
+        DrawOverUnderHistogram(ax, num_bins, overseg, underseg, undersegk, arr['z_gt'], '[m]')
+
+        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 4)
+        ax.title.set_text('skew angle - wrong segment')
+        DrawOverUnderHistogram(ax, num_bins, overseg, underseg, undersegk, arr['degskew_gt'], '[deg]')
+
+
 
         plt.show()
+        #import pdb; pdb.set_trace()
         exit(1)
-
-        
-        #table = tabulate(arr, headers)
-        #if False:
-        #    n0, n1, n_underseg, n_overseg = 0,0,0,0
-        #    for frame in frame_evals:
-        #        _n0, _n1, _n_underseg, _n_overseg = frame.CountUnderOverSegmentation()
-        #        n0 += _n0
-        #        n1 += _n1
-        #        n_underseg += _n_underseg
-        #        n_overseg += _n_overseg
-        #    prob_under = float(n_underseg) / float(n0)
-        #    prob_over = float(n_overseg) / float(n0)
-        #    print("prob(under, over segmntation) = %.4f, %.4f" % (prob_under, prob_over) )
-        #    # TODO : Write prob text on matplotlib.
 
         return
 
@@ -609,6 +607,91 @@ def VisualizeGt(gt_obbs):
         markers.markers.append(marker)
         poses.poses.append(marker.pose)
     return poses, markers
+
+def DrawIouRecall(arr, ax):
+    n_instance = arr.shape[0]
+    iou_column = fields_view(arr, ['maxIoU'] )
+    iou_column = np.sort(iou_column, order='maxIoU',)[::-1] # Descending order.
+    iou_column = iou_column.astype(np.float32)
+    n_arr = (np.arange(0,n_instance,dtype=np.float32) + 1.)/float(n_instance)
+    iou_recall = np.stack( (iou_column, n_arr), axis=1 )[::-1]
+    r0 = np.array( (0., 1.) ).reshape((1,2))
+    rend = np.array( (1., 0.) ).reshape((1,2))
+    iou_recall = np.vstack( (r0, iou_recall, rend) )
+    ax.title.set_text('(minIoU-Recall) of detection')
+    ax.set_xlabel('minIoU')
+    ax.set_ylabel('Recall')
+    ax.plot(iou_recall[:,0], iou_recall[:,1])
+    return 
+
+def DrawOverUnderHistogram(ax, num_bins, overseg, underseg, undersegk, param, xlabel):
+    min_max = param.min(), param.max()
+    nbox_hist, bound = np.histogram(param, num_bins, range=min_max)
+    nbox_hist[nbox_hist==0] = 1
+
+    over_hist = np.histogram(param[overseg] , num_bins, range=min_max)[0].astype(np.float)
+
+    filtered_underseg_cases = undersegk[underseg]
+    underseg_param             = param[underseg]
+    _, indices = np.unique( filtered_underseg_cases, return_index=True)
+    underseg_param = underseg_param[indices]
+    under_hist = np.histogram(underseg_param , num_bins, range=min_max)[0].astype(np.float)
+
+    xlabels = []
+    for i in range(num_bins):
+        xlabels.append('%.2f~%.2f\nn(box)=%d'%(bound[i],bound[i+1],nbox_hist[i]))
+    x = np.arange(num_bins)
+    ax.bar(x-.2, width=.4, height=(over_hist/nbox_hist.astype(np.float))*100.,  alpha=.5, label='oversegment')
+    ax.bar(x+.2, width=.4, height=(under_hist/nbox_hist.astype(np.float))*100., alpha=.5, label='undersegment')
+
+    ax.set_ylabel('[%]',rotation=0, fontweight='bold')
+    ax.set_xticklabels(xlabels, rotation=0.,fontsize=10)
+    ax.xaxis.set_label_coords(1.05, -0.02)
+    ax.yaxis.set_label_coords(-0.08, 1.)
+    ax.set_xticks(x)
+    ax.set_xlabel(xlabel, fontweight='bold')
+    ax.legend()
+
+def hist1(arr):
+    ax1 = plt.subplot(222)
+    ax1.title.set_text('min(w,h)-prob([Under|Over] segemntation)')
+
+    num_bins = 5
+    #x = fields_view(arr, ['min_wh_gt','underseg'] )
+    wh, underseg = arr['min_wh_gt'], arr['underseg']
+    underseg[0] = True
+    underseg[4] = underseg[7] = True
+
+    bound = wh.min(), wh.max()
+    nbox_hist = np.histogram(wh, num_bins, range=bound)
+    under_hist = np.histogram(wh[underseg] , num_bins, range=bound)
+
+    hist_a = under_hist[0].astype(np.float) 
+    hist_b = nbox_hist[0].astype(np.float)
+    hist_b[hist_b==0.] = 1.
+
+    hist_a = np.append(hist_a,hist_a[-1])
+    hist_b = np.append(hist_b,hist_b[-1])
+
+    #plt.step(nbox_hist[1], hist_a, where='post') # label='n(underseg)')
+    plt.step(nbox_hist[1], hist_a/hist_b , where='post', label='p(underseg)')
+
+    #plt.step(nbox_hist[1], hist_b/float(hist_b.sum()), where='post', label='ratio')
+
+    #specify x-axis locations
+    x_ticks = [1, 2, 6, 10]
+    #specify x-axis labels
+    x_labels = [1, 2, 6, 10] 
+    
+    plt.xticks(nbox_hist[1])
+    # ref : https://stackoverflow.com/questions/38667728/matplotlib-histogram-scale-y-axis-by-a-constant-factor
+    x_vals = ax1.get_xticks()
+    ax1.set_xticklabels(['{:.2f}'.format(x ) for x in x_vals])
+
+    plt.legend()
+
+
+
 
 if __name__ == '__main__':
     # For debug
