@@ -20,11 +20,6 @@ from os import path as osp
 import matplotlib.pyplot as plt
 from tabulate import tabulate
 
-# ref : https://stackoverflow.com/a/21819324
-def fields_view(arr, fields):
-    dtype2 = np.dtype({name:arr.dtype.fields[name] for name in fields})
-    return np.ndarray(arr.shape, dtype2, arr, 0, arr.strides)
-
 th_seg = .3
 def IsOversegmentation(precision, recall):
     return (precision-recall) > th_seg
@@ -184,13 +179,15 @@ class Evaluator:
         self.scene_evals[base] = scene_eval 
 
     def PutFrame(self, fn, frame_eval):
+        frame_eval.frame_id = self.n_frame
+        self.n_frame += 1
+
         base = osp.splitext( osp.basename(fn) )[0]
 
         if not self.frame_evals.has_key(base):
             self.frame_evals[base] = []
         self.frame_evals[base].append(frame_eval)
-        
-        self.n_frame += 1
+
         return
 
     def Evaluate(self, arr_scense=None, arr_frames=None, arr=None, is_final=False):
@@ -216,7 +213,7 @@ class Evaluator:
         * [x] Table : 
         '''
         if not hasattr(self, 'fig'):
-            self.fig = plt.figure(figsize=(20, 8))
+            self.fig = plt.figure(figsize=(12, 9))
         else:
             plt.clf()
         fig = self.fig
@@ -262,7 +259,8 @@ class Evaluator:
 
         if is_final:
             fig.suptitle('Evaluation', fontsize=16)
-        plt.draw()
+        plt.tight_layout(pad=3., w_pad=2., h_pad=3.0)
+        fig.canvas.draw()
         plt.show(block=is_final) # block if this is final call to check.
         return
 
@@ -281,6 +279,8 @@ class Evaluator:
                  ('under(frame,i1)', tuple), # frame and prediction index for unique
                  ('scene_basename', object),
                  ('crosscheck', bool),
+                 ('base_id', int),
+                 ('frame_id', int),
                  ('i0', int),
                  ('i1', int),
                  ]
@@ -298,7 +298,9 @@ class Evaluator:
                 ]
 
         scenes = []
-        for base, scen_eval in self.scene_evals.items():
+        base2id = {}
+        for base_id, (base, scen_eval) in enumerate(self.scene_evals.items()):
+            base2id[base] = base_id
             pick = scen_eval.pick
             n_instance = len(pick['obbs'])
             scenes.append( (base, pick['fullfn'], pick['cvgt_fn'], n_instance) )
@@ -317,14 +319,15 @@ class Evaluator:
         arr_frames = np.array(frames, dtype=frame_dtype)
 
         values = []
-        for frame_i, frame in enumerate(frame_evals):
+        for frame in frame_evals:
             pick = frame.scene_eval.pick
             rosbag_fn, cvgt_fn = pick['fullfn'], pick['cvgt_fn']
-            scene_basename = osp.split(osp.basename(rosbag_fn))[1]
+            scene_basename = osp.splitext(osp.basename(rosbag_fn))[0]
+
             for i0 in frame.indices0:
                 #1) Get Best IoU and w0, h0,
                 #2) Get Best IoU's 'w1, h1, b(IsOverseg), b(IsUnderseg), t_err, r_err, Twb'
-                best_i1, max_iou = GetBest_i1(frame,i0)
+                best_i1, max_iou  = GetBest_i1(frame,i0)
                 correspond_i0, _  = GetBest_i0(frame,best_i1)
                 crosscheck = i0 == correspond_i0
 
@@ -369,7 +372,7 @@ class Evaluator:
                     overseg = IsOversegmentation( precision, recall)
                     underseg= IsUndersegmentation(precision, recall)
                     if underseg:
-                        underseg_frame_i1 = (frame_i, best_i1)
+                        underseg_frame_i1 = (frame.frame_id, best_i1)
                     else:
                         underseg_frame_i1 = (-1,-1)
 
@@ -378,6 +381,8 @@ class Evaluator:
                         overseg, underseg, underseg_frame_i1,
                         scene_basename,
                         crosscheck,
+                        base2id[scene_basename],
+                        frame.frame_id,
                         i0, best_i1,
                         )
                 values.append(value)
@@ -406,10 +411,9 @@ class SceneEval:
             pose_cb = obj['pose']
             tcb = np.array( pose_cb[:3]+(1.,)  ).reshape((-1,))
             d = plane_c.dot(tcb)
-            if d > .1:
-                gt_obbs.append(obj)
+            if d < .1:
+                continue
             tcb = tcb[:3]
-
             Rcb = rotation_util.from_quat([pose_cb[4], pose_cb[5], pose_cb[6], pose_cb[3] ])
             Rwb = Rwc*Rcb
             twb = np.matmul(Rwc.as_dcm(),tcb) + twc
@@ -464,6 +468,7 @@ class FrameEval:
             indices0.add(i0)
             pairs0to1[i0] = []
 
+        n_iou_over_th, min_iou = 0, .7
         for i1, obj1 in enumerate(obj_array1.markers):
             if obj1.type != Marker.CUBE or obj1.action != Marker.ADD:
                 continue
@@ -524,6 +529,9 @@ class FrameEval:
                 if precision < 0.1 or recall < 0.1:
                     continue
 
+                if loss.iou() > min_iou:
+                    n_iou_over_th += 1
+
                 info = GetInfoMarker(obj1, precision, recall, loss, len(infos.markers) )
                 infos.markers.append(info)
 
@@ -535,6 +543,8 @@ class FrameEval:
 
                 correspondence.points.append(Point(cp_surf0[0], cp_surf0[1], cp_surf0[2])) # Front center
                 correspondence.points.append(Point(cp_surf1[0], cp_surf1[1], cp_surf1[2]))
+
+        print("IoU>%.2f for each i0 =  %d/%d" % (min_iou,n_iou_over_th, len(obj_array0.markers) ) )
 
         if hasattr(self, 'pub_infos'):
             self.pub_gt_pose.publish(center_poses0)
@@ -687,20 +697,32 @@ def VisualizeGt(gt_obbs):
     return poses, markers
 
 def DrawIouRecall(arr, ax):
-    crosschecked = arr['crosscheck']
-    iou_column = arr[crosschecked]['maxIoU']
-    n_instance = iou_column.shape[0]
-    iou_column = np.sort(iou_column)[::-1] # Descending order.
-    iou_column = iou_column.astype(np.float32)
-    n_arr = (np.arange(0,n_instance,dtype=np.float32) + 1.)/float(n_instance)
-    iou_recall = np.stack( (iou_column, n_arr), axis=1 )[::-1]
-    r0 = np.array( (0., 1.) ).reshape((1,2))
-    rend = np.array( (1., 0.) ).reshape((1,2))
-    iou_recall = np.vstack( (r0, iou_recall, rend) )
+    # TODO n_instance
+    #partial_arr = fields_view(arr, ['frame_id', 'i0', 'maxIoU', 'crosscheck'])
+    cases = {}
+    for row in range(arr.shape[0]):
+        frame_id, i0, maxIoU, crosscheck \
+                = arr['frame_id'][row], arr['i0'][row], arr['maxIoU'][row], arr['crosscheck'][row]
+        k = (frame_id,i0)
+        if cases.has_key(k):
+            if maxIoU > cases[k] and crosscheck:
+                cases[k] = maxIoU
+        else:
+            if crosscheck:
+                cases[k] = maxIoU
+            else:
+                cases[k] = 0
+    maxIou_datas =  np.array(cases.values())
+    maxIou_datas = np.sort(maxIou_datas)[::-1] # Descending order.
+    n_instance   = len(cases)
+    recall_arr = (np.arange(0,n_instance,dtype=np.float32) + 1.)/float(n_instance)
+    iou_recall = np.stack( (maxIou_datas,recall_arr), axis=1 )[::-1]
+    iou_recall = iou_recall[iou_recall[:,0]>0.,:]
+
     ax.title.set_text('(minIoU-Recall) of detection')
     ax.set_xlabel('minIoU')
     ax.set_ylabel('Recall')
-    ax.plot(iou_recall[:,0], iou_recall[:,1])
+    ax.plot(iou_recall[:,0], iou_recall[:,1],'.-')
     return 
 
 def DrawOverUnderHistogram(ax, num_bins, min_max, tp_iou, tp, arr, param, xlabel):
@@ -727,10 +749,12 @@ def DrawOverUnderHistogram(ax, num_bins, min_max, tp_iou, tp, arr, param, xlabel
     #union = np.logical_or(union, tp)
     #others = ~union
 
-    base_i0 = fields_view(arr, ['scene_basename', 'i0'])
-    _, unique_boxes = np.unique( base_i0, return_index=True)
-    nbox_hist, _     = np.histogram(param[unique_boxes], num_bins, range=min_max)
+    base_i0 = np.stack((arr['base_id'], arr['i0']), axis=1) # axis=1 cause shape (N,2)
+    assert(base_i0.shape[0] == len(arr) )
+    _, unique_boxes = np.unique( base_i0, return_index=True, axis=0)
     ntry_hist, bound = np.histogram(param, num_bins, range=min_max)
+    nbox_hist, _     = np.histogram(param[unique_boxes], num_bins, range=min_max)
+
     no_samples = ntry_hist==0
 
     over_hist  = np.histogram(param[overseg] , num_bins, range=min_max)[0].astype(np.float)
@@ -759,7 +783,7 @@ def DrawOverUnderHistogram(ax, num_bins, min_max, tp_iou, tp, arr, param, xlabel
     ax.yaxis.set_label_coords(-0.08, 1.)
     ax.set_xticks(x)
     ax.set_xlabel(xlabel, fontweight='bold')
-    ax.legend()
+    ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.12), ncol=3)
 
 
 if __name__ == '__main__':

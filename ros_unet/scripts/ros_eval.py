@@ -136,8 +136,9 @@ if __name__=="__main__":
             evaluator.PutFrame(pick['fullfn'], frame_eval)
             rate.sleep()
 
-            #if evaluator.n_frame > 5: # TODO
-            #    break
+            if evaluator.n_frame%2 % 10 or evaluator.n_evaluate==0: # TODO
+                evaluator.Evaluate(is_final=False)
+                print('Evaluate files.. %d/%d'%(i_file, len(gt_files)) )
 
         # Draw for after evaluating a rosbag file.
         if evaluator.n_frame > 0:
