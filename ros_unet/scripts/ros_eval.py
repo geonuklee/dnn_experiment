@@ -21,7 +21,7 @@ from evaluator import Evaluator, SceneEval, FrameEval # TODO change file
 from ros_client import *
 
 def get_pick(fn):
-    f = open(gt_fn,'r')
+    f = open(fn,'r')
     pick = pickle.load(f)
     f.close()
     return pick
@@ -113,13 +113,13 @@ if __name__=="__main__":
             rect_rgb_msg, rect_depth_msg, rect_depth = rectify(rgb_msg, depth_msg, mx, my, bridge)
 
             if scene_eval is None:
-                y0, max_z = 50, 2.
+                y0, max_z = 50, 3.
                 floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, y0, max_z)
                 plane_c = floor_msg.plane
                 floor_mask = floor_msg.mask
                 floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
                 Twc = get_Twc(cam_id)
-                scene_eval = SceneEval(pick, Twc, plane_c, max_z)
+                scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
                 scene_eval.floor = floor
                 evaluator.PutScene(pick['fullfn'],scene_eval)
             rect_depth[floor>0] = 0.
@@ -133,12 +133,13 @@ if __name__=="__main__":
             t1 = time.time()
             frame_eval = FrameEval(scene_eval, cam_id, t1-t0, verbose=True)
             frame_eval.GetMatches(obb_resp.output)
-            evaluator.PutFrame(pick['fullfn'], frame_eval)
+            n = evaluator.PutFrame(pick['fullfn'], frame_eval)
             rate.sleep()
 
-            if evaluator.n_frame%2 % 10 or evaluator.n_evaluate==0: # TODO
+            print("scene %d/%d ... "% (i_file, len(gt_files) ) )
+            if n%10==0 :  # TODO
                 evaluator.Evaluate(is_final=False)
-                print('Evaluate files.. %d/%d'%(i_file, len(gt_files)) )
+                break
 
         # Draw for after evaluating a rosbag file.
         if evaluator.n_frame > 0:

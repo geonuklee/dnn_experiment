@@ -73,7 +73,8 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
                               const float* ptr_depth,
                               const EigenMap<int,Eigen::Matrix<float,6,1> >& label2vertices,
                               const float* ptr_numap,
-                              const float* ptr_nvmap
+                              const float* ptr_nvmap,
+                              float max_depth
                              ){
   int rows = shape[0];
   int cols = shape[1];
@@ -112,6 +113,8 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       const float& d = depth.at<float>(r,c);
       if(d==0)
         continue;
+      if(d > max_depth)
+        continue;
       if(l_marker==0)
         continue;
       pcl::PointXYZ xyz = uv2pclxyz(r,c);
@@ -128,6 +131,25 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
           allpoints[l_marker] = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>() );
         allpoints.at(l_marker)->push_back(xyz);
       }
+    }
+  }
+  // plane detection with frontpoints.
+  const float leaf_size = 0.01;
+  for(auto it : frontpoints){
+    pcl::PointCloud<pcl::PointXYZ>::Ptr front_cloud = it.second;
+    {
+      pcl::VoxelGrid<pcl::PointXYZ> sor;
+      sor.setInputCloud(front_cloud);
+      sor.setLeafSize(leaf_size,leaf_size,leaf_size);
+      sor.filter(*front_cloud);
+    }
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr all_cloud= allpoints.at(it.first);
+    {
+      pcl::VoxelGrid<pcl::PointXYZ> sor;
+      sor.setInputCloud(all_cloud);
+      sor.setLeafSize(leaf_size,leaf_size,leaf_size);
+      sor.filter(*all_cloud);
     }
   }
 
@@ -185,13 +207,13 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
                 [](const pcl::PointIndices& a, const pcl::PointIndices& b) {
                 return a.indices.size() > b.indices.size(); });
 
-      bool contact_with_plane = false;
       for(int i = 0; i < cluster_indices.size(); i++){
-        pcl::PointIndices inliers = cluster_indices[i];
+        const pcl::PointIndices& inliers = cluster_indices[i];
+        bool contact_with_plane = false;
         for(int j : inliers.indices){
           const auto& pt = all_cloud->at(j);
           float d = Eigen::Vector4f(pt.x,pt.y,pt.z,1.).dot(plane);
-          if( std::abs(d) < 0.02){
+          if( std::abs(d) < 0.1){
             contact_with_plane = true;
             break;
           }
@@ -207,9 +229,6 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
         extract.filter(*all_cloud);
         break;
       }
-      if(! contact_with_plane ){
-        // TODO?
-      }
     }
 
     // Orientation from vertices
@@ -222,8 +241,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
 
     Eigen::Matrix<float,3,3> R0c;
     R0c.row(0) = r1.transpose();
-#if 1
-    // TODO
+
     Eigen::Vector3f pt_a = vertices[2]>0.
       ? uv2eigen_xyz(vertices[2],vertices[3])
       : uv2eigen_xyz(vertices[4],vertices[5]);
@@ -242,31 +260,6 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     }
     R0c.row(1) = r2.transpose();
     R0c.row(2) = r3.transpose();
-#else
-    // Assume green, blue dots of ground truth label image is correct.
-    if(vertices[2]>0.){
-      // Given x direction on image plane.
-      Eigen::Vector3f pt_y = uv2eigen_xyz(vertices[2],vertices[3]);
-      pt_y = pt_y - (pt_y.dot(n)+plane[3])*n;// projection on plane
-      Eigen::Vector3f r2 = (pt_y - pt_o).normalized();
-      if(r2[2] > 0.) // Fix wrong direction
-        r2 = -r2;
-      Eigen::Vector3f r3 = r1.cross(r2);
-      R0c.row(1) = r2.transpose();
-      R0c.row(2) = r3.transpose();
-    }
-    else{
-      // Given y direction on image plane.
-      Eigen::Vector3f pt_z = uv2eigen_xyz(vertices[4],vertices[5]);
-      pt_z = pt_z - (pt_z.dot(n)+plane[3])*n;// projection on plane
-      Eigen::Vector3f r3 = (pt_z - pt_o).normalized();
-      if(r3[0] > 0.) // Fix wrong direction
-        r3 = -r3;
-      Eigen::Vector3f r2 = r3.cross(r1);
-      R0c.row(1) = r2.transpose();
-      R0c.row(2) = r3.transpose();
-    }
-#endif
 
     Eigen::Vector3f t0c; {
       Eigen::Matrix<float,3,3> Rc0 = R0c.transpose();
@@ -303,7 +296,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     g2o::SE3Quat T0b; // TODO
     T0b.setTranslation(Eigen::Vector3d(max_x0[0]+min_x0[0], max_x0[1]+min_x0[1], max_x0[2]+min_x0[2])/2);
 #if 1
-    g2o::SE3Quat Tcb = T0c.inverse() * T0b; // {c} -> {box}
+    g2o::SE3Quat Tcb = T0c.inverse() * T0b; // {c} <-> {box}
 #else
     g2o::SE3Quat Tcb = T0c.inverse();
 #endif
@@ -956,7 +949,8 @@ py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
                        py::list py_label2vertices,
                        py::array_t<float> depth,
                        py::array_t<float> numap,
-                       py::array_t<float> nvmap
+                       py::array_t<float> nvmap,
+                       float max_depth
                        ){
   py::buffer_info buf_depth = depth.request();
   const float* ptr_depth = (const float*) buf_depth.ptr;
@@ -995,7 +989,8 @@ py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
                                          ptr_depth,
                                          label2vertices,
                                          ptr_numap,
-                                         ptr_nvmap
+                                         ptr_nvmap,
+                                         max_depth
                                          );
   py::list list;
   for(auto it : output){
@@ -1036,7 +1031,8 @@ PYBIND11_MODULE(unet_ext, m) {
         py::arg("label2vertices"),
         py::arg("depth"),
         py::arg("nu_map"),
-        py::arg("nv_map")
+        py::arg("nv_map"),
+        py::arg("max_depth")
         );
 #endif
 }

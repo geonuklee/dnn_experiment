@@ -134,6 +134,7 @@ def ParseRosbag(output_path, fullfn, max_z):
         cv2.putText(dst_with_msg, 'Computing OBB is inprogress...',
                 (5,10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255))
         cv2.imshow("sample", dst_with_msg)
+        cv2.waitKey(1)
 
         depth = pick['depth'].copy()
         depth[depth > max_z] = 0.
@@ -141,7 +142,7 @@ def ParseRosbag(output_path, fullfn, max_z):
         pickle.dump(pick, open(pick_fn, "wb" ))
     return
 
-def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag):
+def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
     # 1) watershed, 꼭지점 따기.
     # 2) OBB - Roll angle 따기.
     # 3) unet_ext : Unprojection,
@@ -209,7 +210,7 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag):
     dist = cv2.distanceTransform( (~outline).astype(np.uint8),
             distanceType=cv2.DIST_L2, maskSize=5)
     n_inssegments, marker0, _, _ \
-            = cv2.connectedComponentsWithStats((dist>1).astype(np.uint8))
+            = cv2.connectedComponentsWithStats((dist>5).astype(np.uint8))
     
     # Sync correspondence of marker and  plane_marker
     marker = np.zeros_like(marker0)
@@ -235,7 +236,8 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag):
                 nu_map[r,c] = nuv[0,0,0]
                 nv_map[r,c] = nuv[0,0,1]
 
-    obb_tuples = unet_ext.ComputeOBB(front_marker, marker, planemarker2vertices, depth, nu_map, nv_map)
+    obb_tuples = unet_ext.ComputeOBB(front_marker, marker, planemarker2vertices, depth,
+            nu_map, nv_map, max_depth)
     obbs = []
     for idx, pose, scale in obb_tuples:
         #  pose = (x,y,z, qw,qx,qy,qz) for transform {camera} <- {box}

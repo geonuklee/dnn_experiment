@@ -187,8 +187,7 @@ class Evaluator:
         if not self.frame_evals.has_key(base):
             self.frame_evals[base] = []
         self.frame_evals[base].append(frame_eval)
-
-        return
+        return len(self.frame_evals[base])
 
     def Evaluate(self, arr_scense=None, arr_frames=None, arr=None, is_final=False):
         self.n_evaluate += 1
@@ -227,12 +226,12 @@ class Evaluator:
         num_bins = 5
         ax = fig.add_subplot(sub_rc[0], sub_rc[1], 2)
         ax.title.set_text('min(w,h)')
-        DrawOverUnderHistogram(ax, num_bins, (.2, arr['min_wh_gt'].max() ),
+        DrawOverUnderHistogram(ax, num_bins, (arr['min_wh_gt'].min() , arr['min_wh_gt'].max() ),
                 tp_iou, tp, arr, arr['min_wh_gt'], '[m]')
 
         ax = fig.add_subplot(sub_rc[0], sub_rc[1], 3)
         ax.title.set_text('center depth')
-        DrawOverUnderHistogram(ax, num_bins, (.5, 2.),
+        DrawOverUnderHistogram(ax, num_bins, (0.5, arr['z_gt'].max()),
                 tp_iou, tp, arr, arr['z_gt'], '[m]')
 
         ax = fig.add_subplot(sub_rc[0], sub_rc[1], 4)
@@ -392,7 +391,7 @@ class Evaluator:
         return arr_scenes, arr_frames, arr
 
 class SceneEval:
-    def __init__(self, pick, Twc, plane_c, max_z):
+    def __init__(self, pick, Twc, plane_c, max_z, cam_id):
         self.pick = pick
         # Convert OBB to world(frame_id='robot) coordinate.
         q,t = Twc.orientation, Twc.position
@@ -411,7 +410,7 @@ class SceneEval:
             pose_cb = obj['pose']
             tcb = np.array( pose_cb[:3]+(1.,)  ).reshape((-1,))
             d = plane_c.dot(tcb)
-            if d < .1:
+            if d < -.1:
                 continue
             tcb = tcb[:3]
             Rcb = rotation_util.from_quat([pose_cb[4], pose_cb[5], pose_cb[6], pose_cb[3] ])
@@ -430,14 +429,43 @@ class SceneEval:
             centers[i,:] = np.array(xyz_qwxyz[:3]).reshape((1,3))
         self.tree = KDTree(centers)
 
+        self.pub_gt_obb = rospy.Publisher("~%s/gt_obb"%cam_id, MarkerArray, queue_size=1)
+        self.pub_gt_pose = rospy.Publisher("~%s/gt_pose"%cam_id, PoseArray, queue_size=1)
+        self.pub_gt_info = rospy.Publisher("~%s/gt_info"%cam_id, MarkerArray, queue_size=1)
+
+
+    def pubGtObb(self):
+        center_poses0, obj_array0 = VisualizeGt(self.gt_obbs)
+        gt_info = MarkerArray()
+        for obj in obj_array0.markers:
+            info = Marker()
+            info.id = obj.id
+            info.type = Marker.TEXT_VIEW_FACING
+            info.text = "id=%d"%obj.id
+            info.scale.z = 0.04
+            info.color.r = info.color.g = info.color.b = 1.
+            info.color.a = 1.
+            info.header.frame_id = "robot"
+            info.pose = obj.pose
+            gt_info.markers.append(info)
+
+        a = Marker()
+        a.action = Marker.DELETEALL
+        for arr in [obj_array0, gt_info]:
+            arr.markers.append(a)
+            arr.markers.reverse()
+
+        self.pub_gt_obb.publish(obj_array0)
+        self.pub_gt_info.publish(gt_info)
+        self.pub_gt_pose.publish(center_poses0)
+
+
 class FrameEval:
     def __init__(self, scene_eval, cam_id, elapsed_time, verbose=True):
         self.elapsed_time = elapsed_time
         self.scene_eval = scene_eval
 
         if verbose:
-            self.pub_gt_obb = rospy.Publisher("~%s/gt_obb"%cam_id, MarkerArray, queue_size=1)
-            self.pub_gt_pose = rospy.Publisher("~%s/gt_pose"%cam_id, PoseArray, queue_size=1)
             self.pub_infos = rospy.Publisher("~%s/info"%cam_id, MarkerArray, queue_size=1)
             self.pub_correspondence = rospy.Publisher("~%s/correspondence"%cam_id, Marker, queue_size=1)
             self.pub_marker_optmized_gt = rospy.Publisher("~%s/optimized_gt"%cam_id, MarkerArray, queue_size=1)
@@ -543,18 +571,14 @@ class FrameEval:
 
                 correspondence.points.append(Point(cp_surf0[0], cp_surf0[1], cp_surf0[2])) # Front center
                 correspondence.points.append(Point(cp_surf1[0], cp_surf1[1], cp_surf1[2]))
-
-        print("IoU>%.2f for each i0 =  %d/%d" % (min_iou,n_iou_over_th, len(obj_array0.markers) ) )
+        #print("IoU>%.2f for each i0 =  %d/%d" % (min_iou,n_iou_over_th, len(obj_array0.markers) ) )
 
         if hasattr(self, 'pub_infos'):
-            self.pub_gt_pose.publish(center_poses0)
             self.pub_correspondence.publish(correspondence)
 
             a = Marker()
             a.action = Marker.DELETEALL
-            obj_array0.markers.append(a)
-            obj_array0.markers.reverse()
-            self.pub_gt_obb.publish(obj_array0)
+            self.scene_eval.pubGtObb()
 
             infos.markers.append(a)
             infos.markers.reverse()
@@ -669,7 +693,7 @@ def GetSurfCenterPoint(marker, daxis):
     scale = (marker.scale.x, marker.scale.y, marker.scale.z)
     return GetSurfCenterPoint0(pose, scale, daxis)
 
-def VisualizeGt(gt_obbs):
+def VisualizeGt(gt_obbs, posename='pose_wb'):
     poses = PoseArray()
     poses.header.frame_id = 'robot'
     markers = MarkerArray()
@@ -722,7 +746,7 @@ def DrawIouRecall(arr, ax):
     ax.title.set_text('(minIoU-Recall) of detection')
     ax.set_xlabel('minIoU')
     ax.set_ylabel('Recall')
-    ax.plot(iou_recall[:,0], iou_recall[:,1],'.-')
+    ax.plot(iou_recall[:,0], iou_recall[:,1],'-')
     return 
 
 def DrawOverUnderHistogram(ax, num_bins, min_max, tp_iou, tp, arr, param, xlabel):

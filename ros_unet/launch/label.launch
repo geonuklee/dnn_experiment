@@ -1,0 +1,34 @@
+<launch>
+<arg name="rviz_name" default="labeling.rviz"/>
+
+<node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/>
+<node name="labeling" pkg="ros_unet" type="labeling.py" output="screen" required="true">
+    <remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
+    <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" />
+</node>
+
+<node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>
+<arg name="load_config" default="true"/>
+<arg name="side" default="down"/>
+<group if="$(arg load_config)">
+  <node pkg="rostopic" type="rostopic" name="tilt"
+  args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
+  '{header: {seq: 0, stamp: {secs: 0, nsecs: 0}, frame_id: ''},
+    cam0_tilt: true,
+    cam1_tilt: true}' -r 10" required="true" if="$(eval side=='up')"/>
+  <node pkg="rostopic" type="rostopic" name="tilt"
+  args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
+  '{header: {seq: 0, stamp: {secs: 0, nsecs: 0}, frame_id: ''},
+    cam0_tilt: false,
+    cam1_tilt: false}' -r 10" required="true" if="$(eval side=='down')"/>
+  <node pkg="tf2_ros" type="static_transform_publisher" name="link0"
+  args="0 0 0 0 0 0 1 cam0_rgb_link cam0_rgb_camera_link"/>
+  <node pkg="tf2_ros" type="static_transform_publisher" name="link1"
+  args="0 0 0 0 0 0 1 cam1_rgb_link cam1_rgb_camera_link"/>
+</group>
+<include file="$(find unloader_calib)/launch/cam_tf_publisher.launch" if="$(arg load_config)"/>
+<rosparam command="load" file="$(find ros_unet)/config/calib_info_for_tf.yaml" if="$(arg load_config)"/>
+
+
+</launch>
+ 

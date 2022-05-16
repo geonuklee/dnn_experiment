@@ -83,7 +83,12 @@ def rectify(rgb_msg, depth_msg, mx, my, bridge):
     return rect_rgb_msg, rect_depth_msg, depth
 
 def get_Twc(cam_id):
-    Twc = rospy.get_param("/%s/base_T_cam"%cam_id)
+    rate = rospy.Rate(2)
+    while True:
+        Twc = rospy.get_param("/%s/base_T_cam"%cam_id, None)
+        if Twc is not None:
+            break
+        rate.sleep()
     pose = convert2pose(Twc)
     return pose
 
