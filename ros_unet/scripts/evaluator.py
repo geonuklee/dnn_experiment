@@ -32,6 +32,23 @@ def IsOversegmentation(precision, recall):
 def IsUndersegmentation(precision, recall):
     return (recall-precision) > th_seg
 
+def GetBest_i1(frame, i0):
+    best_i1, max_iou = -1, 0.
+    for i1 in frame.pairs0to1[i0]:
+        iou = frame.pair_infos[(i0,i1)]['iou']
+        if iou > max_iou:
+            best_i1, max_iou = i1, iou
+    return best_i1, max_iou
+
+def GetBest_i0(frame, i1):
+    if i1 < 0:
+        return -1, 0.
+    best_i0, max_iou = -1, 0.
+    for i0 in frame.pairs1to0[i1]:
+        iou = frame.pair_infos[(i0,i1)]['iou']
+        if iou > max_iou:
+            best_i0, max_iou = i0, iou
+    return best_i0, max_iou
 
 def GetCorrespondenceMarker():
     correspondence = Marker()
@@ -157,10 +174,14 @@ def GetErrors(indices0, pairs0to1, pair_infos, min_iou):
 
 class Evaluator:
     def __init__(self):
+        self.scene_evals = {}
         self.frame_evals = {}
         self.n_frame = 0
         self.n_evaluate = 0
-        pass
+
+    def PutScene(self, fn, scene_eval):
+        base = osp.splitext( osp.basename(fn) )[0]
+        self.scene_evals[base] = scene_eval 
 
     def PutFrame(self, fn, frame_eval):
         base = osp.splitext( osp.basename(fn) )[0]
@@ -191,6 +212,7 @@ class Evaluator:
         * [x] Histogram : min(w,h) - prob(UnderSeg)*, prob(OverSeg) << for skew less than 20deg
         * [x] Histogram : skew angle - prob(UnderSeg), prob(OverSeg)* << for min(w,h) over 10cm
         * [x] Add histogram - 'IoU > .7 ratio for each cases'
+        * [x] GetNSample
         * [x] Table : 
         '''
         if not hasattr(self, 'fig'):
@@ -203,7 +225,7 @@ class Evaluator:
         ax = fig.add_subplot(sub_rc[0], sub_rc[1], 1)
         DrawIouRecall(arr,ax)
         tp_iou = .7
-        tp = arr['maxIoU'] > tp_iou
+        tp = np.logical_and(arr['maxIoU'] > tp_iou, arr['crosscheck'])
 
         num_bins = 5
         ax = fig.add_subplot(sub_rc[0], sub_rc[1], 2)
@@ -258,6 +280,9 @@ class Evaluator:
                  ('underseg', bool),
                  ('under(frame,i1)', tuple), # frame and prediction index for unique
                  ('scene_basename', object),
+                 ('crosscheck', bool),
+                 ('i0', int),
+                 ('i1', int),
                  ]
 
         scene_dtype = [ 
@@ -273,33 +298,35 @@ class Evaluator:
                 ]
 
         scenes = []
+        for base, scen_eval in self.scene_evals.items():
+            pick = scen_eval.pick
+            n_instance = len(pick['obbs'])
+            scenes.append( (base, pick['fullfn'], pick['cvgt_fn'], n_instance) )
+
+        arr_scenes = np.array(scenes, dtype=scene_dtype)
         frames = []
         frame_evals= []
         for base, frame_evals_of_a_scene in self.frame_evals.items():
             frame_evals += frame_evals_of_a_scene
-            pick = frame_evals_of_a_scene[0].pick
-            n_instance = len(pick['obbs'])
-            n_frames = len(frame_evals_of_a_scene)
-            scenes.append( (base, pick['fullfn'], pick['cvgt_fn'], n_instance) )
+            pick = frame_evals_of_a_scene[0].scene_eval.pick
+            #n_instance = len(pick['obbs'])
+            #n_frames = len(frame_evals_of_a_scene)
             for frame_eval in frame_evals_of_a_scene:
                 etime = frame_eval.elapsed_time
                 frames.append( (base, etime) )
-        arr_scenes = np.array(scenes, dtype=scene_dtype)
         arr_frames = np.array(frames, dtype=frame_dtype)
 
         values = []
         for frame_i, frame in enumerate(frame_evals):
-            pick = frame.pick
+            pick = frame.scene_eval.pick
             rosbag_fn, cvgt_fn = pick['fullfn'], pick['cvgt_fn']
             scene_basename = osp.split(osp.basename(rosbag_fn))[1]
             for i0 in frame.indices0:
                 #1) Get Best IoU and w0, h0,
                 #2) Get Best IoU's 'w1, h1, b(IsOverseg), b(IsUnderseg), t_err, r_err, Twb'
-                best_i1, max_iou = -1, 0.
-                for i1 in frame.pairs0to1[i0]:
-                    iou = frame.pair_infos[(i0,i1)]['iou']
-                    if iou > max_iou:
-                        best_i1, max_iou = i1, iou
+                best_i1, max_iou = GetBest_i1(frame,i0)
+                correspond_i0, _  = GetBest_i0(frame,best_i1)
+                crosscheck = i0 == correspond_i0
 
                 if best_i1 < 0:
                     recall, precision = 0., 0.
@@ -327,7 +354,7 @@ class Evaluator:
                     max_wh_err = max( s_err ) # [meter]
                     min_wh_gt = min(b0.scale[1:])
                     # Center 'p'oint of ground truth on 'c'amera frame.
-                    (rwc, twc) = frame.Twc
+                    (rwc, twc) = frame.scene_eval.Twc
                     twp0 = info['surf0'][0]
                     rcw , tcw = rwc.inv(), -np.matmul(rwc.inv().as_dcm(), twc)
                     tcp0 = np.matmul(rcw.as_dcm(), twp0) + tcw
@@ -350,6 +377,8 @@ class Evaluator:
                         t_err, deg_err, max_wh_err, min_wh_gt, z_gt, degskew_gt,
                         overseg, underseg, underseg_frame_i1,
                         scene_basename,
+                        crosscheck,
+                        i0, best_i1,
                         )
                 values.append(value)
                 # for i0 in frame.indices0
@@ -357,9 +386,8 @@ class Evaluator:
         arr = np.array(values, dtype=dtype)
         return arr_scenes, arr_frames, arr
 
-class FrameEval:
-    def __init__(self, pick, Twc, cam_id, plane_c, max_z, elapsed_time, verbose=True):
-        self.elapsed_time = elapsed_time
+class SceneEval:
+    def __init__(self, pick, Twc, plane_c, max_z):
         self.pick = pick
         # Convert OBB to world(frame_id='robot) coordinate.
         q,t = Twc.orientation, Twc.position
@@ -398,6 +426,11 @@ class FrameEval:
             centers[i,:] = np.array(xyz_qwxyz[:3]).reshape((1,3))
         self.tree = KDTree(centers)
 
+class FrameEval:
+    def __init__(self, scene_eval, cam_id, elapsed_time, verbose=True):
+        self.elapsed_time = elapsed_time
+        self.scene_eval = scene_eval
+
         if verbose:
             self.pub_gt_obb = rospy.Publisher("~%s/gt_obb"%cam_id, MarkerArray, queue_size=1)
             self.pub_gt_pose = rospy.Publisher("~%s/gt_pose"%cam_id, PoseArray, queue_size=1)
@@ -411,7 +444,7 @@ class FrameEval:
         # daxis : World좌표계 축 중, depth 축에 가장 가까운것. 0,1,2<-x,y,z
         #daxis = rospy.get_param("~daxis") #TODO
         daxis = 0
-        gt_obbs = self.gt_obbs
+        gt_obbs = self.scene_eval.gt_obbs
         center_poses0, obj_array0 = VisualizeGt(gt_obbs)
         correspondence = GetCorrespondenceMarker()
         infos = MarkerArray()
@@ -438,7 +471,7 @@ class FrameEval:
                              obj1.pose.position.y,
                              obj1.pose.position.z])
             b1 = marker2box(obj1)
-            candidates = self.tree.query_ball_point(xyz1, radius)
+            candidates = self.scene_eval.tree.query_ball_point(xyz1, radius)
 
             if len(candidates) == 0:
                 continue
@@ -654,9 +687,10 @@ def VisualizeGt(gt_obbs):
     return poses, markers
 
 def DrawIouRecall(arr, ax):
-    n_instance = arr.shape[0]
-    iou_column = fields_view(arr, ['maxIoU'] )
-    iou_column = np.sort(iou_column, order='maxIoU',)[::-1] # Descending order.
+    crosschecked = arr['crosscheck']
+    iou_column = arr[crosschecked]['maxIoU']
+    n_instance = iou_column.shape[0]
+    iou_column = np.sort(iou_column)[::-1] # Descending order.
     iou_column = iou_column.astype(np.float32)
     n_arr = (np.arange(0,n_instance,dtype=np.float32) + 1.)/float(n_instance)
     iou_recall = np.stack( (iou_column, n_arr), axis=1 )[::-1]
@@ -685,35 +719,42 @@ def DrawOverUnderHistogram(ax, num_bins, min_max, tp_iou, tp, arr, param, xlabel
     #overseg[0] = True
     #overseg[4] = overseg[7] = True
 
-    union = np.logical_or(overseg, underseg)
-    union = np.logical_or(union, tp)
-    others = ~union
-
     indicies = np.arange(underseg.shape[0])[underseg]
     _, unique = np.unique( undersegk[underseg], return_index=True)
     unique_underseg = indicies[unique]
 
-    nbox_hist, bound = np.histogram(param, num_bins, range=min_max)
-    no_samples = nbox_hist==0
+    #union = np.logical_or(overseg, underseg)
+    #union = np.logical_or(union, tp)
+    #others = ~union
+
+    base_i0 = fields_view(arr, ['scene_basename', 'i0'])
+    _, unique_boxes = np.unique( base_i0, return_index=True)
+    nbox_hist, _     = np.histogram(param[unique_boxes], num_bins, range=min_max)
+    ntry_hist, bound = np.histogram(param, num_bins, range=min_max)
+    no_samples = ntry_hist==0
 
     over_hist  = np.histogram(param[overseg] , num_bins, range=min_max)[0].astype(np.float)
     tp_hist    = np.histogram(param[tp], num_bins, range=min_max)[0].astype(np.float)
-    other_hist = np.histogram(param[others], num_bins, range=min_max)[0].astype(np.float)
     under_hist = np.histogram(param[unique_underseg] , num_bins, range=min_max)[0].astype(np.float)
+    #other_hist = np.histogram(param[others], num_bins, range=min_max)[0].astype(np.float)
 
     x = np.arange(num_bins)
-    nbox_hist[no_samples] = 1 # To prevent divide by zero
-    ax.bar(x-.2, width=.1, height=(over_hist/nbox_hist.astype(np.float))*100.,  alpha=.5, label='oversegment')
-    ax.bar(x-.1, width=.1, height=(under_hist/nbox_hist.astype(np.float))*100., alpha=.5, label='undersegment')
-    ax.bar(x, width=.1, height=(tp_hist/nbox_hist.astype(np.float))*100., alpha=.5, label='IoU>%.2f'%tp_iou)
-    ax.bar(x+.1, width=.1, height=(other_hist/nbox_hist.astype(np.float))*100., alpha=.5, label='others')
+    ntry_hist[no_samples] = 1 # To prevent divide by zero
+    ax.bar(x-.2, width=.1, height=(over_hist/ntry_hist.astype(np.float))*100.,  alpha=.5, label='oversegment')
+    ax.bar(x-.1, width=.1, height=(under_hist/ntry_hist.astype(np.float))*100., alpha=.5, label='undersegment')
+    ax.bar(x, width=.1, height=(tp_hist/ntry_hist.astype(np.float))*100., alpha=.5, label='IoU>%.2f'%tp_iou)
+    #ax.bar(x+.1, width=.1, height=(other_hist/ntry_hist.astype(np.float))*100., alpha=.5, label='others')
 
     xlabels = []
-    nbox_hist[no_samples] = 0 # To show true number
+    ntry_hist[no_samples] = 0 # To show true number
     for i in range(num_bins):
-        xlabels.append('%.2f~%.2f\nn(try)=%d'%(bound[i],bound[i+1],nbox_hist[i]))
+        msg = '%.2f~%.2f'%(bound[i],bound[i+1])
+        msg += '\nn(box)=%d'%nbox_hist[i]
+        msg += '\nn(try)=%d'%ntry_hist[i]
+        xlabels.append(msg)
+
     ax.set_ylabel('[%]',rotation=0, fontweight='bold')
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=10)
+    ax.set_xticklabels(xlabels, rotation=0.,fontsize=6)
     ax.xaxis.set_label_coords(1.05, -0.02)
     ax.yaxis.set_label_coords(-0.08, 1.)
     ax.set_xticks(x)

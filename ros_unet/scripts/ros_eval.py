@@ -17,7 +17,7 @@ import cv2
 from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as rotation_util
 
-from evaluator import Evaluator, FrameEval # TODO change file
+from evaluator import Evaluator, SceneEval, FrameEval # TODO change file
 from ros_client import *
 
 def get_pick(fn):
@@ -63,7 +63,7 @@ if __name__=="__main__":
     rate = rospy.Rate(hz=.5)
     evaluator = Evaluator()
 
-    for gt_fn in gt_files:
+    for i_file, gt_fn in enumerate(gt_files):
         pick = get_pick(gt_fn)
         bag = rosbag.Bag(pick['fullfn'])
         rgb_topics, depth_topics, info_topics = {},{},{}
@@ -96,6 +96,8 @@ if __name__=="__main__":
 
         set_depth = set(depth_topics.values())
         set_rgb = set(rgb_topics.values())
+
+        scene_eval = None
         for topic, msg, t in bag.read_messages(topics=rgb_topics.values()+depth_topics.values()):
             cam_id = topic2cam[topic]
             if topic in set_depth:
@@ -107,32 +109,40 @@ if __name__=="__main__":
             rgb_msg, depth_msg = rgb_msgs[cam_id], depth_msgs[cam_id]
             if depth_msg is None or rgb_msg is None:
                 continue
-            Twc = get_Twc(cam_id)
             fx, fy = rect_info_msgs[cam_id].K[0], rect_info_msgs[cam_id].K[4]
             rect_rgb_msg, rect_depth_msg, rect_depth = rectify(rgb_msg, depth_msg, mx, my, bridge)
 
-            y0, max_z = 50, 2.
-            t0 = time.time()
-            floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, y0, max_z)
-            floor_mask = floor_msg.mask
-            floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
+            if scene_eval is None:
+                y0, max_z = 50, 2.
+                floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, y0, max_z)
+                plane_c = floor_msg.plane
+                floor_mask = floor_msg.mask
+                floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
+                Twc = get_Twc(cam_id)
+                scene_eval = SceneEval(pick, Twc, plane_c, max_z)
+                scene_eval.floor = floor
+                evaluator.PutScene(pick['fullfn'],scene_eval)
             rect_depth[floor>0] = 0.
             rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
 
+            t0 = time.time()
             edge_resp = predict_edge(rect_rgb_msg,rect_depth_msg, fx, fy)
-            plane_c = floor_msg.plane
             plane_w = convert_plane(Twc, plane_c) # empty plane = no floor filter.
             obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
             t1 = time.time()
-            frame_eval = FrameEval(pick, Twc, cam_id, plane_c, max_z, t1-t0, verbose=True)
+            frame_eval = FrameEval(scene_eval, cam_id, t1-t0, verbose=True)
             frame_eval.GetMatches(obb_resp.output)
             evaluator.PutFrame(pick['fullfn'], frame_eval)
             rate.sleep()
 
+            #if evaluator.n_frame > 5: # TODO
+            #    break
+
         # Draw for after evaluating a rosbag file.
         if evaluator.n_frame > 0:
             evaluator.Evaluate(is_final=False)
+            print('Evaluate files.. %d/%d'%(i_file, len(gt_files)) )
 
     if evaluator.n_frame > 0:
         print("~~~~~~~~~~Final evaluation~~~~~~~~~~~")
