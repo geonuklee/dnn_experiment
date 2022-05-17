@@ -27,6 +27,28 @@ def IsOversegmentation(precision, recall):
 def IsUndersegmentation(precision, recall):
     return (recall-precision) > th_seg
 
+def FitAxis(b0, b1):
+    rwb0 = rotation_util.from_dcm(b0.rotation)
+    rwb1 = rotation_util.from_dcm(b1.rotation)
+    Rwb1 = np.zeros_like(b1.rotation)
+    axis_index = [2,2,2]
+    for k0 in range(2): # Fit x, y axis.
+        axis0 = b0.rotation[:,k0]
+        max_abscos, optimal_cos, optimal_k1 = 0., 0.,  -1
+        for k1 in range(3):
+            axis1 = b1.rotation[:,k1]
+            cos = np.dot(axis0, axis1)
+            if abs(cos) > max_abscos:
+                max_abscos, optimal_cos, optimal_k1 = abs(cos), cos, k1
+        Rwb1[:,k0] = np.sign(optimal_cos) * b1.rotation[:,optimal_k1]
+        axis_index[optimal_k1] = k0
+    Rwb1[:,2] = np.cross(Rwb1[:,0], Rwb1[:,1])
+
+    whd = b1.scale[axis_index]
+    w = box.Box()
+    b = w.from_transformation( Rwb1, b1.translation, whd)
+    return b
+
 def GetBest_i1(frame, i0):
     best_i1, max_iou = -1, 0.
     for i1 in frame.pairs0to1[i0]:
@@ -340,11 +362,15 @@ class Evaluator:
                     recall    = info['recall']
                     precision = info['precision']
                     b0, b1 = info['b0'], info['b1']
+                    b1 = FitAxis(b0, b1)
 
                     rwb0 = rotation_util.from_dcm(b0.rotation)
                     rwb1 = rotation_util.from_dcm(b1.rotation)
                     dr = rwb1.inv()* rwb0
                     deg_err = np.rad2deg( np.linalg.norm(dr.as_rotvec()) )
+
+                    if deg_err > 45.:
+                        import pdb; pdb.set_trace()
 
                     # surf_cp is twp for cente 'p'ointr of front plane on 'w'orld frame.
                     t_err = info['surf1'][0] - info['surf0'][0]
