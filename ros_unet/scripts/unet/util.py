@@ -30,6 +30,86 @@ colors = (
   (0,100,100)
 )
 
+from math import ceil
+
+class SplitAdapter2:
+    def __init__(self, wh=400, step=300):
+        self.wh, self.step = wh, step
+
+    def put(self, x):
+        assert(x.dim()==4)
+        self.org_shape = x.shape
+        wh, step = self.wh, self.step
+        b, ch, h, w = x.shape
+        dim_h, dim_w = 2, 3
+    
+        margin = int( (wh-step)/2 )
+        nr = ceil( (h-2*margin)/step )
+        nc = ceil( (w-2*margin)/step )
+        padded_x = torch.zeros([b, ch, nr*step+2*margin, nc*step+2*margin], dtype=x.dtype)
+        padded_x[:, :, :h, :w] = x
+    
+        # patches.shape = b, ch, nr, nc, w, h
+        patches = padded_x.unfold(dim_h,wh,step).unfold(dim_w,wh,step)
+        
+        batches = torch.zeros([b*nr*nc, ch, wh,wh], dtype=patches.dtype)
+        k = 0
+        self.rc_indices = []
+        self.b, self.nr, self.nc = b, nr, nc
+        for r in range(nr):
+            for c in range(nc):
+                batches[b*k:b*(k+1),:,:,:] = patches[:,:,r,c,:,:]
+                self.rc_indices.append((r,c))
+                k+=1
+        return batches
+    
+    
+    def restore(self, patches):
+        assert(patches.dim()==4)
+        wh, step, org_shape = self.wh, self.step, self.org_shape
+        margin = int( (wh-step)/2 )
+        nrnc_b, channels = patches.shape[:2]
+        b,nr,nc = self.b, self.nr, self.nc
+    
+        dst = torch.zeros([b, channels, nr*step+2*margin, nc*step+2*margin],dtype=patches.dtype)
+        _, _, h, w = dst.shape
+        for k, (r,c) in enumerate(self.rc_indices):
+            if r > 0:
+                dr = margin
+            else:
+                dr = 0
+            if c > 0:
+                dc = margin
+            else:
+                dc = 0
+            r0 = r*step+dr
+            r1 = min( r0+step+margin-dr, h )
+            c0 = c*step+dc
+            c1 = min( c0+step+margin-dc, w)
+            patch = patches[b*k:b*(k+1),:,dr:-margin, dc:-margin]
+            dst[:,:,r0:r1,c0:c1] = patch
+    
+        dst = dst[:,:,:org_shape[-2],:org_shape[-1]]
+        return dst
+
+    def pred2mask(self, pred):
+        assert(pred.dim()==4)
+        assert(pred.shape[0]==1)
+        pred = pred.squeeze(0).moveaxis(0,-1)
+        mask = np.zeros((pred.shape[0],pred.shape[1]),np.uint8)
+
+        edge = (pred[:,:,1] > .8).numpy()
+        mask[edge] = 1
+        return mask
+
+    def pred2dst(self, pred, np_rgb):
+        mask = self.pred2mask(pred)
+        pred = pred.squeeze(0).moveaxis(0,-1)
+        mask = np.zeros((pred.shape[0],pred.shape[1]),np.uint8)
+        edge = (pred[:,:,1] > .8).numpy()
+        dst = np_rgb.copy()
+        dst[edge,:] = 255
+        return dst
 
 class SplitAdapter:
     def __init__(self, w=400, offset=399):
@@ -120,6 +200,32 @@ class SplitAdapter:
                     output[n,:partial.shape[-2],:partial.shape[-1]] = partial
                     n+=1
         return output
+
+def Convert2InterInput(gray, depth, fx, fy):
+    dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.1)
+    fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
+    grad, valid = cpp_ext.GetGradient(fd, sample_offset=0.012, fx=fx,fy=fy)
+    hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
+
+    threshold_curvature = 25.
+    hessian[hessian > threshold_curvature] = threshold_curvature
+    hessian[hessian < -threshold_curvature] = -threshold_curvature
+    # Normalization -.5 ~ 5
+    hessian /= 2.*threshold_curvature
+
+    # As a score fore outline
+    hessian[dd_edge > 0] = -threshold_curvature
+
+    max_grad = 2 # tan(60)
+    grad[grad > max_grad] = max_grad
+    grad[grad < -max_grad] = -max_grad
+    # Normalization -.5 ~ 5
+    grad /= 2.*max_grad
+    input_stack = np.stack( (hessian,
+                             grad[:,:,0],
+                             grad[:,:,1]
+                             ), axis=0 )
+    return input_stack
 
 def ConvertDepth2input(depth, fx, fy):
     dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.1)

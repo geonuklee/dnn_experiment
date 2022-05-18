@@ -26,7 +26,7 @@ import deepdish as dd # TODO delete after replacing to ObbDataset
 import glob2
 import pickle
 
-from util import ConvertDepth2input
+from util import ConvertDepth2input, Convert2InterInput
 
 def CovnertGroundTruthPNG2Array(cv_gt, width, height):
     cv_gt = cv_gt[:height,:width]
@@ -168,12 +168,13 @@ class ObbDataset(Dataset):
         outline = np.logical_and(np.logical_and(outline[:,:,0],outline[:,:,1]),
                 outline[:,:,2])
         dist = cv2.distanceTransform( (~outline).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)
-        outline = dist < 3
+        outline = dist < 1
+        K = pick['newK']
+        gray = cv2.cvtColor(pick['rgb'], cv2.COLOR_BGR2GRAY)
+        input_x = Convert2InterInput(gray, pick['depth'], K[0,0], K[1,1])
         
-        #gray = cv2.cvtColor(pick['rgb'], cv2.COLOR_BGR2GRAY)
         #gray = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        frame = {'depth':pick['depth'], 'rgb':pick['rgb'], 'K':pick['newK'],
-                'idx':idx, 'outline':outline }
+        frame = {'rgb':pick['rgb'], 'idx':idx, 'input_x': input_x, 'outline':outline }
         return frame
 
 

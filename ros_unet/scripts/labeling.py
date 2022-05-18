@@ -76,11 +76,13 @@ def ShowObb(compute_floor,rect_depth_msg, rect_rgb_msg, y0, max_z,
 
 if __name__=="__main__":
     pkg_dir = '/home/geo/catkin_ws/src/ros_unet' # TODO Hard coding for now
-    obbdatasetpath = osp.join(pkg_dir,'obb_dataset')
-    #,'*.pick') # remove hardcoding .. 
-    #gt_files = glob2.glob(obbdatasetpath)
-    output_path, exist_labels = make_dataset_dir(name='obb_dataset')
-    rosbag_path = '/home/geo/catkin_ws/src/ros_unet/rosbag/**/*.bag'
+    usage='test'
+    dataset_name = 'obb_dataset_%s'%usage
+    obbdatasetpath = osp.join(pkg_dir,dataset_name)
+    output_path, exist_labels = make_dataset_dir(name=dataset_name)
+    #output_path, exist_labels = make_dataset_dir(name='obb_dataset')
+
+    rosbag_path = '/home/geo/catkin_ws/src/ros_unet/rosbag_%s/**/*.bag'%usage
     rosbagfiles = glob2.glob(rosbag_path,recursive=True)
 
     rospy.init_node('labeling', anonymous=True)
@@ -130,6 +132,7 @@ if __name__=="__main__":
         floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, y0, max_z)
         plane_c = floor_msg.plane
 
+        reedit = False
         while not rospy.is_shutdown():
             K = np.array( info_msg.K ,dtype=np.float).reshape((3,3))
             newK = np.array( rect_info_msg.K ,dtype=np.float).reshape((3,3))
@@ -162,10 +165,11 @@ if __name__=="__main__":
                     pickle.dump(pick, f, protocol=2)
 
             # 1) ask wether make label for it or not.
-            pass_it = AskMakeLabelforIt(rect_rgb_msg, gt_fn)
-            if pass_it:
-                break
-
+            if not reedit:
+                pass_it = AskMakeLabelforIt(rect_rgb_msg, gt_fn)
+                if pass_it:
+                    break
+            reedit = False
             # 2) call kolour for this rosbag.
             cv_gt = MakeLabel(cv_rect_rgb, cv_rect_depth, label_fn)
 
@@ -195,6 +199,7 @@ if __name__=="__main__":
             elif answer is None: # Cancel for revert
                 cv2.imwrite(label_fn, backup)
             else: # No for save & more edit
+                reedit =True
                 pass
 
     root.destroy()

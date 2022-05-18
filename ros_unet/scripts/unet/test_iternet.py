@@ -7,8 +7,7 @@ import argparse
 import torch
 from torch.utils.data import DataLoader
 
-from segment_dataset import SegmentDataset
-from edge_dataset import EdgeDataset
+from segment_dataset import ObbDataset
 from unet_model import IterNet
 from util import *
 
@@ -23,35 +22,29 @@ if __name__ == '__main__':
     model = IterNet()
     model.to(device)
     if args.verbose is None:
-        fn = 'segment_dataset/iternet.pth'
+        fn = 'obb_dataset_train/iternet.pth'
     else:
-        fn = 'segment_dataset/iternet_%d.pth' % args.verbose
+        fn = 'obb_dataset_train/iternet_%d.pth' % args.verbose
     checkpoint = torch.load(fn)
     model.load_state_dict(checkpoint['model_state_dict'])
-    #model.eval()  # TODO More poor result with it? why?
+    model.eval()  # TODO More poor result with it? why?
     print("test with epoch %d" % checkpoint['epoch'] )
 
-    spliter = SplitAdapter()
+    spliter = SplitAdapter2(200, 150)
     while True:
-        dataset = SegmentDataset('segment_dataset', 'valid')
+        dataset = ObbDataset('obb_dataset_test')
         dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
         for i, data in enumerate(dataloader):
-            lap = data['lap5'].unsqueeze(1).float()
-            rgb = data['rgb'].float().moveaxis(-1,1)/255
-            input_x = torch.cat((lap,rgb),dim=1)
+            input_x = data['input_x']
             input_x = spliter.put(input_x).to(device)
-
             orgb = data['rgb'][0,:,:,:]
-            t0 = time.time()
             pred = model(input_x)
             pred = spliter.restore(pred)
             pred = pred.detach()
-            dst = spliter.pred2dst(pred)
-            print("etime=%.2f[ms]", (time.time()-t0) * 1000. )
 
-            cv2.imshow('rgb', orgb.numpy())
+            dst = spliter.pred2dst(pred, orgb.numpy())
             cv2.imshow('dst', dst)
-            c = cv2.waitKey(1)
+            c = cv2.waitKey(0)
             if c == ord('q'):
                 exit(1)
 
