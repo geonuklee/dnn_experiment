@@ -22,7 +22,9 @@ from os import listdir
 from torch.utils.data import Dataset
 from torch import Tensor
 import shutil
-import deepdish as dd
+import deepdish as dd # TODO delete after replacing to ObbDataset
+import glob2
+import pickle
 
 from util import ConvertDepth2input
 
@@ -146,6 +148,35 @@ class CombinedDatasetLoader:
         batch['source'] = source
         return batch
 
+class ObbDataset(Dataset):
+    def __init__(self, name):
+        script_fn = osp.abspath(__file__)
+        pkg_dir = str('/').join(script_fn.split('/')[:-3])
+        dataset_dir = osp.join(pkg_dir, name)
+        assert osp.exists(dataset_dir)
+        self.pick_files = glob2.glob(osp.join(dataset_dir,'**','*.pick'),recursive=True)
+
+    def __len__(self):
+        return len(self.pick_files)
+
+    def __getitem__(self, idx):
+        fn = self.pick_files[idx]
+        with open(fn, 'rb') as f:
+            pick = pickle.load(f, encoding='latin1')
+        cvgt = cv2.imread(pick['cvgt_fn'])
+        outline = cvgt==255
+        outline = np.logical_and(np.logical_and(outline[:,:,0],outline[:,:,1]),
+                outline[:,:,2])
+        dist = cv2.distanceTransform( (~outline).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)
+        outline = dist < 3
+        
+        #gray = cv2.cvtColor(pick['rgb'], cv2.COLOR_BGR2GRAY)
+        #gray = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        frame = {'depth':pick['depth'], 'rgb':pick['rgb'], 'K':pick['newK'],
+                'idx':idx, 'outline':outline }
+        return frame
+
+
 if __name__ == '__main__':
     # Shuffle two dataset while keep single source for each batch
     #dataset_loader = CombinedDatasetLoader(batch_size=2)
@@ -154,8 +185,10 @@ if __name__ == '__main__':
     #print(batch)
     # Check cache for valid also, 
     #dataset = SegmentDataset('segment_dataset','valid')
-    dataset = SegmentDataset('vtk_dataset','valid')
-    for data in dataset:
-        print("asdf")
-
+    #dataset = SegmentDataset('vtk_dataset','valid')
+    #for data in dataset:
+    #    print("asdf")
+    dataset = ObbDataset('obb_dataset')
+    for frame in dataset:
+        break
 

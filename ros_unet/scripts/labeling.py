@@ -159,7 +159,7 @@ if __name__=="__main__":
                 ShowObb(compute_floor, rect_depth_msg, rect_rgb_msg, y0, max_z, scene_eval)
                 print("write for %s" % gt_fn)
                 with open(gt_fn, "wb" ) as f:
-                    pickle.dump(pick, f)
+                    pickle.dump(pick, f, protocol=2)
 
             # 1) ask wether make label for it or not.
             pass_it = AskMakeLabelforIt(rect_rgb_msg, gt_fn)
@@ -179,14 +179,14 @@ if __name__=="__main__":
             scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
             ShowObb(compute_floor, rect_depth_msg, rect_rgb_msg, y0, max_z, scene_eval)
             with open(gt_fn, "wb" ) as f:
-                pickle.dump(pick, f)
+                pickle.dump(pick, f, protocol=2)
 
             if rospy.is_shutdown():
                 break
 
             #import pdb; pdb.set_trace()
             with open(gt_fn, "wb" ) as f:
-                pickle.dump(pick, f)
+                pickle.dump(pick, f, protocol=2)
 
             answer = messagebox.askyesnocancel("askquestion",
                     "Complete labeling?(Save&Finish|Save&MoreEdit|Revert)")
