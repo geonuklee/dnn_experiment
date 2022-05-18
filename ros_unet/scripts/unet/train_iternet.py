@@ -37,6 +37,9 @@ def train():
     model = IterNet().to(device)
     model.train()
     optimizer = optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
+    dataset = ObbDataset('obb_dataset_train')
+    dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
+
     checkpoint_fn = 'obb_dataset_train/iternet.pth'
     try:
         checkpoint = torch.load(checkpoint_fn)
@@ -48,8 +51,6 @@ def train():
         print ("Start without previou weight")
         epoch_last = 0
 
-    dataset = ObbDataset('obb_dataset_train')
-    dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
 
     epoch_last = 0
     n_epoch = 10
@@ -72,7 +73,7 @@ def train():
             optimizer.step()
 
             if i %100 == 0:
-                print("epoch [%d/%d], scene[%d/%d] loss = %f" % (epoch,n_epoch,i,len(dataloader), loss.item()) )
+                print("epoch [%d/%d], frame[%d/%d] loss = %f" % (epoch,n_epoch,i,len(dataloader), loss.item()) )
         states = {
             'comment': 'input = cv_bedge, cv_wrinkle, cvgrad',
             'epoch': epoch,

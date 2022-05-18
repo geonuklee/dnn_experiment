@@ -25,6 +25,7 @@ import shutil
 import deepdish as dd # TODO delete after replacing to ObbDataset
 import glob2
 import pickle
+import rosbag
 
 from util import ConvertDepth2input, Convert2InterInput
 
@@ -154,15 +155,42 @@ class ObbDataset(Dataset):
         pkg_dir = str('/').join(script_fn.split('/')[:-3])
         dataset_dir = osp.join(pkg_dir, name)
         assert osp.exists(dataset_dir)
-        self.pick_files = glob2.glob(osp.join(dataset_dir,'**','*.pick'),recursive=True)
+        pick_files = glob2.glob(osp.join(dataset_dir,'*.pick'),recursive=False)
+        camid = 'cam0'
+        name_depth = '/%s/helios2/depth/image_raw'%camid
+
+        cache_dir = osp.join(dataset_dir, 'cache')
+        if not osp.exists(cache_dir):
+            makedirs(cache_dir)
+
+            nframe = 0
+            for fn in pick_files:
+                with open(fn, 'rb') as f:
+                    pick = pickle.load(f, encoding='latin1')
+                osize = pick['depth'].shape[1], pick['depth'].shape[0]
+                mx,my = cv2.initUndistortRectifyMap(pick['K'],pick['D'],None,pick['newK'],osize,cv2.CV_32F)
+                bag = rosbag.Bag(pick['fullfn'])
+                for _, depth_msg, _ in bag.read_messages(topics=[name_depth]):
+                    depth = np.frombuffer(depth_msg.data, dtype=np.float32)\
+                            .reshape(depth_msg.height, depth_msg.width)
+                    rect_depth = cv2.remap(depth,mx,my,cv2.INTER_NEAREST)
+                    fn_frame = osp.join(cache_dir, 'frame%d.pick'%nframe)
+                    with open(fn_frame,'wb') as f_frame:
+                        pickle.dump({'depth':rect_depth,'fn_pick':fn}, f_frame, protocol=2)
+                    nframe+=1
+        self.frame_files = glob2.glob(osp.join(cache_dir, '*.pick'))
 
     def __len__(self):
-        return len(self.pick_files)
+        return len(self.frame_files)
 
     def __getitem__(self, idx):
-        fn = self.pick_files[idx]
-        with open(fn, 'rb') as f:
+        frame_fn = self.frame_files[idx]
+        with open(frame_fn, 'rb') as f:
+            pick_frame = pickle.load(f, encoding='latin1')
+
+        with open(pick_frame['fn_pick'], 'rb') as f:
             pick = pickle.load(f, encoding='latin1')
+
         cvgt = cv2.imread(pick['cvgt_fn'])
         outline = cvgt==255
         outline = np.logical_and(np.logical_and(outline[:,:,0],outline[:,:,1]),
@@ -171,12 +199,9 @@ class ObbDataset(Dataset):
         outline = dist < 1
         K = pick['newK']
         gray = cv2.cvtColor(pick['rgb'], cv2.COLOR_BGR2GRAY)
-        input_x = Convert2InterInput(gray, pick['depth'], K[0,0], K[1,1])
-        
-        #gray = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        input_x = Convert2InterInput(gray, pick_frame['depth'], K[0,0], K[1,1])
         frame = {'rgb':pick['rgb'], 'idx':idx, 'input_x': input_x, 'outline':outline }
         return frame
-
 
 if __name__ == '__main__':
     # Shuffle two dataset while keep single source for each batch
