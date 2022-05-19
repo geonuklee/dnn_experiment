@@ -60,7 +60,7 @@ if __name__=="__main__":
 
     #cameras = ['cam0', 'cam1'] # For multiple camera test.
 
-    rate = rospy.Rate(hz=.5)
+    rate = rospy.Rate(hz=50)
     evaluator = Evaluator()
 
     for i_file, gt_fn in enumerate(gt_files):
@@ -136,7 +136,7 @@ if __name__=="__main__":
             n = evaluator.PutFrame(pick['fullfn'], frame_eval)
             rate.sleep()
 
-            print("scene %d/%d ... "% (i_file, len(gt_files) ) )
+            print("scene %d/%d ... %s "% (i_file, len(gt_files), gt_fn) )
             if n%10==0 :  # TODO
                 evaluator.Evaluate(is_final=False)
                 break

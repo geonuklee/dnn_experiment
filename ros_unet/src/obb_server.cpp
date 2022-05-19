@@ -233,7 +233,7 @@ int main(int argc, char **argv) {
   //std::vector<int> cameras = GetRequiredParamVector<int>(nh, "cameras");
   param.min_points_of_cluster = GetRequiredParam<double>(nh, "min_points_of_cluster");
   param.voxel_leaf = GetRequiredParam<double>(nh, "voxel_leaf");
-  param.euclidean_filter_tolerance = 2.* param.voxel_leaf;
+  param.euclidean_filter_tolerance = 0.2; // [meter] Enough tolerance condisering empty unprojection on edge.
   param.verbose = GetRequiredParam<bool>(nh, "verbose");
   BoxDetector box_detector(nh, param);
 

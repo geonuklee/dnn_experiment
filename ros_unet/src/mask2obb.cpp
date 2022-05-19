@@ -190,6 +190,10 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
       if(z < 0.000001)
         return false;
       X = Eigen::Vector3d(nuv.x*z, nuv.y*z,z);
+      Eigen::Vector3d Xw = Twc*X;
+      xyznormal.x = Xw[0];
+      xyznormal.y = Xw[1];
+      xyznormal.z = Xw[2];
     }
     Eigen::Vector3d dX1;{
       int rdr = r+dv[0];
@@ -217,11 +221,7 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
     n /= n.norm();
     if(n[2] > 0.) // normal computed from cam coordinate. z dir can't be positive.
       n = -n;
-    Eigen::Vector3d Xw = Twc*X;
     Eigen::Vector3d nw = Twc.rotation()*n;
-    xyznormal.x = Xw[0];
-    xyznormal.y = Xw[1];
-    xyznormal.z = Xw[2];
     xyznormal.normal_x = nw[0];
     xyznormal.normal_y = nw[1];
     xyznormal.normal_z = nw[2];
@@ -263,12 +263,13 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
         cv::Point2i inner_uv, far_inner_uv, outer_uv;{
           float gx = GetGx(r,c);
           float gy = GetGy(r,c);
-          inner_uv.x = (float) c + 4. * gx;
-          inner_uv.y = (float) r + 4. * gy;
-          far_inner_uv.x = (float) c + 8. * gx;
-          far_inner_uv.y = (float) r + 8. * gy;
-          outer_uv.x = (float) c - 4. * gx;
-          outer_uv.y = (float) r - 4. * gy;
+          float pixel_offset = 10.; // TODO compute from physical length.
+          inner_uv.x = (float) c + pixel_offset * gx;
+          inner_uv.y = (float) r + pixel_offset * gy;
+          far_inner_uv.x = (float) c + 2. * pixel_offset * gx;
+          far_inner_uv.y = (float) r + 2. * pixel_offset * gy;
+          outer_uv.x = (float) c - pixel_offset * gx;
+          outer_uv.y = (float) r - pixel_offset * gy;
         }
 
         if(mask.at<int>( inner_uv.y, inner_uv.x ) == idx){
@@ -309,7 +310,6 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
       erase_list.insert(it_cloud.first);
       continue;
     }
-
     pcl::PointCloud<pcl::PointXYZLNormal>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZLNormal>);
     pcl::ExtractIndices<pcl::PointXYZLNormal> extract;
     extract.setInputCloud(it_cloud.second);
@@ -924,8 +924,10 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
 
       // Get champoin of rotate caliper with minimum offset error(=cost).
       double offset_error = 0.;
-      for(const pcl::PointXYZLNormal& pt : *boundary){
-        offset_error += GetError(T1w,  Cvt2EigenXYZ(pt), min_x1, max_x1);
+      for(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr pc_ptr : {boundary, cloud} ) {
+        for(const pcl::PointXYZLNormal& pt : *pc_ptr) {
+          offset_error += GetError(T1w,  Cvt2EigenXYZ(pt), min_x1, max_x1);
+        }
       }
 
       if(offset_error < optimal_offset_error ){

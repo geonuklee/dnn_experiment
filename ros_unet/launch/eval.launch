@@ -3,7 +3,7 @@
 <arg name="generate_points" default="true"/>
 <arg name="cameras" default="[0,]" />
 <arg name="sensor_model" default="helios"/>
-<arg name="voxel_leaf" value="0.05" />
+<arg name="voxel_leaf" value="0.01" />
 <arg name="rviz_name" default="unet.rviz"/>
 
 <arg name="weight_file" value="$(find ros_unet)/obb_dataset_train/iternet.pth"/>
