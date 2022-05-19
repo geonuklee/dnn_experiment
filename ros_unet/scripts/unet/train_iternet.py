@@ -12,7 +12,8 @@ import cv2
 import numpy as np
 from segment_dataset import ObbDataset
 from util import *
-from unet_model import IterNet
+#from unet_model import IterNet
+from iternet import IterNet, get_w_from_pixel_distribution, weighted_bce_loss
 from torch import nn, optim
 
 def spliter_test():
@@ -32,13 +33,13 @@ def spliter_test():
     cv2.waitKey()
 
 def train():
-    spliter = SplitAdapter2(200, 150)
+    spliter = SplitAdapter2(128, 100)
     device = "cuda:0"
     model = IterNet().to(device)
     model.train()
     optimizer = optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
     dataset = ObbDataset('obb_dataset_train')
-    dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
     checkpoint_fn = 'obb_dataset_train/iternet.pth'
     try:
@@ -51,7 +52,6 @@ def train():
         print ("Start without previou weight")
         epoch_last = 0
 
-
     epoch_last = 0
     n_epoch = 10
     niter0, niter = 0, 0
@@ -62,13 +62,18 @@ def train():
             input_x = spliter.put(input_x).to(device)
 
             target = data['outline'].unsqueeze(1) # unsqueeze for spliter
-            target = spliter.put(target).squeeze(1)
-            target = target.long().to(device)
+            target = spliter.put(target).float().to(device)
             optimizer.zero_grad(set_to_none=True)
-            pred = model(input_x)
-            # pred : b,n(cls),h,w
-            # target : b,h,w dtype=np.int64
-            loss = model.loss(pred, target)
+
+            y1, y2, y3 = model(input_x)
+            w1, w2 = get_w_from_pixel_distribution(target)
+
+            loss1 = weighted_bce_loss(y1, target, w1, w2)
+            loss2 = weighted_bce_loss(y2, target, w1, w2)
+            loss3 = weighted_bce_loss(y3, target, w1, w2)
+            lambda1, lambda2, lambda3 = 1e-1, 2e-1, 3e-1
+            loss  = lambda1*loss1 + lambda2*loss2 + lambda3*loss3
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
@@ -85,5 +90,3 @@ def train():
 
 if __name__ == '__main__':
     train()
-
-
