@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from segment_dataset import ObbDataset
-from unet_model import IterNet
+from iternet import IterNet
 from util import *
 
 import time
@@ -30,21 +30,34 @@ if __name__ == '__main__':
     model.eval()  # TODO More poor result with it? why?
     print("test with epoch %d" % checkpoint['epoch'] )
 
-    spliter = SplitAdapter2(200, 150)
+    spliter = SplitAdapter(128, 100)
     while True:
-        dataset = ObbDataset('obb_dataset_test')
+        #dataset = ObbDataset('obb_dataset_train',augment=False)
+        dataset = ObbDataset('obb_dataset_test',augment=True)
         dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
         for i, data in enumerate(dataloader):
+            t0 = time.time()
             input_x = data['input_x']
             input_x = spliter.put(input_x).to(device)
-            orgb = data['rgb'][0,:,:,:]
-            pred = model(input_x)
-            pred = spliter.restore(pred)
+            y1, y2, pred = model(input_x)
+            del y1, y2, input_x
             pred = pred.detach()
+            pred = spliter.restore(pred)
 
-            dst = spliter.pred2dst(pred, orgb.numpy())
+            orgb = data['rgb'][0,:,:,:].numpy()
+            dst = spliter.pred2dst(pred, orgb)
+            t1 = time.time()
+            etime = (t1-t0) *1000.
+            dst[-25:,:,:] = 255
+            msg = 'Scene %5d/%d,   Etime %.2f[msec]'%(i, len(dataloader), etime)
+            cv2.putText(dst, msg, (5,dst.shape[0]-10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0))
+            cv2.imshow('orgb', orgb)
             cv2.imshow('dst', dst)
-            c = cv2.waitKey(0)
+            if dataset.augment:
+                c = cv2.waitKey(0)
+            else:
+                c = cv2.waitKey(1)
             if c == ord('q'):
                 exit(1)
 

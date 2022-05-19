@@ -32,8 +32,8 @@ colors = (
 
 from math import ceil
 
-class SplitAdapter2:
-    def __init__(self, wh=400, step=300):
+class SplitAdapter:
+    def __init__(self, wh=128, step=100):
         self.wh, self.step = wh, step
 
     def put(self, x):
@@ -98,134 +98,51 @@ class SplitAdapter2:
         pred = pred.squeeze(0).moveaxis(0,-1)
         mask = np.zeros((pred.shape[0],pred.shape[1]),np.uint8)
 
-        edge = (pred[:,:,1] > .8).numpy()
+        edge = (pred[:,:,-1] > .8).numpy()
         mask[edge] = 1
         return mask
 
     def pred2dst(self, pred, np_rgb):
         mask = self.pred2mask(pred)
-        pred = pred.squeeze(0).moveaxis(0,-1)
-        mask = np.zeros((pred.shape[0],pred.shape[1]),np.uint8)
-        edge = (pred[:,:,1] > .8).numpy()
-        dst = np_rgb.copy()
-        dst[edge,:] = 255
+        dst = (np_rgb/2).astype(np.uint8)
+        dst[mask>0,:2] = 0
+        dst[mask>0,2] = 255
         return dst
 
-class SplitAdapter:
-    def __init__(self, w=400, offset=399):
-        self.w = w
-        self.offset = offset
-        assert self.w >= self.offset
-        self.hw_min = [] # To reconstruct output on original size.
-
-    def restore(self, x):
-        nb, c, sh, sw = x.shape
-        n = len(self.hw_min)
-        b = int(nb/n)
-        h, w = self.origin_hw
-        output=torch.zeros((b, c, h, w), dtype=x.dtype)
-      
-        # TODO pred 가 더 높은 값을 남기는 덮어쓰기 필요.
-        k = 0
-        for ib in range(b):
-            for i, (hmin, wmin) in enumerate(self.hw_min):
-                #print(k, hmin, wmin, '/', nb, h, w)
-                if hmin+self.w > output.shape[2]:
-                    output_hmax = output.shape[2]
-                else:
-                    output_hmax = hmin+self.w
-                if wmin+self.w > output.shape[3]:
-                    output_wmax = output.shape[3]
-                else:
-                    output_wmax = wmin+self.w
-                output[ib, :, hmin:output_hmax, wmin:output_wmax] \
-                        = x[k,:,:output_hmax-hmin,:output_wmax-wmin]
-                k += 1
-
-        return output
-
-    def pred2mask(self, pred):
-        mask = np.zeros((pred.shape[-2],pred.shape[-1]),np.uint8)
-        if pred.shape[1] == 3:
-            box_pred   = pred.moveaxis(1,3).squeeze(0)[:,:,2].numpy()
-            mask[box_pred>= 0.8] = 2
-
-        edge_pred  = pred.moveaxis(1,3).squeeze(0)[:,:,1].numpy()
-        mask[edge_pred> 0.8] = 1
-        return mask
-
-    def mask2dst(self, mask):
-        dst = np.zeros((mask.shape[0], mask.shape[1],3),np.uint8)
-        dst[mask==1,:] = 255
-        dst[mask==2, 2] = 255
-        return dst
-
-    def put(self, x):
-        if x.dim() == 4:
-            b, c, h0,w0 = x.shape
-        else:
-            b, h0,w0 = x.shape
-
-        if len(self.hw_min) == 0:
-            self.origin_hw = (h0, w0)
-            for wmin in range(0, w0, self.offset):
-                if wmin + self.w >= w0:
-                    wmin = w0 - self.w
-
-                if wmin < 0:
-                    wmin = 0
-                for hmin in range(0, h0, self.offset):
-                    if hmin +self.w >= h0:
-                        hmin = h0 - self.w
-                    if hmin < 0:
-                        hmin = 0
-                    self.hw_min.append((hmin,wmin))
-
-        if x.dim() == 4:
-            output=torch.zeros((b*len(self.hw_min), c, self.w, self.w), dtype=x.dtype)
-        else:
-            output=torch.zeros((b*len(self.hw_min), self.w, self.w), dtype=x.dtype)
-
-        n = 0
-        if x.dim() == 4:
-            for ib in range(b):
-                for hmin, wmin in self.hw_min:
-                    partial = x[ib,:,hmin:hmin+self.w,wmin:wmin+self.w]
-                    output[n,:,:partial.shape[-2],:partial.shape[-1]] = partial 
-                    n+=1
-        else:
-            for ib in range(b):
-                for hmin, wmin in self.hw_min:
-                    partial = x[ib,hmin:hmin+self.w,wmin:wmin+self.w]
-                    output[n,:partial.shape[-2],:partial.shape[-1]] = partial
-                    n+=1
-        return output
-
-def Convert2InterInput(gray, depth, fx, fy):
+def Convert2InterInput(rgb, depth, fx, fy):
+    gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
     dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.1)
     fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
     grad, valid = cpp_ext.GetGradient(fd, sample_offset=0.012, fx=fx,fy=fy)
     hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
 
-    threshold_curvature = 25.
+    threshold_curvature = 40.
+
+    convex_edge = (hessian > threshold_curvature).astype(np.uint8)
+    concave_edge = hessian < -threshold_curvature
+    outline = np.logical_or(concave_edge, dd_edge > 0).astype(np.uint8)
+
     hessian[hessian > threshold_curvature] = threshold_curvature
     hessian[hessian < -threshold_curvature] = -threshold_curvature
+
+
     # Normalization -.5 ~ 5
     hessian /= 2.*threshold_curvature
 
     # As a score fore outline
-    hessian[dd_edge > 0] = -threshold_curvature
+    hessian[dd_edge > 0] = -0.5*threshold_curvature
 
     max_grad = 2 # tan(60)
     grad[grad > max_grad] = max_grad
     grad[grad < -max_grad] = -max_grad
     # Normalization -.5 ~ 5
     grad /= 2.*max_grad
-    input_stack = np.stack( (hessian,
+    input_stack = np.stack( ((gray/255.).astype(hessian.dtype),
+                             hessian,
                              grad[:,:,0],
                              grad[:,:,1]
                              ), axis=0 )
-    return input_stack
+    return (input_stack, grad, hessian, outline, convex_edge )
 
 def ConvertDepth2input(depth, fx, fy):
     dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.1)

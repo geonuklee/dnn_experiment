@@ -10,7 +10,7 @@
 <arg name="info" default="helios2/camera_info"/>
 <arg name="rviz_name" default="unet.rviz"/>
 
-<arg name="weight_file" value="$(find ros_unet)/segment_dataset/dunet.pth"/>
+<arg name="weight_file" value="$(find ros_unet)/obb_dataset_train/iternet.pth"/>
 
 <node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
     <rosparam subst_value="True">

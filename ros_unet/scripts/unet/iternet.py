@@ -104,7 +104,7 @@ class IterNetInit(nn.Module):
     def __init__(self):
         super(IterNetInit, self).__init__()
         self.block1_pool = maxPool()
-        self.block1_c1 = conv2L(dim_in=  3, dim_out= 32, kernel=3, stride=1, padding=1, bias=True)
+        self.block1_c1 = conv2L(dim_in=  4, dim_out= 32, kernel=3, stride=1, padding=1, bias=True)
         self.block1_c2 = conv2L(dim_in= 32, dim_out= 64, kernel=3, stride=1, padding=1, bias=True)
         self.block1_c3 = conv2L(dim_in= 64, dim_out=128, kernel=3, stride=1, padding=1, bias=True)
         self.block1_c4 = conv2L(dim_in=128, dim_out=256, kernel=3, stride=1, padding=1, bias=True)
@@ -146,7 +146,6 @@ class IterNet(nn.Module):
         self.net2 = IterNetModule(2)
         self.net3 = IterNetModule(3)
         #self.net4 = IterNetModule(4) # Not enough cuda memory.
-        self.f_loss = nn.CrossEntropyLoss(weight=torch.Tensor([0.01, 1.]) )
 
     def forward(self, img):
         out1, x0, x9 = self.net1(img)

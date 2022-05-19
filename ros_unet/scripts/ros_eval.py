@@ -39,7 +39,7 @@ def get_camid(fn):
 
 if __name__=="__main__":
     pkg_dir = '/home/geo/catkin_ws/src/ros_unet' # TODO Hard coding for now
-    obbdatasetpath = osp.join(pkg_dir,'obb_dataset','*.pick') # remove hardcoding .. 
+    obbdatasetpath = osp.join(pkg_dir,'obb_dataset_train','*.pick') # remove hardcoding ..
     gt_files = glob2.glob(obbdatasetpath)
 
     rospy.init_node('evaluator', anonymous=True)
@@ -57,7 +57,7 @@ if __name__=="__main__":
     floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
-    
+
     #cameras = ['cam0', 'cam1'] # For multiple camera test.
 
     rate = rospy.Rate(hz=.5)

@@ -25,7 +25,7 @@ def spliter_test():
     # b,c,h,w
     rgb = rgb.moveaxis(-1,1)
 
-    spliter = SplitAdapter2(wh = 200,step = 120)
+    spliter = SplitAdapter(wh = 200,step = 120)
     patches = spliter.put(rgb)
     dst = spliter.restore(patches)
 
@@ -33,12 +33,12 @@ def spliter_test():
     cv2.waitKey()
 
 def train():
-    spliter = SplitAdapter2(128, 100)
+    spliter = SplitAdapter(128, 100)
     device = "cuda:0"
     model = IterNet().to(device)
     model.train()
     optimizer = optim.SGD(model.parameters(), lr=0.05, momentum=0.9)
-    dataset = ObbDataset('obb_dataset_train')
+    dataset = ObbDataset('obb_dataset_train',augment=True)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
     checkpoint_fn = 'obb_dataset_train/iternet.pth'
@@ -54,10 +54,9 @@ def train():
 
     epoch_last = 0
     n_epoch = 10
-    niter0, niter = 0, 0
+    niter = 0
     for epoch in range(epoch_last, n_epoch):  # loop over the dataset multiple times
         for i, data in enumerate(dataloader):
-            #rgb, depth, K = data['rgb'], data['depth']
             input_x = data['input_x']
             input_x = spliter.put(input_x).to(device)
 
@@ -77,16 +76,21 @@ def train():
             loss.backward()
             optimizer.step()
 
-            if i %100 == 0:
+            states = {
+                'comment': 'input = cv_bedge, cv_wrinkle, cvgrad',
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                }
+
+            if i %100 == 0 and niter > 0:
                 print("epoch [%d/%d], frame[%d/%d] loss = %f" % (epoch,n_epoch,i,len(dataloader), loss.item()) )
-        states = {
-            'comment': 'input = cv_bedge, cv_wrinkle, cvgrad',
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            }
+                torch.save(states, 'obb_dataset_train/iternet_%d.pth'%epoch)
+                torch.save(states, checkpoint_fn)
+            niter += 1
         torch.save(states, 'obb_dataset_train/iternet_%d.pth'%epoch)
         torch.save(states, checkpoint_fn)
+
 
 if __name__ == '__main__':
     train()

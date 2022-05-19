@@ -26,6 +26,7 @@ import deepdish as dd # TODO delete after replacing to ObbDataset
 import glob2
 import pickle
 import rosbag
+import torchvision.transforms.functional as TF
 
 from util import ConvertDepth2input, Convert2InterInput
 
@@ -150,7 +151,8 @@ class CombinedDatasetLoader:
         return batch
 
 class ObbDataset(Dataset):
-    def __init__(self, name):
+    def __init__(self, name, augment=True):
+        self.augment=augment
         script_fn = osp.abspath(__file__)
         pkg_dir = str('/').join(script_fn.split('/')[:-3])
         dataset_dir = osp.join(pkg_dir, name)
@@ -179,6 +181,9 @@ class ObbDataset(Dataset):
                         pickle.dump({'depth':rect_depth,'fn_pick':fn}, f_frame, protocol=2)
                     nframe+=1
         self.frame_files = glob2.glob(osp.join(cache_dir, '*.pick'))
+        fn = self.frame_files[0]
+        self.frame_files = sorted(self.frame_files, key=lambda fn:\
+                int(osp.basename(fn).split('frame')[1].split('.')[0]) )
 
     def __len__(self):
         return len(self.frame_files)
@@ -192,15 +197,40 @@ class ObbDataset(Dataset):
             pick = pickle.load(f, encoding='latin1')
 
         cvgt = cv2.imread(pick['cvgt_fn'])
+        rgb, depth = pick['rgb'], pick_frame['depth']
+        K = pick['newK'].copy()
+        if self.augment:
+            # Reesize image height to h0 * fx/fy, before rotaiton augment.
+            dsize = (rgb.shape[1], int(rgb.shape[0]*K[0,0]/K[1,1]) )
+            K[1,1] = K[0,0]
+            rgb,depth,cvgt = [cv2.resize(img, dsize, cv2.INTER_NEAREST) for img in [rgb,depth,cvgt] ]
+            rgb,depth,cvgt = [Tensor(img) for img in [rgb,depth,cvgt] ]
+            rgb,cvgt = [img.long() for img in [rgb,cvgt] ]
+            rgb  = rgb.moveaxis(-1,0)
+            cvgt = cvgt.moveaxis(-1,0)
+            depth = depth.unsqueeze(0) # b,c,h,w
+
+            choice = np.random.choice(4)
+            if choice == 0:
+                rgb = TF.gaussian_blur(rgb, 5, np.random.uniform(0., 10.) )
+            rgb = TF.adjust_saturation(rgb, np.random.uniform(0.8, 1.2) )
+            rgb = TF.adjust_brightness(rgb, np.random.uniform(0.8, 1.2))
+
+            angle = np.random.uniform(-30,30)
+            rgb,depth,cvgt = [TF.rotate(img, angle) for img in [rgb,depth,cvgt]]
+            rgb  = rgb.moveaxis(0,-1)
+            cvgt = cvgt.moveaxis(0,-1)
+            depth = depth.squeeze(0) # b,c,h,w
+            rgb,depth,cvgt = [img.numpy() for img in [rgb,depth,cvgt] ]
+            rgb,cvgt = [ img.astype(np.uint8) for img in [rgb,cvgt] ]
+
         outline = cvgt==255
         outline = np.logical_and(np.logical_and(outline[:,:,0],outline[:,:,1]),
                 outline[:,:,2])
         dist = cv2.distanceTransform( (~outline).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)
         outline = dist < 1
-        K = pick['newK']
-        gray = cv2.cvtColor(pick['rgb'], cv2.COLOR_BGR2GRAY)
-        input_x = Convert2InterInput(gray, pick_frame['depth'], K[0,0], K[1,1])
-        frame = {'rgb':pick['rgb'], 'idx':idx, 'input_x': input_x, 'outline':outline }
+        input_x = Convert2InterInput(rgb, depth, K[0,0], K[1,1])[0]
+        frame = {'rgb':rgb, 'idx':idx, 'input_x': input_x, 'outline':outline, 'depth':depth }
         return frame
 
 if __name__ == '__main__':
