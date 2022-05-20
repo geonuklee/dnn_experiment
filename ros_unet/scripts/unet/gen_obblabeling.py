@@ -9,7 +9,7 @@ import numpy as np
 import cv2
 import glob2 # For recursive glob for python2
 from os import path as osp
-#from cv_bridge import CvBridge #< doesn't work for python3
+from cv_bridge import CvBridge #< doesn't work for python3
 import subprocess
 from util import *
 import unet_ext
@@ -38,12 +38,12 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
     # Get Red, Green, Blue dot
     # Get Yellow edges
     reddots = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==0),cv_gt[:,:,2]==255)
-    greendots = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==255),cv_gt[:,:,2]==0)
     bluedots = la(la(cv_gt[:,:,0]==255,cv_gt[:,:,1]==0),cv_gt[:,:,2]==0)
+    green_area = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==255),cv_gt[:,:,2]==0)
     yellowedges = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==255),cv_gt[:,:,2]==255)
 
     outline = la(la(cv_gt[:,:,0]==255,cv_gt[:,:,1]==255),cv_gt[:,:,2]==255)
-    for c in [reddots, greendots, bluedots]:
+    for c in [reddots, bluedots]:
         outline = la(outline, ~c)
 
     # outline에 red, green, blue dot 추가. 안그러면 component가 끊겨서..
@@ -59,7 +59,7 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
     color_pm0 = GetColoredLabel(plane_marker0)
     plane_marker = plane_marker0.copy()
     vertices = {}
-    for element, mask_of_dots in {'o':reddots,'y':greendots,'z':bluedots}.items():
+    for element, mask_of_dots in {'o':reddots,'p':bluedots}.items():
         _,_,_, centroids = cv2.connectedComponentsWithStats(mask_of_dots.astype(np.uint8))
         for pt in centroids[1:,:]: # 1st row : centroid of 'zero background'
             c, r = int(pt[0]), int(pt[1])
@@ -84,12 +84,9 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
         if not valid:
             plane_marker[plane_marker0==pidx] = 0
             continue
-        arr_oyz = - np.ones((6,),np.float32)
+        arr_oyz = - np.ones((4,),np.float32)
         arr_oyz[:2] =  vertices[pidx]['o']
-        if 'y' in keys:
-            arr_oyz[2:4] =  vertices[pidx]['y']
-        elif 'z' in keys:
-            arr_oyz[4:] =  vertices[pidx]['z']
+        arr_oyz[2:4] =  vertices[pidx]['p']
         planemarker2vertices.append( [pidx, arr_oyz, cp] )
 
     dist = cv2.distanceTransform( (~outline).astype(np.uint8),
@@ -136,19 +133,24 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
         dst = GetColoredLabel(marker)
         for pidx, arr_oyz, cp in planemarker2vertices:
             pt_org = tuple(arr_oyz[:2].astype(np.int32).tolist())
-            if arr_oyz[2] > 0:
-                pt_y = tuple(arr_oyz[2:4].astype(np.int32).tolist())
-                cv2.line(dst,pt_org,pt_y, (100,255,100),2)
-            if arr_oyz[4] > 0:
-                pt_z = tuple(arr_oyz[4:].astype(np.int32).tolist())
-                cv2.line(dst,pt_org,pt_z, (100,100,255),2)
+            pt_y = tuple(arr_oyz[2:4].astype(np.int32).tolist())
+            cv2.line(dst,pt_org,pt_y, (100,255,100),2)
             cv2.circle(dst,pt_org,3,(0,0,255),-1)
-            #cv2.circle(dst,(cp[0],cp[1]),5,(150,150,150),2)
         dst = cv2.addWeighted(dst, 0.4, rgb, 0.6, 0.)
         cv2.imshow("dst", dst)
         cv2.waitKey()
 
-    return obbs
+    n_component, _, stats, _ = cv2.connectedComponentsWithStats(green_area.astype(np.uint8))
+    bridge = CvBridge()
+    init_floormask = bridge.cv2_to_imgmsg(255*green_area.astype(np.uint8), encoding="8UC1")
+    if stats.shape[0] < 2:
+        init_floormask = None
+    else:
+        for j in range(1,stats.shape[0]):
+            if stats[j,1] < 100:
+                init_floormask = None
+                break
+    return obbs, init_floormask
 
 def make_dataset_dir(name='obb_dataset'):
     script_fn = osp.abspath(__file__)

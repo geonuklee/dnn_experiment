@@ -71,7 +71,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
                               const int32_t* ptr_frontmarker,
                               const int32_t* ptr_marker,
                               const float* ptr_depth,
-                              const EigenMap<int,Eigen::Matrix<float,6,1> >& label2vertices,
+                              const EigenMap<int,Eigen::Matrix<float,4,1> >& label2vertices,
                               const float* ptr_numap,
                               const float* ptr_nvmap,
                               float max_depth
@@ -232,8 +232,8 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     }
 
     // Orientation from vertices
-    // vertices : uv of o, y, z
-    const Eigen::Matrix<float,6,1>& vertices = label2vertices.at(it.first);
+    // vertices : uv of o, y
+    const Eigen::Matrix<float,4,1>& vertices = label2vertices.at(it.first);
     //Eigen::Vector3f o(0.,0., -plane[3]/plane[2]);
     Eigen::Vector3f pt_o = uv2eigen_xyz(vertices[0],vertices[1]);
     pt_o = pt_o - (pt_o.dot(n)+plane[3])*n;// projection on plane
@@ -242,9 +242,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     Eigen::Matrix<float,3,3> R0c;
     R0c.row(0) = r1.transpose();
 
-    Eigen::Vector3f pt_a = vertices[2]>0.
-      ? uv2eigen_xyz(vertices[2],vertices[3])
-      : uv2eigen_xyz(vertices[4],vertices[5]);
+    Eigen::Vector3f pt_a = uv2eigen_xyz(vertices[2],vertices[3]);
     pt_a = pt_a - (pt_a.dot(n)+plane[3])*n;// projection on plane
     Eigen::Vector3f delta = (pt_a - pt_o).normalized();
     Eigen::Vector3f r2, r3;
@@ -967,7 +965,7 @@ py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
   py::buffer_info buf_nvmap = nvmap.request();
   const float* ptr_nvmap = (const float*) buf_nvmap.ptr;
 
-  EigenMap<int,Eigen::Matrix<float,6,1> > label2vertices; // org, x, y on 2D image plane
+  EigenMap<int,Eigen::Matrix<float,4,1> > label2vertices; // org, x, y on 2D image plane
 
   size_t n = py_label2vertices.size();
   for(py::handle obj : py_label2vertices){
@@ -977,7 +975,7 @@ py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
     int idx = l[0].cast<int>();
     py::array_t<float> vertices = l[1].cast<py::array_t<float> >();
     float* vertices_ptr = (float*) vertices.request().ptr;
-    Eigen::Matrix<float,6,1> mat(vertices_ptr);
+    Eigen::Matrix<float,4,1> mat(vertices_ptr);
     label2vertices[idx] = mat;
   }
   //assert(info.contains("K"));

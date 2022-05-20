@@ -113,8 +113,10 @@ if __name__=="__main__":
             rect_rgb_msg, rect_depth_msg, rect_depth = rectify(rgb_msg, depth_msg, mx, my, bridge)
 
             if scene_eval is None:
-                y0, max_z = 50, 3.
-                floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, y0, max_z)
+                max_z = 5.
+                init_floormask  = get_init_floormask(bridge,
+                        rect_depth_msg.width, rect_depth_msg.height, y0=50)
+                floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
                 plane_c = floor_msg.plane
                 floor_mask = floor_msg.mask
                 floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)

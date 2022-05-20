@@ -92,6 +92,12 @@ def get_Twc(cam_id):
     pose = convert2pose(Twc)
     return pose
 
+def get_init_floormask(bridge, width, height, y0):
+    mask = np.zeros((height,width),dtype=np.uint8)
+    mask[-int(y0):,:] = 255
+    init_floormask = bridge.cv2_to_imgmsg(mask, encoding="8UC1")
+    return init_floormask
+
 class Sub:
     def __init__(self, rgb, depth, info):
         self.sub_depth = rospy.Subscriber(depth, Image, self.cb_depth, queue_size=30)
@@ -151,8 +157,8 @@ if __name__=="__main__":
         rect_rgb_msg, rect_depth_msg, rect_depth = rectify(sub.rgb, sub.depth, mx, my, bridge)
 
         # Remove depth of floor
-        y0, max_z = 50, 2.
-        floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, y0, max_z)
+        init_floormask = get_init_floormask(bridge, rect_depth_msg.width, rect_depth_msg.height, y0=50)
+        floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
         floor_mask = floor_msg.mask
         floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
         rect_depth[floor>0] = 0.

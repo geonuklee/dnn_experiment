@@ -369,8 +369,8 @@ class Evaluator:
                     dr = rwb1.inv()* rwb0
                     deg_err = np.rad2deg( np.linalg.norm(dr.as_rotvec()) )
 
-                    if deg_err > 45.:
-                        import pdb; pdb.set_trace()
+                    #if deg_err > 45.:
+                    #    import pdb; pdb.set_trace()
 
                     # surf_cp is twp for cente 'p'ointr of front plane on 'w'orld frame.
                     t_err = info['surf1'][0] - info['surf0'][0]

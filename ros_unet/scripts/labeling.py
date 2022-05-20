@@ -60,12 +60,10 @@ def MakeLabel(rect_rgb, rect_depth, label_fn):
     cv_gt = cv2.imread(label_fn)
     return cv_gt
 
-def ShowObb(compute_floor,rect_depth_msg, rect_rgb_msg, y0, max_z,
-        scen_eval
-        ):
+def ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scen_eval):
     rate = rospy.Rate(5)
     while not rospy.is_shutdown():
-        floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, y0, max_z)
+        # TODO y0, max_z 대신 floor mask로부터 floor계산하는 기능 추가
         scene_eval.pubGtObb()
         n0 = scene_eval.pub_gt_obb.get_num_connections()
         n1 = scene_eval.pub_gt_pose.get_num_connections()
@@ -94,9 +92,7 @@ if __name__=="__main__":
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
 
     bridge = CvBridge()
-
     rate = rospy.Rate(10)
-
 
     root = Tk()
     root.geometry("300x200")
@@ -106,8 +102,8 @@ if __name__=="__main__":
     obb_max_depth = 5.
 
     rosbagfiles.reverse()
-    for fullfn in rosbagfiles:
-        print(fullfn)
+    for i, fullfn in enumerate(rosbagfiles):
+        print("%d/%d, %s"%(i,len(rosbagfiles),fullfn) )
         if rospy.is_shutdown():
             break
         basename = get_base(fullfn) 
@@ -129,8 +125,6 @@ if __name__=="__main__":
         rect_rgb_msg, rect_depth_msg, rect_depth = rectify(rgb_msg, depth_msg, mx, my, bridge)
     
         floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msg)
-        floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, y0, max_z)
-        plane_c = floor_msg.plane
 
         reedit = False
         while not rospy.is_shutdown():
@@ -147,19 +141,18 @@ if __name__=="__main__":
             pick = {"K":K, "D":D, "newK":newK, "depth":cv_rect_depth, "rgb":cv_rect_rgb,
                 "fullfn":fullfn, "cvgt_fn":osp.abspath(label_fn)}
             
-            #if osp.exists(gt_fn):
-            #    pick = get_pick(gt_fn)
-            #    scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
-            #    ShowObb(compute_floor, rect_depth_msg, rect_rgb_msg, y0, max_z, scene_eval)
             backup = None
             if osp.exists(label_fn):
                 cv_gt = cv2.imread(label_fn)
                 backup = cv_gt.copy()
-                obbs = ParseGroundTruth(cv_gt, cv_rect_rgb, cv_rect_depth, pick['newK'], None, fullfn,
-                        obb_max_depth)
-                pick['obbs'] = obbs
+                pick['obbs'], init_floormask = ParseGroundTruth(cv_gt, cv_rect_rgb,
+                        cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
+                if init_floormask is None:
+                    plane_c = (0., 0., 0., 99.)
+                else:
+                    plane_c = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask).plane
                 scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
-                ShowObb(compute_floor, rect_depth_msg, rect_rgb_msg, y0, max_z, scene_eval)
+                ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scene_eval)
                 print("write for %s" % gt_fn)
                 with open(gt_fn, "wb" ) as f:
                     pickle.dump(pick, f, protocol=2)
@@ -175,13 +168,13 @@ if __name__=="__main__":
 
             # Make OBB for it
             cv2.destroyAllWindows()
-            obbs = ParseGroundTruth(cv_gt, cv_rect_rgb, cv_rect_depth, pick['newK'], None, fullfn,
-                    obb_max_depth)
-            pick['obbs'] = obbs
+            pick['obbs'], init_floormask = ParseGroundTruth(cv_gt, cv_rect_rgb,
+                    cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
+            plane_c = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask).plane
 
             # 3) show obb
             scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
-            ShowObb(compute_floor, rect_depth_msg, rect_rgb_msg, y0, max_z, scene_eval)
+            ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scene_eval)
             with open(gt_fn, "wb" ) as f:
                 pickle.dump(pick, f, protocol=2)
 
