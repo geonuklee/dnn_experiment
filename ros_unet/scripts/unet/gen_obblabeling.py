@@ -39,7 +39,6 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
     # Get Yellow edges
     reddots = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==0),cv_gt[:,:,2]==255)
     bluedots = la(la(cv_gt[:,:,0]==255,cv_gt[:,:,1]==0),cv_gt[:,:,2]==0)
-    green_area = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==255),cv_gt[:,:,2]==0)
     yellowedges = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==255),cv_gt[:,:,2]==255)
 
     outline = la(la(cv_gt[:,:,0]==255,cv_gt[:,:,1]==255),cv_gt[:,:,2]==255)
@@ -140,6 +139,14 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
         cv2.imshow("dst", dst)
         cv2.waitKey()
 
+    init_floormask = GetInitFloorMask(cv_gt)
+    return obbs, init_floormask
+
+def GetInitFloorMask(cv_gt):
+    la = np.logical_and
+    lo = np.logical_or
+
+    green_area = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==255),cv_gt[:,:,2]==0)
     n_component, _, stats, _ = cv2.connectedComponentsWithStats(green_area.astype(np.uint8))
     bridge = CvBridge()
     init_floormask = bridge.cv2_to_imgmsg(255*green_area.astype(np.uint8), encoding="8UC1")
@@ -150,7 +157,7 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
             if stats[j,1] < 100:
                 init_floormask = None
                 break
-    return obbs, init_floormask
+    return init_floormask
 
 def make_dataset_dir(name='obb_dataset'):
     script_fn = osp.abspath(__file__)

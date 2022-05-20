@@ -53,6 +53,8 @@ def convert2pose(Twc):
     return pose
 
 def convert_plane(pose, plane0):
+    if plane0[0] == plane0[1] == plane0[2] == 0.:
+        return plane0
     q = pose.orientation
     rot = rotation_util.from_quat( (q.x,q.y,q.z,q.w) )
     t = pose.position

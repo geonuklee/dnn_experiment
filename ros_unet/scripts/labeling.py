@@ -170,7 +170,10 @@ if __name__=="__main__":
             cv2.destroyAllWindows()
             pick['obbs'], init_floormask = ParseGroundTruth(cv_gt, cv_rect_rgb,
                     cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
-            plane_c = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask).plane
+            if init_floormask is None:
+                plane_c = (0., 0., 0., 99.)
+            else:
+                plane_c = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask).plane
 
             # 3) show obb
             scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)

@@ -19,6 +19,7 @@ from scipy.spatial.transform import Rotation as rotation_util
 
 from evaluator import Evaluator, SceneEval, FrameEval # TODO change file
 from ros_client import *
+from unet.gen_obblabeling import GetInitFloorMask
 
 def get_pick(fn):
     f = open(fn,'r')
@@ -39,7 +40,8 @@ def get_camid(fn):
 
 if __name__=="__main__":
     pkg_dir = '/home/geo/catkin_ws/src/ros_unet' # TODO Hard coding for now
-    obbdatasetpath = osp.join(pkg_dir,'obb_dataset_train','*.pick') # remove hardcoding ..
+    #obbdatasetpath = osp.join(pkg_dir,'obb_dataset_train','*.pick')
+    obbdatasetpath = osp.join(pkg_dir,'obb_dataset_test','*.pick')
     gt_files = glob2.glob(obbdatasetpath)
 
     rospy.init_node('evaluator', anonymous=True)
@@ -113,13 +115,21 @@ if __name__=="__main__":
             rect_rgb_msg, rect_depth_msg, rect_depth = rectify(rgb_msg, depth_msg, mx, my, bridge)
 
             if scene_eval is None:
+                cv_gt = cv2.imread(pick['cvgt_fn'])
                 max_z = 5.
-                init_floormask  = get_init_floormask(bridge,
-                        rect_depth_msg.width, rect_depth_msg.height, y0=50)
-                floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
-                plane_c = floor_msg.plane
-                floor_mask = floor_msg.mask
-                floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
+                init_floormask = GetInitFloorMask(cv_gt)
+                if init_floormask is None:
+                    plane_c = (0., 0., 0., 99.)
+                    floor = np.zeros((rect_depth_msg.height,rect_depth_msg.width),np.uint8)
+                else:
+                    floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
+                    plane_c  = floor_msg.plane
+                    floor_mask = floor_msg.mask
+                    floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
+                #init_floormask  = get_init_floormask(bridge,
+                #        rect_depth_msg.width, rect_depth_msg.height, y0=50)
+                #floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
+                #plane_c = floor_msg.plane
                 Twc = get_Twc(cam_id)
                 scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
                 scene_eval.floor = floor
