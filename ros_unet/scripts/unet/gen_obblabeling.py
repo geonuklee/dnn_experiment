@@ -27,11 +27,7 @@ def get_topic(filename, topic):
 def get_base(fullfn):
     return osp.splitext(osp.basename(fullfn))[0]
 
-def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
-    # 1) watershed, 꼭지점 따기.
-    # 2) OBB - Roll angle 따기.
-    # 3) unet_ext : Unprojection,
-    # 4) unet_ext : Euclidean Cluster+oBB?
+def ParseMarker(cv_gt):
     la = np.logical_and
     lo = np.logical_or
 
@@ -63,8 +59,10 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
         for pt in centroids[1:,:]: # 1st row : centroid of 'zero background'
             c, r = int(pt[0]), int(pt[1])
             pidx = plane_marker0[r,c]
+            if pidx <= 0:
+                import pdb; pdb.set_trace()
             assert(pidx > 0)
-            if not vertices.has_key(pidx):
+            if not pidx in vertices:
                 vertices[pidx] = {}
             vertices[pidx][element] = pt
 
@@ -73,7 +71,7 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
         valid = False
         cp = plane_centroids[pidx,:].astype(np.int32)
         x0,y0,w,h,area = plane_stats[pidx,:]
-        if vertices.has_key(pidx):
+        if pidx in vertices:
             keys = vertices[pidx].keys()
             c1 = min(w,h) > 5
             c2 = plane_marker0[cp[1],cp[0]] == pidx
@@ -100,6 +98,14 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
         idx = marker0[cp[1],cp[0]]
         marker[marker0==idx] = pidx
         front_marker[plane_marker0==pidx] = pidx
+    return outline, marker, front_marker, planemarker2vertices
+
+def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
+    # 1) watershed, 꼭지점 따기.
+    # 2) OBB - Roll angle 따기.
+    # 3) unet_ext : Unprojection,
+    # 4) unet_ext : Euclidean Cluster+oBB?
+    outline, marker, front_marker, planemarker2vertices = ParseMarker(cv_gt)
 
     # mask2obb, GetUV와 같은 normalization map.
     nr, nc = marker.shape
@@ -140,7 +146,7 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
         cv2.waitKey()
 
     init_floormask = GetInitFloorMask(cv_gt)
-    return obbs, init_floormask
+    return obbs, init_floormask, marker
 
 def GetInitFloorMask(cv_gt):
     la = np.logical_and
@@ -169,6 +175,8 @@ def make_dataset_dir(name='obb_dataset'):
     else:
         exist_labels = glob2.glob(osp.join(output_path,'*.png'),recursive=True)
         for each in exist_labels:
+            #if each == '/home/geo/ws/dnn_experiment/ros_unet/obb_dataset_test/helios_dist_2022-05-20-12-10-26_cam0.png':
+            #    import pdb; pdb.set_trace()
             groups = re.findall("(.*)_(cam0|cam1).png", each)
             if len(groups) != 1:
                 import pdb; pdb.set_trace()

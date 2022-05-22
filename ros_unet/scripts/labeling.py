@@ -78,7 +78,6 @@ if __name__=="__main__":
     dataset_name = 'obb_dataset_%s'%usage
     obbdatasetpath = osp.join(pkg_dir,dataset_name)
     output_path, exist_labels = make_dataset_dir(name=dataset_name)
-    #output_path, exist_labels = make_dataset_dir(name='obb_dataset')
 
     rosbag_path = '/home/geo/catkin_ws/src/ros_unet/rosbag_%s/**/*.bag'%usage
     rosbagfiles = glob2.glob(rosbag_path,recursive=True)
@@ -145,13 +144,18 @@ if __name__=="__main__":
             if osp.exists(label_fn):
                 cv_gt = cv2.imread(label_fn)
                 backup = cv_gt.copy()
-                pick['obbs'], init_floormask = ParseGroundTruth(cv_gt, cv_rect_rgb,
+                pick['obbs'], init_floormask, pick['marker'] = ParseGroundTruth(cv_gt, cv_rect_rgb,
                         cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
                 if init_floormask is None:
                     plane_c = (0., 0., 0., 99.)
                 else:
                     plane_c = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask).plane
-                scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
+                try:
+                    scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
+                except:
+                    callout = subprocess.call(['kolourpaint', label_fn] )
+                    exit(1)
+                    import pdb; pdb.set_trace()
                 ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scene_eval)
                 print("write for %s" % gt_fn)
                 with open(gt_fn, "wb" ) as f:
@@ -168,7 +172,7 @@ if __name__=="__main__":
 
             # Make OBB for it
             cv2.destroyAllWindows()
-            pick['obbs'], init_floormask = ParseGroundTruth(cv_gt, cv_rect_rgb,
+            pick['obbs'], init_floormask, pick['marker'] = ParseGroundTruth(cv_gt, cv_rect_rgb,
                     cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
             if init_floormask is None:
                 plane_c = (0., 0., 0., 99.)

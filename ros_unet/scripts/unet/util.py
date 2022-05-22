@@ -111,9 +111,9 @@ class SplitAdapter:
 
 def Convert2InterInput(rgb, depth, fx, fy):
     gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
-    dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.1)
+    dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.01)
     fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
-    grad, valid = cpp_ext.GetGradient(fd, sample_offset=0.012, fx=fx,fy=fy)
+    grad, valid = cpp_ext.GetGradient(fd, sample_offset=0.01, fx=fx,fy=fy)
     hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
 
     threshold_curvature = 40.

@@ -29,6 +29,7 @@ import rosbag
 import torchvision.transforms.functional as TF
 
 from util import ConvertDepth2input, Convert2InterInput
+from gen_obblabeling import ParseMarker
 
 def CovnertGroundTruthPNG2Array(cv_gt, width, height):
     cv_gt = cv_gt[:height,:width]
@@ -197,17 +198,29 @@ class ObbDataset(Dataset):
             pick = pickle.load(f, encoding='latin1')
 
         cvgt = cv2.imread(pick['cvgt_fn'])
+        # Remove bacgrkground from input
+        outline, marker, _, _ = ParseMarker(cvgt)
+        dist = cv2.distanceTransform( (marker == 0).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)
+        bg = dist > 50.
         rgb, depth = pick['rgb'], pick_frame['depth']
+        rgb[bg,:] = 0.
+        depth[bg] = 0.
+        outline,marker = [img.astype(np.uint8) for img in [outline,marker]]
+
         K = pick['newK'].copy()
         if self.augment:
             # Reesize image height to h0 * fx/fy, before rotaiton augment.
             dsize = (rgb.shape[1], int(rgb.shape[0]*K[0,0]/K[1,1]) )
             K[1,1] = K[0,0]
-            rgb,depth,cvgt = [cv2.resize(img, dsize, cv2.INTER_NEAREST) for img in [rgb,depth,cvgt] ]
-            rgb,depth,cvgt = [Tensor(img) for img in [rgb,depth,cvgt] ]
-            rgb,cvgt = [img.long() for img in [rgb,cvgt] ]
+            rgb,depth,outline,marker = [cv2.resize(img, dsize, cv2.INTER_NEAREST) for img in [rgb,depth,outline,marker] ]
+            rgb,depth,outline,marker = [Tensor(img) for img in [rgb,depth,outline,marker] ]
+            rgb,outline,marker = [img.long() for img in [rgb,outline,marker] ]
+            outline,marker = [img.unsqueeze(-1) for img in [outline,marker]]
+            #import pdb; pdb.set_trace()
+
             rgb  = rgb.moveaxis(-1,0)
-            cvgt = cvgt.moveaxis(-1,0)
+            outline = outline.moveaxis(-1,0)
+            marker = marker.moveaxis(-1,0)
             depth = depth.unsqueeze(0) # b,c,h,w
 
             choice = np.random.choice(4)
@@ -217,20 +230,15 @@ class ObbDataset(Dataset):
             rgb = TF.adjust_brightness(rgb, np.random.uniform(0.8, 1.2))
 
             angle = np.random.uniform(-30,30)
-            rgb,depth,cvgt = [TF.rotate(img, angle) for img in [rgb,depth,cvgt]]
+            rgb,depth,outline,marker = [TF.rotate(img, angle) for img in [rgb,depth,outline,marker]]
             rgb  = rgb.moveaxis(0,-1)
-            cvgt = cvgt.moveaxis(0,-1)
-            depth = depth.squeeze(0) # b,c,h,w
-            rgb,depth,cvgt = [img.numpy() for img in [rgb,depth,cvgt] ]
-            rgb,cvgt = [ img.astype(np.uint8) for img in [rgb,cvgt] ]
 
-        outline = cvgt==255
-        outline = np.logical_and(np.logical_and(outline[:,:,0],outline[:,:,1]),
-                outline[:,:,2])
-        dist = cv2.distanceTransform( (~outline).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)
-        outline = dist < 1
+            depth = depth.squeeze(0) # b,c,h,w
+            rgb,depth,outline,marker = [img.numpy() for img in [rgb,depth,outline,marker] ]
+            rgb,outline,marker = [ img.astype(np.uint8) for img in [rgb,outline,marker] ]
+
         input_x = Convert2InterInput(rgb, depth, K[0,0], K[1,1])[0]
-        frame = {'rgb':rgb, 'idx':idx, 'input_x': input_x, 'outline':outline, 'depth':depth }
+        frame = {'rgb':rgb, 'depth':depth, 'idx':idx, 'input_x': input_x, 'outline':outline, }
         return frame
 
 if __name__ == '__main__':
@@ -244,7 +252,7 @@ if __name__ == '__main__':
     #dataset = SegmentDataset('vtk_dataset','valid')
     #for data in dataset:
     #    print("asdf")
-    dataset = ObbDataset('obb_dataset')
+    dataset = ObbDataset('obb_dataset_train')
     for frame in dataset:
-        break
+        frame['rgb']
 

@@ -15,6 +15,8 @@ from util import *
 #from unet_model import IterNet
 from iternet import IterNet, get_w_from_pixel_distribution, weighted_bce_loss
 from torch import nn, optim
+from datetime import datetime
+
 
 def spliter_test():
     dataset = ObbDataset('obb_dataset_train')
@@ -60,7 +62,7 @@ def train():
             input_x = data['input_x']
             input_x = spliter.put(input_x).to(device)
 
-            target = data['outline'].unsqueeze(1) # unsqueeze for spliter
+            target = data['outline']
             target = spliter.put(target).float().to(device)
             optimizer.zero_grad(set_to_none=True)
 
@@ -84,7 +86,10 @@ def train():
                 }
 
             if i %100 == 0 and niter > 0:
-                print("epoch [%d/%d], frame[%d/%d] loss = %f" % (epoch,n_epoch,i,len(dataloader), loss.item()) )
+                current_time = datetime.now().strftime("%H:%M:%S")
+                print("epoch [%d/%d], frame[%d/%d] loss = %f" \
+                        % (epoch,n_epoch,i,len(dataloader), loss.item()),
+                        current_time )
                 torch.save(states, 'obb_dataset_train/iternet_%d.pth'%epoch)
                 torch.save(states, checkpoint_fn)
             niter += 1
