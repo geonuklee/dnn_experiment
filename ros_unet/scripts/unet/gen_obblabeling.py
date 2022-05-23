@@ -27,7 +27,7 @@ def get_topic(filename, topic):
 def get_base(fullfn):
     return osp.splitext(osp.basename(fullfn))[0]
 
-def ParseMarker(cv_gt):
+def ParseMarker(cv_gt, rgb=None):
     la = np.logical_and
     lo = np.logical_or
 
@@ -90,6 +90,8 @@ def ParseMarker(cv_gt):
             distanceType=cv2.DIST_L2, maskSize=5)
     n_inssegments, marker0, _, _ \
             = cv2.connectedComponentsWithStats((dist>5).astype(np.uint8))
+    # thick outline
+    outline = dist < 3.
     
     # Sync correspondence of marker and  plane_marker
     marker = np.zeros_like(marker0)
@@ -98,6 +100,24 @@ def ParseMarker(cv_gt):
         idx = marker0[cp[1],cp[0]]
         marker[marker0==idx] = pidx
         front_marker[plane_marker0==pidx] = pidx
+
+    verbose=False
+    if verbose:
+        cv2.imshow("outline", 255*outline.astype(np.uint8))
+        cv2.imshow("color_pm0", color_pm0)
+        cv2.imshow("marker", GetColoredLabel(marker))
+        cv2.imshow("front_marker", GetColoredLabel(front_marker))
+        dst = GetColoredLabel(marker)
+        for pidx, arr_oyz, cp in planemarker2vertices:
+            pt_org = tuple(arr_oyz[:2].astype(np.int32).tolist())
+            pt_y = tuple(arr_oyz[2:4].astype(np.int32).tolist())
+            cv2.line(dst,pt_org,pt_y, (100,255,100),2)
+            cv2.circle(dst,pt_org,3,(0,0,255),-1)
+        if rgb is not None:
+            dst = cv2.addWeighted(dst, 0.4, rgb, 0.6, 0.)
+        cv2.imshow("dst", dst)
+        if ord('q') == cv2.waitKey():
+            exit(1)
     return outline, marker, front_marker, planemarker2vertices
 
 def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
@@ -105,7 +125,7 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
     # 2) OBB - Roll angle 따기.
     # 3) unet_ext : Unprojection,
     # 4) unet_ext : Euclidean Cluster+oBB?
-    outline, marker, front_marker, planemarker2vertices = ParseMarker(cv_gt)
+    outline, marker, front_marker, planemarker2vertices = ParseMarker(cv_gt, rgb)
 
     # mask2obb, GetUV와 같은 normalization map.
     nr, nc = marker.shape
@@ -129,21 +149,6 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
     for idx, pose, scale in obb_tuples:
         #  pose = (x,y,z, qw,qx,qy,qz) for transform {camera} <- {box}
         obbs.append( {'id':idx, 'pose':pose, 'scale':scale } )
-
-    verbose=False
-    if verbose:
-        cv2.imshow("color_pm0", color_pm0)
-        cv2.imshow("marker", GetColoredLabel(marker))
-        cv2.imshow("front_marker", GetColoredLabel(front_marker))
-        dst = GetColoredLabel(marker)
-        for pidx, arr_oyz, cp in planemarker2vertices:
-            pt_org = tuple(arr_oyz[:2].astype(np.int32).tolist())
-            pt_y = tuple(arr_oyz[2:4].astype(np.int32).tolist())
-            cv2.line(dst,pt_org,pt_y, (100,255,100),2)
-            cv2.circle(dst,pt_org,3,(0,0,255),-1)
-        dst = cv2.addWeighted(dst, 0.4, rgb, 0.6, 0.)
-        cv2.imshow("dst", dst)
-        cv2.waitKey()
 
     init_floormask = GetInitFloorMask(cv_gt)
     return obbs, init_floormask, marker

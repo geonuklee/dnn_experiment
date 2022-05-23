@@ -55,7 +55,7 @@ def train():
         epoch_last = 0
 
     epoch_last = 0
-    n_epoch = 10
+    n_epoch = 2
     niter = 0
     for epoch in range(epoch_last, n_epoch):  # loop over the dataset multiple times
         for i, data in enumerate(dataloader):

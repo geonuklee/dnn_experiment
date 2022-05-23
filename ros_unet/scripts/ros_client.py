@@ -158,23 +158,13 @@ if __name__=="__main__":
         fx, fy = rect_info_msgs[cam_id].K[0], rect_info_msgs[cam_id].K[4]
         rect_rgb_msg, rect_depth_msg, rect_depth = rectify(sub.rgb, sub.depth, mx, my, bridge)
 
-        # Remove depth of floor
-        init_floormask = get_init_floormask(bridge, rect_depth_msg.width, rect_depth_msg.height, y0=50)
-        floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
-        floor_mask = floor_msg.mask
-        floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
-        rect_depth[floor>0] = 0.
-        rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
+        plane_w = (0.,0.,0.,1.)
 
         t0 = time.time()
         edge_resp = predict_edge(rect_rgb_msg, rect_depth_msg, fx, fy)
-        plane_w = convert_plane(Twc, floor_msg.plane) # empty plane = no floor filter.
         obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
                 Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
         t1 = time.time()
-        #print(plane_w)
-        #print(floor_msg.plane)
-        #print(-plane_w[3]/plane_w[2])
         #print("etime = ", t1-t0)
         rate.sleep()
 

@@ -163,8 +163,10 @@ def get_w_from_pixel_distribution(gt, lamb=1):
 
 def weighted_bce_loss(output, target, w1, w2):
     y = output * target
-    loss1 = (w1 - w2) * F.binary_cross_entropy(y, target)
-    loss2 = w2 * F.binary_cross_entropy(output, target)
+    #loss1 = (w1 - w2) * F.binary_cross_entropy(y, target)
+    #loss2 = w2 * F.binary_cross_entropy(output, target)
+    loss1 = 10. * F.binary_cross_entropy(y, target) # Loss only for false negative
+    loss2 = 0.1 * F.binary_cross_entropy(output, target) # Loss for all false detections.
     
     # While F.cross_entropy require (b, n(cls), h, w) long type target,
     # F.binary_cross_entropy require (b, 

@@ -98,7 +98,7 @@ class SplitAdapter:
         pred = pred.squeeze(0).moveaxis(0,-1)
         mask = np.zeros((pred.shape[0],pred.shape[1]),np.uint8)
 
-        edge = (pred[:,:,-1] > .8).numpy()
+        edge = (pred[:,:,-1] > .7).numpy()
         mask[edge] = 1
         return mask
 
