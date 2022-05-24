@@ -90,8 +90,9 @@ def ParseMarker(cv_gt, rgb=None):
             distanceType=cv2.DIST_L2, maskSize=5)
     n_inssegments, marker0, _, _ \
             = cv2.connectedComponentsWithStats((dist>5).astype(np.uint8))
-    # thick outline
-    outline = dist < 3.
+
+    ## thick outline
+    #outline = dist < 3.
     
     # Sync correspondence of marker and  plane_marker
     marker = np.zeros_like(marker0)
@@ -165,7 +166,7 @@ def GetInitFloorMask(cv_gt):
         init_floormask = None
     else:
         for j in range(1,stats.shape[0]):
-            if stats[j,1] < 100:
+            if stats[j,1] < 10:
                 init_floormask = None
                 break
     return init_floormask

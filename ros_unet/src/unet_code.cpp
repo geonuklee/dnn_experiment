@@ -286,9 +286,11 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       min_x0[k] = std::min(min_x0[k], x0[k]);
     }
 
-    const double min_depth = 0.2;
-    if(min_x0[0] > -min_depth)
-      min_x0[0] = -min_depth;
+    if(all_cloud->size() < front_cloud->size()+10 ){
+      const double min_depth = 0.2;
+      if(min_x0[0] > -min_depth)
+        min_x0[0] = -min_depth;
+    }
 
     Eigen::Vector3f obb_size(max_x0[0]-min_x0[0], max_x0[1]-min_x0[1], max_x0[2]-min_x0[2]);
     g2o::SE3Quat T0b; // TODO

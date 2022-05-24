@@ -8,6 +8,8 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import cv2
+import numpy as np
 
 class conv2L(nn.Module):
     def __init__(self, dim_in, dim_out, kernel=3, stride=1, padding=1, bias=True):
@@ -163,16 +165,8 @@ def get_w_from_pixel_distribution(gt, lamb=1):
 
 def weighted_bce_loss(output, target, w1, w2):
     y = output * target
-    #loss1 = (w1 - w2) * F.binary_cross_entropy(y, target)
-    #loss2 = w2 * F.binary_cross_entropy(output, target)
-    loss1 = 10. * F.binary_cross_entropy(y, target) # Loss only for false negative
-    loss2 = 0.1 * F.binary_cross_entropy(output, target) # Loss for all false detections.
-    
-    # While F.cross_entropy require (b, n(cls), h, w) long type target,
-    # F.binary_cross_entropy require (b, 
-    #loss1 = (w1 - w2) * F.cross_entropy(y, target) << cross entroy require 
-
-    #self.loss_bg_edge = nn.CrossEntropyLoss(weight=torch.Tensor([0.01, 1.]) )
+    loss1 = (w1 - w2) * F.binary_cross_entropy(y, target)
+    loss2 = w2 * F.binary_cross_entropy(output, target)
     """
     1) target = 0
     loss1 = (w1-w2) * (0 + log(1)) = 0
@@ -187,6 +181,34 @@ def weighted_bce_loss(output, target, w1, w2):
     => loss = w1*y*log(a) + w2*(1-y)*log(1-a)
     """
     return loss1 + loss2
+
+def distance_weighted_bce_loss(spliter, output, target, fn_w, fp_w):
+    assert(output.shape[0] == target.shape[0])
+    assert(output.shape[1] == 1)
+    assert(target.shape[1] == 1)
+
+    dist_weights = torch.zeros_like(output) # weights for false positive
+    offset = int( (spliter.wh - spliter.step)/2 )
+    nb = output.shape[0]
+    for b in range(nb):
+        outline = (target[b,0,:,:].numpy() > .5)
+        dist = cv2.distanceTransform( (~outline).astype(np.uint8),
+                                distanceType=cv2.DIST_L2, maskSize=5)
+        w = np.ones_like(dist)
+        w[dist < 20.] = .1
+        dist_weights[b,0,:,:] = torch.Tensor(w).to(dist_weights.device)
+
+    if output.device != torch.device('cpu'):
+        #output = output.to('cpu') # For debugging
+        #dist_weights = dist_weights.to('cpu')
+        target = target.to(output.device)
+    zeros = torch.zeros_like(output)
+
+    yn = target*output
+    yp = dist_weights*output
+    fn_loss = fn_w * F.binary_cross_entropy( yn, target)
+    fp_loss = fp_w * F.binary_cross_entropy( yp, zeros)
+    return fn_loss+fp_loss
 
 
 

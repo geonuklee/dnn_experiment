@@ -13,7 +13,7 @@ import numpy as np
 from segment_dataset import ObbDataset
 from util import *
 #from unet_model import IterNet
-from iternet import IterNet, get_w_from_pixel_distribution, weighted_bce_loss
+from iternet import IterNet, get_w_from_pixel_distribution, weighted_bce_loss, distance_weighted_bce_loss
 from torch import nn, optim
 from datetime import datetime
 
@@ -52,26 +52,23 @@ def train():
         print ("Start with previou weight, epoch last = %d" % epoch_last)
     except:
         print ("Start without previou weight")
-        epoch_last = 0
+        epoch_last = -1
 
-    epoch_last = 0
-    n_epoch = 2
+    n_epoch = 3
     niter = 0
-    for epoch in range(epoch_last, n_epoch):  # loop over the dataset multiple times
+    for epoch in range(epoch_last+1, n_epoch):  # loop over the dataset multiple times
         for i, data in enumerate(dataloader):
             input_x = data['input_x']
             input_x = spliter.put(input_x).to(device)
+            optimizer.zero_grad(set_to_none=True)
+            y1, y2, y3 = model(input_x)
 
             target = data['outline']
-            target = spliter.put(target).float().to(device)
-            optimizer.zero_grad(set_to_none=True)
-
-            y1, y2, y3 = model(input_x)
-            w1, w2 = get_w_from_pixel_distribution(target)
-
-            loss1 = weighted_bce_loss(y1, target, w1, w2)
-            loss2 = weighted_bce_loss(y2, target, w1, w2)
-            loss3 = weighted_bce_loss(y3, target, w1, w2)
+            target = spliter.put(target).float()
+            fn_w, fp_w = 20., .1
+            loss1 = distance_weighted_bce_loss(spliter, y1, target, fn_w, fp_w)
+            loss2 = distance_weighted_bce_loss(spliter, y2, target, fn_w, fp_w)
+            loss3 = distance_weighted_bce_loss(spliter, y3, target, fn_w, fp_w)
             lambda1, lambda2, lambda3 = 1e-1, 2e-1, 3e-1
             loss  = lambda1*loss1 + lambda2*loss2 + lambda3*loss3
             optimizer.zero_grad()
@@ -96,6 +93,29 @@ def train():
         torch.save(states, 'obb_dataset_train/iternet_%d.pth'%epoch)
         torch.save(states, checkpoint_fn)
 
+def test_distance_weighted_loss():
+    dataset = ObbDataset('obb_dataset_train',augment=False)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
+    data = iter(dataloader).next()
+    #outline = data['outline']
+
+    spliter = SplitAdapter(128, 100)
+    device = "cuda:0"
+    model = IterNet().to(device)
+    model.eval()
+    #checkpoint_fn = 'obb_dataset_train/iternet_0.pth'
+    #checkpoint = torch.load(checkpoint_fn)
+    #model.load_state_dict(checkpoint['model_state_dict'])
+
+    input_x = data['input_x']
+    input_x = spliter.put(input_x).to(device)
+    y1, y2, y3 = model(input_x)
+    #y1, y2, y3 = [ y.detach().cpu() for y in (y1,y2,y3) ]
+
+    target = data['outline'].unsqueeze(1)
+    target = spliter.put(target).float()
+    loss1 = distance_weighted_bce_loss(spliter, y3, target, 10., 0.1)
 
 if __name__ == '__main__':
     train()
+    #test_distance_weighted_loss()
