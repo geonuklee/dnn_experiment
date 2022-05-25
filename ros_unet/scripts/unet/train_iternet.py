@@ -54,7 +54,7 @@ def train():
         print ("Start without previou weight")
         epoch_last = -1
 
-    n_epoch = 3
+    n_epoch = 10
     niter = 0
     for epoch in range(epoch_last+1, n_epoch):  # loop over the dataset multiple times
         for i, data in enumerate(dataloader):
@@ -65,7 +65,7 @@ def train():
 
             target = data['outline']
             target = spliter.put(target).float()
-            fn_w, fp_w = 20., .1
+            fn_w, fp_w = 20., .01
             loss1 = distance_weighted_bce_loss(spliter, y1, target, fn_w, fp_w)
             loss2 = distance_weighted_bce_loss(spliter, y2, target, fn_w, fp_w)
             loss3 = distance_weighted_bce_loss(spliter, y3, target, fn_w, fp_w)

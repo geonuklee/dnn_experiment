@@ -195,7 +195,8 @@ def distance_weighted_bce_loss(spliter, output, target, fn_w, fp_w):
         dist = cv2.distanceTransform( (~outline).astype(np.uint8),
                                 distanceType=cv2.DIST_L2, maskSize=5)
         w = np.ones_like(dist)
-        w[dist < 20.] = .1
+        w[dist < 10.] = .1
+        w[dist < 5.] = .01
         dist_weights[b,0,:,:] = torch.Tensor(w).to(dist_weights.device)
 
     if output.device != torch.device('cpu'):
@@ -207,7 +208,7 @@ def distance_weighted_bce_loss(spliter, output, target, fn_w, fp_w):
     yn = target*output
     yp = dist_weights*output
     fn_loss = fn_w * F.binary_cross_entropy( yn, target)
-    fp_loss = fp_w * F.binary_cross_entropy( yp, zeros)
+    fp_loss = fp_w * F.binary_cross_entropy( yp, target)
     return fn_loss+fp_loss
 
 
