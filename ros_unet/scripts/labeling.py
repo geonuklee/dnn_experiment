@@ -74,7 +74,7 @@ def ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scen_eval):
 
 if __name__=="__main__":
     pkg_dir = '/home/geo/catkin_ws/src/ros_unet' # TODO Hard coding for now
-    usage='train'
+    usage='test0523'
     dataset_name = 'obb_dataset_%s'%usage
     obbdatasetpath = osp.join(pkg_dir,dataset_name)
     output_path, exist_labels = make_dataset_dir(name=dataset_name)

@@ -40,8 +40,8 @@ def get_camid(fn):
 
 if __name__=="__main__":
     pkg_dir = '/home/geo/catkin_ws/src/ros_unet' # TODO Hard coding for now
-    #obbdatasetpath = osp.join(pkg_dir,'obb_dataset_train','*.pick')
-    obbdatasetpath = osp.join(pkg_dir,'obb_dataset_test','*.pick')
+    usage = 'train'
+    obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
     gt_files = glob2.glob(obbdatasetpath)
 
     rospy.init_node('evaluator', anonymous=True)
@@ -149,8 +149,8 @@ if __name__=="__main__":
             rate.sleep()
 
             print("scene %d/%d ... %s "% (i_file, len(gt_files), gt_fn) )
-            if n%10==0 :  # TODO
-                evaluator.Evaluate(is_final=False)
+            if n%4==0 :  # TODO
+                #evaluator.Evaluate(is_final=False)
                 break
 
         # Draw for after evaluating a rosbag file.

@@ -207,9 +207,47 @@ def distance_weighted_bce_loss(spliter, output, target, fn_w, fp_w):
 
     yn = target*output
     yp = dist_weights*output
-    fn_loss = fn_w * F.binary_cross_entropy( yn, target)
-    fp_loss = fp_w * F.binary_cross_entropy( yp, target)
+    fn_loss = fn_w * f.binary_cross_entropy( yn, target)
+    fp_loss = fp_w * f.binary_cross_entropy( yp, target)
     return fn_loss+fp_loss
 
+def masked_loss(spliter, output, target, validmask, outline_dist, fn_w, fp_w):
+    assert(output.shape[0] == target.shape[0])
+    assert(output.shape[1] == 1)
+    assert(target.shape[1] == 1)
 
+    #offset = int( (spliter.wh - spliter.step)/2 ) # TODO how to implement.,. whether is it valid?
+    l = 20
+    offset = int(l/2)
 
+    if output.device != torch.device('cpu'):
+        target = target.to(output.device)
+
+    ## step 1. outline weight
+    to = target*output
+    ones = torch.ones( (1,1,l,l) ).to(output.device)
+    cropped_output = output[:,:,offset-1:-offset, offset-1:-offset]
+    cropped_target = target[:,:,offset-1:-offset, offset-1:-offset]
+
+    t1 = cropped_target * F.conv2d(target-to, ones)
+    t2 = F.conv2d(target, ones)
+    t2[cropped_target == 0.] = 1.
+    outline_weights = t1/t2 # TODO visualization
+
+    ### step 2. non outline weights
+    non_outline_weights = outline_dist[:,:,offset-1:-offset, offset-1:-offset]/200.
+    non_outline_weights[non_outline_weights > 1.] = 1.
+    non_outline_weights = non_outline_weights.to(output.device)
+
+    ## step 3. impelementation
+    cropped_weights = torch.zeros_like(cropped_target)
+    cropped_weights[cropped_target==1.] =     outline_weights[cropped_target==1.]
+    cropped_weights[cropped_target==0.] = non_outline_weights[cropped_target==0.]
+    cropped_weights[validmask[:,:,offset-1:-offset, offset-1:-offset]==0] = 0.
+    cropped_weights = cropped_weights.detach()
+
+    #fn_loss = F.binary_cross_entropy(cropped_output, cropped_target, cropped_weights)
+    yn = cropped_target*cropped_output
+    fn_loss  = fn_w * F.binary_cross_entropy( yn,             cropped_target)
+    fnp_loss = fp_w * F.binary_cross_entropy( cropped_output, cropped_target)
+    return fn_loss+fnp_loss

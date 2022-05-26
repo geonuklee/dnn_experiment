@@ -98,7 +98,7 @@ class SplitAdapter:
         pred = pred.squeeze(0).moveaxis(0,-1)
         mask = np.zeros((pred.shape[0],pred.shape[1]),np.uint8)
 
-        edge = (pred[:,:,-1] > .7).numpy()
+        edge = (pred[:,:,-1] > .9).numpy()
         mask[edge] = 1
         return mask
 
@@ -107,6 +107,9 @@ class SplitAdapter:
         dst = (np_rgb/2).astype(np.uint8)
         dst[mask>0,:2] = 0
         dst[mask>0,2] = 255
+        gray = cv2.cvtColor(np_rgb, cv2.COLOR_BGR2GRAY)
+        gray = np.stack((gray,gray,gray),axis=2)
+        dst = cv2.addWeighted(dst, 0.9, gray, 0.1, 0.)
         return dst
 
 def Convert2InterInput(rgb, depth, fx, fy):
