@@ -17,7 +17,7 @@ import ros_numpy
 class Node:
     def __init__(self, model):
         self.model = model
-        self.spliter = SplitAdapter(wh=128,step=100)
+        self.spliter = SplitAdapter(256, 200)
         self.pub_th_edge = rospy.Publisher("~th_edge", Image, queue_size=1)
         self.pub_unet_edge = rospy.Publisher("~unet_edge", Image, queue_size=1)
 

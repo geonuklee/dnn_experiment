@@ -222,20 +222,21 @@ class ObbDataset(Dataset):
             rgb,depth,outline,marker = [Tensor(img) for img in [rgb,depth,outline,marker] ]
             rgb,outline,marker = [img.long() for img in [rgb,outline,marker] ]
             outline,marker = [img.unsqueeze(-1) for img in [outline,marker]]
-            #import pdb; pdb.set_trace()
 
             rgb  = rgb.moveaxis(-1,0)
             outline = outline.moveaxis(-1,0)
             marker = marker.moveaxis(-1,0)
             depth = depth.unsqueeze(0) # b,c,h,w
 
-            choice = np.random.choice(4)
-            if choice == 0:
-                rgb = TF.gaussian_blur(rgb, 5, np.random.uniform(0., 10.) )
+            #choice = np.random.choice(4)
+            #if choice == 0:
+            #    rgb = TF.gaussian_blur(rgb, 5, np.random.uniform(0., 10.) )
             rgb = TF.adjust_saturation(rgb, np.random.uniform(0.8, 1.2) )
             rgb = TF.adjust_brightness(rgb, np.random.uniform(0.8, 1.2))
 
-            angle = np.random.uniform(-30,30)
+            #angle = np.random.uniform(-30,30)
+            angles = np.arange(-45.,45.,15.)
+            angle = np.random.choice(angles,1)[0]
             rgb,depth,outline,marker = [TF.rotate(img, angle) for img in [rgb,depth,outline,marker]]
 
             rgb  = rgb.moveaxis(0,-1)
@@ -252,7 +253,7 @@ class ObbDataset(Dataset):
         outline_dist = cv2.distanceTransform( (cv_outline==0).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)
 
         dist = cv2.distanceTransform( (cv_marker == 0).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)
-        validmask = (dist < 50.).astype(np.uint8)
+        validmask = (dist < 3.).astype(np.uint8)
         validmask = validmask.reshape( (1,validmask.shape[0], validmask.shape[1]) )
 
         frame = {'rgb':rgb, 'depth':depth, 'idx':idx, 'input_x': input_x, 'outline':outline,

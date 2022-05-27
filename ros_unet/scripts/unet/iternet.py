@@ -217,7 +217,7 @@ def masked_loss(spliter, output, target, validmask, outline_dist, fn_w, fp_w):
     assert(target.shape[1] == 1)
 
     #offset = int( (spliter.wh - spliter.step)/2 ) # TODO how to implement.,. whether is it valid?
-    l = 20
+    l = 60
     offset = int(l/2)
 
     if output.device != torch.device('cpu'):
