@@ -21,22 +21,6 @@ from os import makedirs
 import shutil
 
 
-def spliter_test():
-    dataset = ObbDataset('obb_dataset_train')
-    loader = DataLoader(dataset, batch_size=2, shuffle=True)
-    for data in loader:
-        break
-    rgb = data['rgb']
-    # b,c,h,w
-    rgb = rgb.moveaxis(-1,1)
-
-    spliter = SplitAdapter(wh = 200,step = 120)
-    patches = spliter.put(rgb)
-    dst = spliter.restore(patches)
-
-    cv2.imshow("dst", dst[0,:,:,:].moveaxis(0,-1).numpy())
-    cv2.waitKey()
-
 def compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist):
     fn_w, fp_w = get_w_from_pixel_distribution(target, lamb=5.)
     #fn_w, fp_w = 20., .01
@@ -49,63 +33,50 @@ def compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist):
     return loss
 
 class TrainEvaluator:
-    def __init__(self, valid_dataset, valid_loss_list=[]):
+    def __init__(self, valid_dataset, model):
         self.dataloader = DataLoader(valid_dataset, batch_size=1, shuffle=False)
-        self.valid_loss_list = valid_loss_list
+        self.model = model
 
-    def put_train_loss(self, loss):
-        pass
-
-    def save_prediction(self, spliter, model, device, name):
+    def save_prediction(self, name):
         vis_dir = 'weights/vis_%s'%name
         if osp.exists(vis_dir):
             shutil.rmtree(vis_dir)
         makedirs(vis_dir)
         for i, data in enumerate(self.dataloader):
             input_x = data['input_x']
-            input_x = spliter.put(input_x).to(device)
-            _, _, y3 = model(input_x)
-            y3 = spliter.restore(y3)
-            dst = spliter.pred2dst(y3, data['rgb'].squeeze(0).numpy())
+            y1, y2, y3 = self.model(input_x)
+            y3 =  self.model.spliter.restore(y3)
+            dst = self.model.spliter.pred2dst(y3, data['rgb'].squeeze(0).numpy())
             fn = osp.join(vis_dir, '%d.png'%i)
             cv2.imwrite( fn, dst )
 
-    def evaluate_with_valid(self, spliter, model, device, niter, save_prediction):
+    def evaluate_with_valid(self, save_prediction):
         loss_sum = 0.
         if save_prediction:
-            vis_dir = 'weights/vis%d'%niter
+            vis_dir = 'weights/vis%d'%self.model.niter
             if osp.exists(vis_dir):
                 shutil.rmtree(vis_dir)
             makedirs(vis_dir)
 
         for i, data in enumerate(self.dataloader):
             input_x = data['input_x']
-            input_x = spliter.put(input_x).to(device)
-            y1, y2, y3 = model(input_x)
-            target = data['outline']
-            target = spliter.put(target)
-            outline_dist = data['outline_dist']
-            outline_dist = spliter.put(outline_dist)
-            validmask = spliter.put(data['validmask'])
-
-            loss = compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist)
+            output = self.model(input_x)
+            loss = self.model.ComputeLoss(output, data)
             loss_sum += loss.item()
-            y3 = spliter.restore(y3)
-
+            y3 = self.model.spliter.restore(output[-1])
             if not save_prediction:
                 continue
-
-            dst = spliter.pred2dst(y3, data['rgb'].squeeze(0).numpy())
+            dst = self.model.spliter.pred2dst(y3, data['rgb'].squeeze(0).numpy())
             fn = osp.join(vis_dir, '%d.png'%i)
             cv2.imwrite( fn, dst )
 
         mean_loss = loss_sum / float(len(self.dataloader))
-        self.valid_loss_list.append( (niter, mean_loss) )
+        self.model.valid_loss_list.append( (self.model.niter, mean_loss) )
 
-        if len(self.valid_loss_list) < 2:
+        if len(self.model.valid_loss_list) < 2:
             return mean_loss
         dtype = [('niter',int), ('loss',float)]
-        loss_arr = np.array(self.valid_loss_list,dtype=dtype)
+        loss_arr = np.array(self.model.valid_loss_list,dtype=dtype)
         if not hasattr(self, 'fig'):
             self.fig = plt.figure(figsize=(4, 3))
             plt.title('niter - mean loss(valid)')
@@ -114,89 +85,81 @@ class TrainEvaluator:
         fig = self.fig
         plt.plot(loss_arr['niter'], loss_arr['loss'], 'b-')
         plt.savefig('weights/loss_chart.png')
-        #plt.show(block=False)
-        #plt.pause(.001)
         return mean_loss
 
 def train():
-    spliter = SplitAdapter(256, 200)
-    #spliter = SplitAdapter(128, 88)
-    device = "cuda:0"
-    model = IterNet().to(device)
-    optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
-
-    validset = ObbDataset('obb_dataset_alignedroll',augment=False,max_frame_per_scene=3)
-    evaluator = TrainEvaluator(validset)
-
     if not osp.exists('weights'):
         makedirs('weights')
-
     checkpoint_fn = 'weights/iternet.pth'
+    state0 = None
     try:
-        checkpoint = torch.load(checkpoint_fn)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        epoch_last = checkpoint['epoch']
-        niter = checkpoint['niter']
-        min_valid_loss = checkpoint['min_valid_loss']
-        evaluator.valid_loss_list = checkpoint['valid_loss_list']
-        print ("Start with previou weight, epoch last = %d" % epoch_last)
+        state0 = torch.load('weights_default/iternet_min.pth')
     except:
+        pass
+    #model_name = 'IterNetInterface'
+    model_name = 'WeightedIterNetInterface'
+    model = globals()[model_name]()
+
+    optimizer = model.CreateOptimizer()
+    if state0 is not None:
+        model0 = globals()[state0['model_name']]()
+        model0.load_state_dict(state0['model_state_dict'])
+        model.iternet = model0.iternet
+        del model0
+
+        #optimizer.load_state_dict(state0['optimizer_state_dict'])
+        if  state0['model_name'] == model.__class__.__name__:
+            model.epoch, model.niter, model.min_valid_loss, model.valid_loss_list\
+                    = state0['others']
+
+        del state0
+        print ("Start with previou weight, epoch last = %d" % model.epoch)
+    else:
         print ("Start without previou weight")
-        epoch_last = -1
-        niter = 0
-        min_valid_loss = None
+
+    validset = ObbDataset('obb_dataset_alignedroll',augment=False,max_frame_per_scene=3)
+    evaluator = TrainEvaluator(validset, model)
 
     n_epoch = 5
-    for epoch in range(epoch_last+1, n_epoch):  # loop over the dataset multiple times
+    for model.epoch in range(model.epoch+1, n_epoch):  # loop over the dataset multiple times
         dataset = ObbDataset('obb_dataset_train',augment=True)
         dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
         for i, data in enumerate(dataloader):
-            input_x = data['input_x']
-            input_x = spliter.put(input_x).to(device)
-            model.train()
+            model.iternet.train()
             optimizer.zero_grad(set_to_none=True)
-            y1, y2, y3 = model(input_x)
-            target = spliter.put(data['outline'])
-            outline_dist = spliter.put( data['outline_dist'])
-            validmask = spliter.put(data['validmask'])
-
-            loss = compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist)
-
-            #del y1,y2,y3
+            input_x = data['input_x']
+            output = model(input_x)
+            loss = model.ComputeLoss(output, data)
+            del data
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
-            states = {
-                'epoch': epoch,
-                'niter': niter,
-                'valid_loss_list':evaluator.valid_loss_list,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
+            print("niter %d, frame %d/%d"%(model.niter, i,len(dataloader) ), end='\r')
+            if (model.niter%100 == 0 and model.niter > 0) or i == len(dataloader)-1:
+                states = {
+                    'model_name' : model.__class__.__name__,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'others' : (model.epoch, model.niter,
+                        model.min_valid_loss, model.valid_loss_list)
                 }
-
-            print("niter %d, frame %d"%(niter, i), end='\r')
-            if (niter%100 == 0 and niter > 0) or i == len(dataloader)-1:
                 current_time = datetime.now().strftime("%H:%M:%S")
-                print("epoch [%d/%d], frame[%d/%d] loss = %f" \
-                        % (epoch,n_epoch,i,len(dataloader), loss.item()),
-                        current_time )
                 with torch.no_grad():
                     model.eval()
-                    save_point = niter%500==0
-                    valid_loss = evaluator.evaluate_with_valid(spliter, model, device,
-                            niter, save_prediction=save_point)
+                    save_point = model.niter%500==0
+                    valid_loss = evaluator.evaluate_with_valid(save_point)
+                    print("epoch [%d/%d], frame[%d/%d], loss(train)= %f, loss(valid)=%f" \
+                            % (model.epoch,n_epoch,i,len(dataloader),
+                                loss.item(), valid_loss), current_time )
                     if save_point:
-                        torch.save(states, 'weights/iternet_%d.pth'%niter)
-                    if (min_valid_loss is None) or valid_loss < min_valid_loss:
-                        min_valid_loss = valid_loss
-                        states['min_valid_loss'] = valid_loss
+                        torch.save(states, 'weights/iternet_%d.pth'%model.niter)
+                    if (model.min_valid_loss is None) or valid_loss < model.min_valid_loss:
+                        model.min_valid_loss = valid_loss
                         torch.save(states, 'weights/iternet_min.pth')
-                        evaluator.save_prediction(spliter, model, device, 'minloss')
+                        evaluator.save_prediction('minloss')
                     torch.save(states, checkpoint_fn)
-            niter += 1
+                del states
+            model.niter += 1
 
 if __name__ == '__main__':
     train()
-    #test_validation()

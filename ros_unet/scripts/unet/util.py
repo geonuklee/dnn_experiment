@@ -61,6 +61,8 @@ class SplitAdapter:
                 batches[b*k:b*(k+1),:,:,:] = patches[:,:,r,c,:,:]
                 self.rc_indices.append((r,c))
                 k+=1
+        if len(self.rc_indices) == 1:
+            import pdb; pdb.set_trace()
         return batches
     
     

@@ -182,92 +182,124 @@ def weighted_bce_loss(output, target, w1, w2):
     """
     return loss1 + loss2
 
-def distance_weighted_bce_loss(spliter, output, target, fn_w, fp_w):
-    assert(output.shape[0] == target.shape[0])
-    assert(output.shape[1] == 1)
-    assert(target.shape[1] == 1)
+class IterNet2(nn.Module):
+    def __init__(self):
+        super(IterNet, self).__init__()
+        self.net1 = IterNetInit()
+        self.net2 = IterNetModule(2)
+        self.net3 = IterNetModule(3)
+        #self.net4 = IterNetModule(4) # Not enough cuda memory.
 
-    dist_weights = torch.zeros_like(output) # weights for false positive
-    offset = int( (spliter.wh - spliter.step)/2 )
-    nb = output.shape[0]
-    for b in range(nb):
-        outline = (target[b,0,:,:].numpy() > .5)
-        dist = cv2.distanceTransform( (~outline).astype(np.uint8),
-                                distanceType=cv2.DIST_L2, maskSize=5)
-        w = np.ones_like(dist)
-        w[dist < 10.] = .1
-        w[dist < 5.] = .01
-        dist_weights[b,0,:,:] = torch.Tensor(w).to(dist_weights.device)
+    def forward(self, img):
+        out1, x0, x9 = self.net1(img)
+        for i in range(4):
+            out, x0, x9 = self.net2(x0, x9)
+        return out1, out2, out3
 
-    if output.device != torch.device('cpu'):
-        #output = output.to('cpu') # For debugging
-        #dist_weights = dist_weights.to('cpu')
-        target = target.to(output.device)
-    zeros = torch.zeros_like(output)
 
-    yn = target*output
-    yp = dist_weights*output
-    fn_loss = fn_w * f.binary_cross_entropy( yn, target)
-    fp_loss = fp_w * f.binary_cross_entropy( yp, target)
-    return fn_loss+fp_loss
+from util import *
+from torch import nn, optim
+class IterNetInterface(nn.Module):
+    def __init__(self):
+        super(IterNetInterface, self).__init__()
+        self.device = 'cuda:0'
+        self.iternet = IterNet().to(self.device)
+        self.spliter = SplitAdapter(128, 100)
+        self.epoch = -1
+        self.niter= 0
+        self.min_valid_loss = None
+        self.valid_loss_list = []
 
-def masked_loss(spliter, output, target, validmask, outline_dist, fn_w, fp_w):
-    assert(output.shape[0] == target.shape[0])
-    assert(output.shape[1] == 1)
-    assert(target.shape[1] == 1)
+    def forward(self, input_x):
+        input_x = self.spliter.put(input_x).to(self.device)
+        y1, y2, y3 = self.iternet(input_x)
+        return y1,y2,y3
 
-    offset = 26
+    def ComputeLoss(self, output, data):
+        target, validmask, outline_dist = data['outline'], data['validmask'], data['outline_dist']
+        y1,y2,y3=output
+        target, validmask, outline_dist \
+                = [ self.spliter.put(x) for x in (target, validmask, outline_dist) ]
 
-    if output.device != torch.device('cpu'):
-        target = target.to(output.device)
+        fn_w, fp_w = get_w_from_pixel_distribution(target, lamb=10.)
 
-    cropped_output = output[:,:,offset:-offset-1, offset:-offset-1]
-    cropped_target = target[:,:,offset:-offset-1, offset:-offset-1]
-    cropped_weights = torch.ones_like(cropped_target)
-    cropped_weights[validmask[:,:,offset:-offset-1, offset:-offset-1]==0] = 0.
-    cropped_weights = cropped_weights.detach()
-    yn = cropped_target*cropped_output
-    fn_loss  = fn_w * F.binary_cross_entropy( yn,             cropped_target, cropped_weights)
-    fnp_loss = fp_w * F.binary_cross_entropy( cropped_output, cropped_target, cropped_weights)
-    return fn_loss+fnp_loss
+        target = target.float()
+        loss1 = self.ComputeEachLoss( y1, target, validmask, outline_dist, fn_w, fp_w)
+        loss2 = self.ComputeEachLoss( y2, target, validmask, outline_dist, fn_w, fp_w)
+        loss3 = self.ComputeEachLoss( y3, target, validmask, outline_dist, fn_w, fp_w)
+        lambda1, lambda2, lambda3 = 1e-1, 2e-1, 3e-1
+        loss  = lambda1*loss1 + lambda2*loss2 + lambda3*loss3
+        return loss
 
-def masked_loss2(spliter, output, target, validmask, outline_dist, fn_w, fp_w):
-    assert(output.shape[1] == 1)
-    assert(target.shape[1] == 1)
+    def ComputeEachLoss(self, output, target, validmask, outline_dist, fn_w, fp_w):
+        assert(output.shape[0] == target.shape[0])
+        assert(output.shape[1] == 1)
+        assert(target.shape[1] == 1)
+        offset = int( (self.spliter.wh-self.spliter.step-2) / 2 )
+        if output.device != torch.device('cpu'):
+            target = target.to(output.device)
+        cropped_output = output[:,:,offset:-offset-1, offset:-offset-1]
+        cropped_target = target[:,:,offset:-offset-1, offset:-offset-1]
+        cropped_weights = torch.ones_like(cropped_target)
+        cropped_weights[validmask[:,:,offset:-offset-1, offset:-offset-1]==0] = 0.
+        cropped_weights = cropped_weights.detach()
+        yn = cropped_target*cropped_output
+        fn_loss  = fn_w * F.binary_cross_entropy( yn,             cropped_target, cropped_weights)
+        fnp_loss = fp_w * F.binary_cross_entropy( cropped_output, cropped_target, cropped_weights)
+        return fn_loss+fnp_loss
 
-    l = 20
-    offset = int(l/2)
+    def CreateOptimizer(self):
+        return optim.SGD(self.iternet.parameters(), lr=0.03, momentum=0.9)
 
-    if output.device != torch.device('cpu'):
-        target = target.to(output.device)
 
-    ### step 1. outline weight
-    cropped_output = output[:,:,offset:-offset-1, offset:-offset-1]
-    cropped_target = target[:,:,offset:-offset-1, offset:-offset-1]
+class WeightedIterNetInterface(IterNetInterface):
+    def __init__(self):
+        super(WeightedIterNetInterface, self).__init__()
 
-    #alpha = .2
-    #t1 = cropped_target * F.conv2d(target-target_output, ones)
-    #t2 = F.conv2d(target, ones)
-    #t2[cropped_target == 0.] = 1.
-    #outline_weights = t1 /t2
-    outline_weights = outline_weights* (1.-alpha) + alpha # weight : alpha ~ 2.
+    def ComputeEachLoss(self, output, target, validmask, outline_dist, fn_w, fp_w):
+        assert(output.shape[0] == target.shape[0])
+        assert(output.shape[1] == 1)
+        assert(target.shape[1] == 1)
+        offset = int( (self.spliter.wh-self.spliter.step-2) / 2 )+1
+        if output.device != torch.device('cpu'):
+            target = target.to(output.device)
+        cropped_output = output[:,:,offset:-offset-1, offset:-offset-1]
+        cropped_target = target[:,:,offset:-offset-1, offset:-offset-1]
 
-    #### step 2. non outline weights
-    alpha = .2
-    non_outline_weights = outline_dist[:,:,offset:-offset-1, offset:-offset-1]/50.
-    non_outline_weights[non_outline_weights > 1.] = 1.
-    non_outline_weights = non_outline_weights* (2.-alpha) + alpha
-    non_outline_weights = non_outline_weights.to(output.device)
+        #### step 1. outline weights
+        ksize = self.spliter.wh +1 - cropped_output.shape[-1]
+        yn = target*output
+        alpha = 1.
+        ones = torch.ones( (1,1,ksize,ksize) ).to(output.device)
+        t1 = cropped_target * F.conv2d(target-yn, ones)
+        t2 = F.conv2d(target, ones)
+        t2[cropped_target == 0.] = 1.
+        outline_weights = t1 /t2
+        outline_weights = outline_weights* (4.-alpha) + alpha # weight : alpha ~ 2.
 
-    cropped_weights = torch.ones_like(cropped_target)
-    b = outline_dist < 5.
-    #cropped_weights[b] =     outline_weights[b] # Make worse
-    cropped_weights[~b] = non_outline_weights[~b]
-    cropped_weights[validmask[:,:,offset:-offset-1, offset:-offset-1]==0] = 0.
-    #cropped_weights = cropped_weights.detach()
+        #### step 2. non outline weights
+        alpha = .2
+        cropped_dist = outline_dist[:,:,offset:-offset-1, offset:-offset-1]
+        non_outline_weights = cropped_dist/50.
+        non_outline_weights[non_outline_weights > 1.] = 1.
+        non_outline_weights = non_outline_weights* (1.-alpha) + alpha
+        non_outline_weights = non_outline_weights.to(output.device)
 
-    yn = cropped_target*cropped_output
-    fn_loss  = 1e+3 * fn_w * F.binary_cross_entropy( yn,      cropped_target, cropped_weights)
-    fnp_loss = fp_w * F.binary_cross_entropy( cropped_output, cropped_target, cropped_weights)
-    return fn_loss+fnp_loss
+        cropped_weights = torch.ones_like(cropped_target)
+        b = cropped_dist < 5.
+        #cropped_weights[b] =     outline_weights[b] # It made output worse
+        cropped_weights[~b] = non_outline_weights[~b]
+        cropped_weights[validmask[:,:,offset:-offset-1, offset:-offset-1]==0] = 0.
+        cropped_weights = cropped_weights.detach()
+
+        yn = yn[:,:,offset:-offset-1, offset:-offset-1]
+        fn_loss  = fn_w * F.binary_cross_entropy( yn,             cropped_target, cropped_weights)
+        fnp_loss = fp_w * F.binary_cross_entropy( cropped_output, cropped_target, cropped_weights)
+        return fn_loss+fnp_loss
+
+class BigIterNetInterface(IterNetInterface):
+    def __init__(self):
+        super(BigIterNetInterface, self).__init__()
+        self.spliter = SplitAdapter(256, 200)
+
 
