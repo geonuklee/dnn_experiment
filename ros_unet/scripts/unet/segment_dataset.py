@@ -252,8 +252,11 @@ class ObbDataset(Dataset):
         cv_marker = marker.reshape(marker.shape[1:])
         outline_dist = cv2.distanceTransform( (cv_outline==0).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)
 
-        dist = cv2.distanceTransform( (cv_marker == 0).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)
-        validmask = (dist < 3.).astype(np.uint8)
+        nbg = np.logical_or(outline[0,:,:]>0,cv_marker > 0)
+        dist = cv2.distanceTransform( (~nbg).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)
+        validmask = dist < 10.
+        #cv2.imshow("valid", validmask.astype(np.uint8)*255)
+        #cv2.waitKey()
         validmask = validmask.reshape( (1,validmask.shape[0], validmask.shape[1]) )
 
         frame = {'rgb':rgb, 'depth':depth, 'idx':idx, 'input_x': input_x, 'outline':outline,

@@ -216,38 +216,58 @@ def masked_loss(spliter, output, target, validmask, outline_dist, fn_w, fp_w):
     assert(output.shape[1] == 1)
     assert(target.shape[1] == 1)
 
-    #offset = int( (spliter.wh - spliter.step)/2 ) # TODO how to implement.,. whether is it valid?
-    l = 60
+    offset = 26
+
+    if output.device != torch.device('cpu'):
+        target = target.to(output.device)
+
+    cropped_output = output[:,:,offset:-offset-1, offset:-offset-1]
+    cropped_target = target[:,:,offset:-offset-1, offset:-offset-1]
+    cropped_weights = torch.ones_like(cropped_target)
+    cropped_weights[validmask[:,:,offset:-offset-1, offset:-offset-1]==0] = 0.
+    cropped_weights = cropped_weights.detach()
+    yn = cropped_target*cropped_output
+    fn_loss  = fn_w * F.binary_cross_entropy( yn,             cropped_target, cropped_weights)
+    fnp_loss = fp_w * F.binary_cross_entropy( cropped_output, cropped_target, cropped_weights)
+    return fn_loss+fnp_loss
+
+def masked_loss2(spliter, output, target, validmask, outline_dist, fn_w, fp_w):
+    assert(output.shape[1] == 1)
+    assert(target.shape[1] == 1)
+
+    l = 20
     offset = int(l/2)
 
     if output.device != torch.device('cpu'):
         target = target.to(output.device)
 
-    ## step 1. outline weight
-    to = target*output
-    ones = torch.ones( (1,1,l,l) ).to(output.device)
-    cropped_output = output[:,:,offset-1:-offset, offset-1:-offset]
-    cropped_target = target[:,:,offset-1:-offset, offset-1:-offset]
+    ### step 1. outline weight
+    cropped_output = output[:,:,offset:-offset-1, offset:-offset-1]
+    cropped_target = target[:,:,offset:-offset-1, offset:-offset-1]
 
-    t1 = cropped_target * F.conv2d(target-to, ones)
-    t2 = F.conv2d(target, ones)
-    t2[cropped_target == 0.] = 1.
-    outline_weights = t1/t2 # TODO visualization
+    #alpha = .2
+    #t1 = cropped_target * F.conv2d(target-target_output, ones)
+    #t2 = F.conv2d(target, ones)
+    #t2[cropped_target == 0.] = 1.
+    #outline_weights = t1 /t2
+    outline_weights = outline_weights* (1.-alpha) + alpha # weight : alpha ~ 2.
 
-    ### step 2. non outline weights
-    non_outline_weights = outline_dist[:,:,offset-1:-offset, offset-1:-offset]/200.
+    #### step 2. non outline weights
+    alpha = .2
+    non_outline_weights = outline_dist[:,:,offset:-offset-1, offset:-offset-1]/50.
     non_outline_weights[non_outline_weights > 1.] = 1.
+    non_outline_weights = non_outline_weights* (2.-alpha) + alpha
     non_outline_weights = non_outline_weights.to(output.device)
 
-    ## step 3. impelementation
-    cropped_weights = torch.zeros_like(cropped_target)
-    cropped_weights[cropped_target==1.] =     outline_weights[cropped_target==1.]
-    cropped_weights[cropped_target==0.] = non_outline_weights[cropped_target==0.]
-    cropped_weights[validmask[:,:,offset-1:-offset, offset-1:-offset]==0] = 0.
-    cropped_weights = cropped_weights.detach()
+    cropped_weights = torch.ones_like(cropped_target)
+    b = outline_dist < 5.
+    #cropped_weights[b] =     outline_weights[b] # Make worse
+    cropped_weights[~b] = non_outline_weights[~b]
+    cropped_weights[validmask[:,:,offset:-offset-1, offset:-offset-1]==0] = 0.
+    #cropped_weights = cropped_weights.detach()
 
-    #fn_loss = F.binary_cross_entropy(cropped_output, cropped_target, cropped_weights)
     yn = cropped_target*cropped_output
-    fn_loss  = fn_w * F.binary_cross_entropy( yn,             cropped_target)
-    fnp_loss = fp_w * F.binary_cross_entropy( cropped_output, cropped_target)
+    fn_loss  = 1e+3 * fn_w * F.binary_cross_entropy( yn,      cropped_target, cropped_weights)
+    fnp_loss = fp_w * F.binary_cross_entropy( cropped_output, cropped_target, cropped_weights)
     return fn_loss+fnp_loss
+

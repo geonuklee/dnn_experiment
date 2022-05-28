@@ -37,8 +37,8 @@ def spliter_test():
     cv2.imshow("dst", dst[0,:,:,:].moveaxis(0,-1).numpy())
     cv2.waitKey()
 
-def compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist):
-    fn_w, fp_w = get_w_from_pixel_distribution(target, lamb=5.)
+def compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist, f_loss=masked_loss, lamb=5.):
+    fn_w, fp_w = get_w_from_pixel_distribution(target, lamb)
     #fn_w, fp_w = 20., .01
     target = target.float()
     loss1 = masked_loss(spliter, y1, target, validmask, outline_dist, fn_w, fp_w)
@@ -88,7 +88,9 @@ class TrainEvaluator:
             outline_dist = spliter.put(outline_dist)
             validmask = spliter.put(data['validmask'])
 
-            loss = compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist)
+            loss = compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist,
+                    f_loss=masked_loss2, lamb=100.)
+
             loss_sum += loss.item()
             y3 = spliter.restore(y3)
 
@@ -120,7 +122,6 @@ class TrainEvaluator:
 
 def train():
     spliter = SplitAdapter(256, 200)
-    #spliter = SplitAdapter(128, 88)
     device = "cuda:0"
     model = IterNet().to(device)
     optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
@@ -133,21 +134,18 @@ def train():
 
     checkpoint_fn = 'weights/iternet.pth'
     try:
-        checkpoint = torch.load(checkpoint_fn)
+        checkpoint = torch.load('weights_useable_validmask/iternet_min.pth')
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         epoch_last = checkpoint['epoch']
         niter = checkpoint['niter']
-        min_valid_loss = checkpoint['min_valid_loss']
-        evaluator.valid_loss_list = checkpoint['valid_loss_list']
-        print ("Start with previou weight, epoch last = %d" % epoch_last)
-    except:
-        print ("Start without previou weight")
-        epoch_last = -1
-        niter = 0
         min_valid_loss = None
+        print ("Start with previou weight, epoch last = %d" % epoch_last)
+        del checkpoint
+    except:
+        exit(1)
 
-    n_epoch = 5
+    n_epoch = epoch_last+6
     for epoch in range(epoch_last+1, n_epoch):  # loop over the dataset multiple times
         dataset = ObbDataset('obb_dataset_train',augment=True)
         dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
@@ -161,7 +159,8 @@ def train():
             outline_dist = spliter.put( data['outline_dist'])
             validmask = spliter.put(data['validmask'])
 
-            loss = compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist)
+            loss = compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist,
+                    f_loss=masked_loss2, lamb=100.)
 
             #del y1,y2,y3
             optimizer.zero_grad()
