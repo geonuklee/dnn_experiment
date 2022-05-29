@@ -6,8 +6,7 @@ import numpy as np
 from sensor_msgs.msg import Image, CameraInfo
 import cv2
 import torch
-#from unet.unet_model import DuNet
-from unet.iternet import IterNet
+from unet.iternet import *
 from unet.util import SplitAdapter, Convert2InterInput
 import unet_ext as cpp_ext #TODO erase
 import ros_unet.srv
@@ -17,27 +16,24 @@ import ros_numpy
 class Node:
     def __init__(self, model):
         self.model = model
-        self.spliter = SplitAdapter(256, 200)
         self.pub_th_edge = rospy.Publisher("~th_edge", Image, queue_size=1)
         self.pub_unet_edge = rospy.Publisher("~unet_edge", Image, queue_size=1)
 
     def PredictEdge(self, req):
         depth = np.frombuffer(req.depth.data, dtype=np.float32).reshape(req.depth.height, req.depth.width)
-        rgb = np.frombuffer(req.rgb.data, dtype=np.uint8).reshape(req.depth.height, req.depth.width, 3)
-
+        rgb = np.frombuffer(req.rgb.data, dtype=np.uint8).reshape(req.rgb.height, req.rgb.width,3)
         input_x, grad, hessian, outline, convex_edge = Convert2InterInput(rgb, depth, req.fx, req.fy)
         input_x = torch.Tensor(input_x).unsqueeze(0)
-        input_x = self.spliter.put(input_x).to(device)
-        y1, y2, pred = model(input_x)
+        y1, y2, pred = self.model(input_x)
         del y1, y2, input_x
-        pred = pred.detach()
-        pred = self.spliter.restore(pred)
-        mask = self.spliter.pred2mask(pred)
+        pred = pred.to('cpu')
+        pred = self.model.spliter.restore(pred)
+        mask = self.model.spliter.pred2mask(pred)
+        del pred
 
         mask_concave = np.stack((mask,convex_edge),axis=2)
         output_msg = ros_numpy.msgify(Image, mask_concave, encoding='8UC2')
 
-        rgb = np.frombuffer(req.rgb.data, dtype=np.uint8).reshape(req.rgb.height, req.rgb.width,3)
         if self.pub_th_edge.get_num_connections() > 0:
             dst1 = (rgb/2).astype(np.uint8)
             dst1[outline==1,2] = 255
@@ -55,11 +51,13 @@ if __name__ == '__main__':
     fn = rospy.get_param('~weight_file')
     input_ch = rospy.get_param('~input_ch')
     device = "cuda:0"
-    model = IterNet()
+    checkpoint = torch.load(fn)
+    model_name = checkpoint['model_name']
+    model = globals()[model_name]()
+    model.load_state_dict(checkpoint['model_state_dict'])
+
     model.to(device)
     model.eval()
-    checkpoint = torch.load(fn)
-    model.load_state_dict(checkpoint['model_state_dict'])
     node = Node(model)
 
     s = rospy.Service('~PredictEdge', ros_unet.srv.ComputeEdge, node.PredictEdge)

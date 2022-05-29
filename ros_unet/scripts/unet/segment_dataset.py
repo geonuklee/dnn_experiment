@@ -276,7 +276,7 @@ if __name__ == '__main__':
     #dataset = SegmentDataset('vtk_dataset','valid')
     #for data in dataset:
     #    print("asdf")
-    dataset = ObbDataset('obb_dataset_aligneddist',max_frame_per_scene=5)
-    for frame in dataset:
-        frame['rgb']
-
+    dataset = ObbDataset('obb_dataset_alignedroll',max_frame_per_scene=5)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
+    for j, data in enumerate(dataloader):
+        data['rgb']

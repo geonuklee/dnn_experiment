@@ -109,6 +109,22 @@ class SplitAdapter:
         dst = (np_rgb/2).astype(np.uint8)
         dst[mask>0,:2] = 0
         dst[mask>0,2] = 255
+        margin = int( (self.wh-self.step)/2 )
+        h, w, _ = dst.shape
+        for k, (r,c) in enumerate(self.rc_indices):
+            if r > 0:
+                dr = margin
+            else:
+                dr = 0
+            if c > 0:
+                dc = margin
+            else:
+                dc = 0
+            r0 = r*self.step+dr
+            r1 = min( r0+self.step+margin-dr, h )
+            c0 = c*self.step+dc
+            c1 = min( c0+self.step+margin-dc, w)
+            dst = cv2.rectangle(dst, (c0,r0), (c1,r1), (50,50,50),1)
         gray = cv2.cvtColor(np_rgb, cv2.COLOR_BGR2GRAY)
         gray = np.stack((gray,gray,gray),axis=2)
         dst = cv2.addWeighted(dst, 0.9, gray, 0.1, 0.)
@@ -121,7 +137,7 @@ def Convert2InterInput(rgb, depth, fx, fy):
     grad, valid = cpp_ext.GetGradient(fd, sample_offset=0.01, fx=fx,fy=fy)
     hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
 
-    threshold_curvature = 40.
+    threshold_curvature = 20.
 
     convex_edge = (hessian > threshold_curvature).astype(np.uint8)
     concave_edge = hessian < -threshold_curvature
@@ -133,9 +149,11 @@ def Convert2InterInput(rgb, depth, fx, fy):
 
     # Normalization -.5 ~ 5
     hessian /= 2.*threshold_curvature
+    # -2. ~ 2.
+    hessian *= 4.
 
     # As a score fore outline
-    hessian[dd_edge > 0] = -0.5*threshold_curvature
+    hessian[dd_edge > 0] = -0.2*threshold_curvature
 
     max_grad = 2 # tan(60)
     grad[grad > max_grad] = max_grad

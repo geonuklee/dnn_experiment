@@ -196,9 +196,17 @@ class IterNet2(nn.Module):
             out, x0, x9 = self.net2(x0, x9)
         return out1, out2, out3
 
+if __package__ is '':
+    from util import *
+else:
+    import sys
+    from os import path
+    pack_path = path.dirname( path.abspath(__file__) )
+    sys.path.append(pack_path)
+    from util import *
 
-from util import *
 from torch import nn, optim
+
 class IterNetInterface(nn.Module):
     def __init__(self):
         super(IterNetInterface, self).__init__()
@@ -221,7 +229,8 @@ class IterNetInterface(nn.Module):
         target, validmask, outline_dist \
                 = [ self.spliter.put(x) for x in (target, validmask, outline_dist) ]
 
-        fn_w, fp_w = get_w_from_pixel_distribution(target, lamb=10.)
+        #fn_w, fp_w = get_w_from_pixel_distribution(target, lamb=100.)
+        fn_w, fp_w = 300., 1.
 
         target = target.float()
         loss1 = self.ComputeEachLoss( y1, target, validmask, outline_dist, fn_w, fp_w)
@@ -275,7 +284,7 @@ class WeightedIterNetInterface(IterNetInterface):
         t2 = F.conv2d(target, ones)
         t2[cropped_target == 0.] = 1.
         outline_weights = t1 /t2
-        outline_weights = outline_weights* (4.-alpha) + alpha # weight : alpha ~ 2.
+        outline_weights = outline_weights* (2.-alpha) + alpha # weight : alpha ~ 2.
 
         #### step 2. non outline weights
         alpha = .2
@@ -287,7 +296,7 @@ class WeightedIterNetInterface(IterNetInterface):
 
         cropped_weights = torch.ones_like(cropped_target)
         b = cropped_dist < 5.
-        #cropped_weights[b] =     outline_weights[b] # It made output worse
+        cropped_weights[b] =     outline_weights[b] # It made output worse
         cropped_weights[~b] = non_outline_weights[~b]
         cropped_weights[validmask[:,:,offset:-offset-1, offset:-offset-1]==0] = 0.
         cropped_weights = cropped_weights.detach()
@@ -302,4 +311,8 @@ class BigIterNetInterface(IterNetInterface):
         super(BigIterNetInterface, self).__init__()
         self.spliter = SplitAdapter(256, 200)
 
+class WeighteBigdIterNetInterface(WeightedIterNetInterface):
+    def __init__(self):
+        super(WeighteBigdIterNetInterface, self).__init__()
+        self.spliter = SplitAdapter(256, 200)
 

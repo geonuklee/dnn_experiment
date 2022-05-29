@@ -93,11 +93,13 @@ def train():
     checkpoint_fn = 'weights/iternet.pth'
     state0 = None
     try:
-        state0 = torch.load('weights_default/iternet_min.pth')
+        state0 = torch.load('weights_big/iternet_min.pth')
     except:
         pass
-    #model_name = 'IterNetInterface'
-    model_name = 'WeightedIterNetInterface'
+    #model_name = 'IterNetInterface' #TODO
+    #model_name = 'WeightedIterNetInterface'
+    model_name = 'BigIterNetInterface' # Good after 6000 iter
+    #model_name = 'WeighteBigdIterNetInterface' # Poor than non weighted
     model = globals()[model_name]()
 
     optimizer = model.CreateOptimizer()
