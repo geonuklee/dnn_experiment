@@ -17,9 +17,13 @@ import cv2
 from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as rotation_util
 
-from evaluator import Evaluator, SceneEval, FrameEval # TODO change file
+from evaluator import *
 from ros_client import *
 from unet.gen_obblabeling import GetInitFloorMask
+from os import makedirs
+import matplotlib.pyplot as plt
+import pyautogui
+import shutil
 
 def get_pick(fn):
     f = open(fn,'r')
@@ -38,33 +42,24 @@ def get_camid(fn):
     groups = re.findall("(.*)_(cam0|cam1)", base)[0]
     return groups[1]
 
-if __name__=="__main__":
-    pkg_dir = '/home/geo/catkin_ws/src/ros_unet' # TODO Hard coding for now
-    usage = 'train'
-    obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
-    gt_files = glob2.glob(obbdatasetpath)
-
+def perform_test(gt_files, screenshot_dir):
+    if osp.exists(screenshot_dir):
+        shutil.rmtree(screenshot_dir)
+    makedirs(screenshot_dir)
     rospy.init_node('evaluator', anonymous=True)
     rospy.wait_for_service('~PredictEdge')
     predict_edge = rospy.ServiceProxy('~PredictEdge', ros_unet.srv.ComputeEdge)
-
     rospy.wait_for_service('~SetCamera')
     set_camera = rospy.ServiceProxy('~SetCamera', ros_unet.srv.SetCamera)
-
     rospy.wait_for_service('~ComputeObb')
     compute_obb = rospy.ServiceProxy('~ComputeObb', ros_unet.srv.ComputeObb)
     bridge = CvBridge()
-
     rospy.wait_for_service('~FloorDetector/SetCamera')
     floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
-
-    #cameras = ['cam0', 'cam1'] # For multiple camera test.
-
     rate = rospy.Rate(hz=50)
     evaluator = Evaluator()
-
     for i_file, gt_fn in enumerate(gt_files):
         pick = get_pick(gt_fn)
         bag = rosbag.Bag(pick['fullfn'])
@@ -75,8 +70,6 @@ if __name__=="__main__":
         for cam_id in cameras:
             rgb_topics[cam_id], depth_topics[cam_id], info_topics[cam_id] \
                     = get_topicnames(pick['fullfn'], bag, given_camid=cam_id)
-
-            #depth_msg = None
             try:
                 _, rgb_msg, _ = bag.read_messages(topics=[rgb_topics[cam_id]]).next()
                 _, info_msg, _= bag.read_messages(topics=[info_topics[cam_id]]).next()
@@ -126,14 +119,13 @@ if __name__=="__main__":
                     plane_c  = floor_msg.plane
                     floor_mask = floor_msg.mask
                     floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
-                #init_floormask  = get_init_floormask(bridge,
-                #        rect_depth_msg.width, rect_depth_msg.height, y0=50)
-                #floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
-                #plane_c = floor_msg.plane
                 Twc = get_Twc(cam_id)
                 scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
                 scene_eval.floor = floor
                 evaluator.PutScene(pick['fullfn'],scene_eval)
+                scene_eval.pubGtObb()
+                rate.sleep()
+
             rect_depth[floor>0] = 0.
             rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
 
@@ -148,17 +140,144 @@ if __name__=="__main__":
             n = evaluator.PutFrame(pick['fullfn'], frame_eval)
             rate.sleep()
 
-            print("scene %d/%d ... %s "% (i_file, len(gt_files), gt_fn) )
-            if n%4==0 :  # TODO
-                #evaluator.Evaluate(is_final=False)
-                break
+            base_bag = osp.splitext(osp.basename(pick['fullfn']))[0]
+            im_screenshot = pyautogui.screenshot()
+            im_screenshot = cv2.cvtColor(np.array(im_screenshot), cv2.COLOR_RGB2BGR)
+            im_screenshot = cv2.resize( im_screenshot,(1200,800) )
+            fn_screenshot = osp.join(screenshot_dir, '%04d_%s.png'%(evaluator.n_frame, base_bag) )
+            cv2.imwrite(fn_screenshot, im_screenshot)
 
+            print("scene %d/%d ... %s "% (n, len(gt_files), gt_fn) )
+            evaluator.Evaluate(is_final=False)
+            if n%5==0 :  # TODO
+                break
         # Draw for after evaluating a rosbag file.
         if evaluator.n_frame > 0:
             evaluator.Evaluate(is_final=False)
             print('Evaluate files.. %d/%d'%(i_file, len(gt_files)) )
+    plt.close()
+    return evaluator
 
-    if evaluator.n_frame > 0:
-        print("~~~~~~~~~~Final evaluation~~~~~~~~~~~")
-        evaluator.Evaluate(is_final=True)
+def get_pkg_dir():
+    return osp.abspath( osp.join(osp.dirname(__file__),'..') )
 
+def yaw_evaluation():
+    pkg_dir = get_pkg_dir()
+    eval_dir = osp.join(pkg_dir, 'eval_yaw')
+    if not osp.exists(eval_dir):
+         makedirs(eval_dir)
+    profile_fn = osp.join(eval_dir, 'profile.pick')
+    if not osp.exists(profile_fn):
+        usages = ['alignedyaw']
+        gt_files = []
+        for usage in usages:
+            obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
+            gt_files += glob2.glob(obbdatasetpath)
+        evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
+        arr_scense, arr_frames, arr = evaluator.GetTables()
+        with open(profile_fn,'wb') as f:
+            pickle.dump({ 'arr_scense':arr_scense, 'arr_frames':arr_frames, 'arr':arr, }, f)
+    else:
+        with open(profile_fn,'rb') as f:
+            pick = pickle.load(f)
+            arr_scense, arr_frames, arr = pick['arr_scense'], pick['arr_frames'], pick['arr']
+        evaluator = Evaluator()
+    # TODO Draw yaw - histogram only
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(1,1, 1)
+    ax.title.set_text('skew angle')
+    num_bins = 4
+    tp = np.logical_and(arr['maxIoU'] > tp_iou, arr['crosscheck'])
+    ## TODO under seg 감지가 안되나.
+    DrawOverUnderHistogram(ax, num_bins, (0., 60.),
+                tp_iou, tp, arr, arr['degskew_gt'], '[deg]')
+    plt.savefig( osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+    plt.close()
+
+def dist_evaluation():
+    pkg_dir = get_pkg_dir()
+    eval_dir = osp.join(pkg_dir, 'eval_dist')
+    if not osp.exists(eval_dir):
+         makedirs(eval_dir)
+    profile_fn = osp.join(eval_dir, 'profile.pick')
+    if not osp.exists(profile_fn):
+        usages = ['aligneddist']
+        gt_files = []
+        for usage in usages:
+            obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
+            gt_files += glob2.glob(obbdatasetpath)
+        evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
+        arr_scense, arr_frames, arr = evaluator.GetTables()
+        with open(profile_fn,'wb') as f:
+            pickle.dump({ 'arr_scense':arr_scense, 'arr_frames':arr_frames, 'arr':arr, }, f)
+    else:
+        with open(profile_fn,'rb') as f:
+            pick = pickle.load(f)
+            arr_scense, arr_frames, arr = pick['arr_scense'], pick['arr_frames'], pick['arr']
+        evaluator = Evaluator()
+    # TODO Draw yaw - histogram only
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(1,1, 1)
+    num_bins = 5
+    tp = np.logical_and(arr['maxIoU'] > tp_iou, arr['crosscheck'])
+    ax = fig.add_subplot(1,1, 1)
+    ax.title.set_text('center depth')
+    DrawOverUnderHistogram(ax, num_bins, (.8, arr['z_gt'].max()),
+            tp_iou, tp, arr, arr['z_gt'], '[m]')
+    plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+    plt.close()
+
+def test_evaluation():
+    pkg_dir = get_pkg_dir()
+    eval_dir = osp.join(pkg_dir, 'eval_test0523')
+    if not osp.exists(eval_dir):
+         makedirs(eval_dir)
+    profile_fn = osp.join(eval_dir, 'profile.pick')
+    if not osp.exists(profile_fn):
+        usages = ['test0523']
+        gt_files = []
+        for usage in usages:
+            obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
+            gt_files += glob2.glob(obbdatasetpath)
+        evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
+        arr_scense, arr_frames, arr = evaluator.GetTables()
+        with open(profile_fn,'wb') as f:
+            pickle.dump({ 'arr_scense':arr_scense, 'arr_frames':arr_frames, 'arr':arr, }, f)
+    else:
+        with open(profile_fn,'rb') as f:
+            pick = pickle.load(f)
+            arr_scense, arr_frames, arr = pick['arr_scense'], pick['arr_frames'], pick['arr']
+        evaluator = Evaluator()
+    evaluator.Evaluate(arr_scense,arr_frames,arr, is_final=False )
+    plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+
+def roll_evaluation():
+    pkg_dir = get_pkg_dir()
+    eval_dir = osp.join(pkg_dir, 'eval_roll')
+    if not osp.exists(eval_dir):
+         makedirs(eval_dir)
+    profile_fn = osp.join(eval_dir, 'profile.pick')
+    if not osp.exists(profile_fn):
+        usages = ['alignedroll']
+        gt_files = []
+        for usage in usages:
+            obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
+            gt_files += glob2.glob(obbdatasetpath)
+        evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
+        arr_scense, arr_frames, arr = evaluator.GetTables()
+        with open(profile_fn,'wb') as f:
+            pickle.dump({ 'arr_scense':arr_scense, 'arr_frames':arr_frames, 'arr':arr, }, f)
+    else:
+        with open(profile_fn,'rb') as f:
+            pick = pickle.load(f)
+            arr_scense, arr_frames, arr = pick['arr_scense'], pick['arr_frames'], pick['arr']
+        evaluator = Evaluator()
+    evaluator.Evaluate(arr_scense,arr_frames,arr, is_final=False )
+    plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+
+
+if __name__=="__main__":
+    yaw_evaluation()
+    #dist_evaluation()
+    #roll_evaluation()
+    #test_evaluation()

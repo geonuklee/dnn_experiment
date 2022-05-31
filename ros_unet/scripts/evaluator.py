@@ -20,6 +20,7 @@ from os import path as osp
 import matplotlib.pyplot as plt
 from tabulate import tabulate
 
+tp_iou = .7
 th_seg = .3
 def IsOversegmentation(precision, recall):
     return (precision-recall) > th_seg
@@ -215,15 +216,6 @@ class Evaluator:
         self.n_evaluate += 1
         if arr is None:
             arr_scense, arr_frames, arr = self.GetTables()
-            if is_final:
-                f = open('/home/geo/catkin_ws/src/ros_unet/tmp.pick','wb')
-                pickle.dump({
-                    'arr_scense':arr_scense,
-                    'arr_frames':arr_frames,
-                    'arr':arr,
-                    }, f)
-                f.close()
-
         '''
         * [x] Accumulative graph : minIoU - Recall ratio
             * ref: https://matplotlib.org/stable/gallery/statistics/histogram_cumulative.html
@@ -233,16 +225,12 @@ class Evaluator:
         * [x] GetNSample
         * [x] Table : 
         '''
-        if not hasattr(self, 'fig'):
-            self.fig = plt.figure(figsize=(12, 9))
-        else:
-            plt.clf()
-        fig = self.fig
+        plt.clf()
+        fig = plt.figure(1, figsize=(8, 6))
 
         sub_rc = (2,2)
         ax = fig.add_subplot(sub_rc[0], sub_rc[1], 1)
         DrawIouRecall(arr,ax)
-        tp_iou = .7
         tp = np.logical_and(arr['maxIoU'] > tp_iou, arr['crosscheck'])
 
         num_bins = 5
@@ -283,6 +271,9 @@ class Evaluator:
         plt.tight_layout(pad=3., w_pad=2., h_pad=3.0)
         fig.canvas.draw()
         plt.show(block=is_final) # block if this is final call to check.
+        #mngr = plt.get_current_fig_manager()
+        #mngr.window.SetPosition((0, 0))
+        #mngr.window.setGeometry(50,100,300,200)
         return
 
     def GetTables(self):
@@ -391,7 +382,9 @@ class Evaluator:
                     # Denote that x-axis is assigned to normal of front plane.
                     nvec0_w = rwb0.as_dcm()[:,0]
                     depthvec_w = rwc.as_dcm()[:,2]
-                    degskew_gt = np.arcsin( np.linalg.norm( np.cross(-nvec0_w, depthvec_w) ) )
+                    degskew_gt_a = np.arcsin( np.linalg.norm( np.cross(-nvec0_w, depthvec_w) ) )
+                    degskew_gt_b = np.arctan2(np.linalg.norm(tcp0[0:1]), tcp0[2] )
+                    degskew_gt = max(degskew_gt_a, degskew_gt_b)
                     degskew_gt = np.rad2deg(degskew_gt)
 
                     overseg = IsOversegmentation( precision, recall)
@@ -455,7 +448,7 @@ class SceneEval:
             centers[i,:] = np.array(xyz_qwxyz[:3]).reshape((1,3))
         self.tree = KDTree(centers)
 
-        self.pub_gt_obb = rospy.Publisher("~%s/gt_obb"%cam_id, MarkerArray, queue_size=1)
+        self.pub_gt_obb = rospy.Publisher("~%s/gt_obb"%cam_id, MarkerArray, queue_size=-1)
         self.pub_gt_pose = rospy.Publisher("~%s/gt_pose"%cam_id, PoseArray, queue_size=1)
         self.pub_gt_info = rospy.Publisher("~%s/gt_info"%cam_id, MarkerArray, queue_size=1)
 
@@ -481,9 +474,16 @@ class SceneEval:
             arr.markers.append(a)
             arr.markers.reverse()
 
-        self.pub_gt_obb.publish(obj_array0)
-        self.pub_gt_info.publish(gt_info)
-        self.pub_gt_pose.publish(center_poses0)
+        rate = rospy.Rate(hz=1)
+        while self.pub_gt_obb.get_num_connections() < 0:
+            print("No subscriber for %s"%self.pub_gt_obb.name )
+            rate.sleep()
+
+        for i in range(1):
+            rate.sleep()
+            self.pub_gt_obb.publish(obj_array0)
+            self.pub_gt_info.publish(gt_info)
+            self.pub_gt_pose.publish(center_poses0)
 
 
 class FrameEval:
@@ -604,7 +604,6 @@ class FrameEval:
 
             a = Marker()
             a.action = Marker.DELETEALL
-            self.scene_eval.pubGtObb()
 
             infos.markers.append(a)
             infos.markers.reverse()
@@ -727,6 +726,7 @@ def VisualizeGt(gt_obbs, posename='pose_wb'):
     for i, obj in enumerate(gt_obbs):
         marker = Marker()
         marker.type = Marker.CUBE
+        marker.action = Marker.ADD
         marker.header.frame_id = poses.header.frame_id
         marker.id = i
         marker.pose.position.x = obj['pose_wb'][0]

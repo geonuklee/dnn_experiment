@@ -263,7 +263,7 @@ cv::Mat GetDepthMask(const cv::Mat depth) {
   for(int r = 0; r < depth.rows; r++){
     for(int c = 0; c < depth.cols; c++){
       const float& d = depth.at<float>(r, c);
-      if(d > 0.01 && d < 3.)
+      if(d > 0.01 && d < 999.) // TODO max depth?
           depthmask.at<unsigned char>(r,c) = 255;
     }
   }
@@ -272,7 +272,8 @@ cv::Mat GetDepthMask(const cv::Mat depth) {
 #endif
 
   const cv::Mat erode_kernel = cv::Mat::ones(5, 5, CV_32F);
-  cv::erode(depthmask, depthmask, erode_kernel, cv::Point(-1,-1), 1);
+  //cv::erode(depthmask, depthmask, erode_kernel, cv::Point(-1,-1), 1);
+  cv::dilate(depthmask, depthmask, erode_kernel, cv::Point(-1,-1), 1);
   cv::threshold(depthmask, depthmask, 200, 1, cv::THRESH_BINARY);
 
   depthmask.convertTo(depthmask, CV_8UC1);
@@ -357,7 +358,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     const int method = cv::CHAIN_APPROX_SIMPLE;
 
     double dth = depth.cols * 0.006;
-    int n = 20./dth; // max level should be limitted.
+    int n = 100./dth; // max level should be limitted.
     //int n = 1;
     float min_width = 10.;
 

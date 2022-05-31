@@ -139,7 +139,7 @@ def Convert2InterInput(rgb, depth, fx, fy):
 
     threshold_curvature = 20.
 
-    convex_edge = (hessian > threshold_curvature).astype(np.uint8)
+    convex_edge = (hessian > 40.).astype(np.uint8)
     concave_edge = hessian < -threshold_curvature
     outline = np.logical_or(concave_edge, dd_edge > 0).astype(np.uint8)
 

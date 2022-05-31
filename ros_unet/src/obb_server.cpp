@@ -17,6 +17,8 @@
 #include "ros_unet/ComputeObb.h"
 #include <ros/ros.h>
 
+// #define EXP_OUTLINE
+
 class BoxDetector {
 public:
   BoxDetector(ros::NodeHandle& nh, const ObbParam& param)
@@ -100,7 +102,8 @@ public:
 
     cv::Mat depth, rgb, convex_edge, outline_edge, surebox;
     GetCvMat(req, depth, rgb, convex_edge, outline_edge, surebox);
-#if 1
+#ifdef EXP_OUTLINE
+    // Useless if edge detector returns continous edges.
     cv::Mat exp_outline = ExpandOutline(depth, outline_edge, req.fx, req.fy);
     segment2d->SetEdge(exp_outline, convex_edge, surebox);
 #else
@@ -145,10 +148,12 @@ public:
             dst.at<cv::Vec3b>(r,c)[2]=255;
             dst.at<cv::Vec3b>(r,c)[0]=dst.at<cv::Vec3b>(r,c)[1]=0;
           }
+#ifdef EXP_OUTLINE
           else if(exp_outline.at<unsigned char>(r,c)){
             dst.at<cv::Vec3b>(r,c)[0]=255;
             dst.at<cv::Vec3b>(r,c)[1]=dst.at<cv::Vec3b>(r,c)[2]=0;
           }
+#endif
       cv_bridge::CvImage msg;
       msg.encoding = sensor_msgs::image_encodings::TYPE_8UC3;
       msg.image    = dst;
@@ -233,7 +238,8 @@ int main(int argc, char **argv) {
   //std::vector<int> cameras = GetRequiredParamVector<int>(nh, "cameras");
   param.min_points_of_cluster = GetRequiredParam<double>(nh, "min_points_of_cluster");
   param.voxel_leaf = GetRequiredParam<double>(nh, "voxel_leaf");
-  param.euclidean_filter_tolerance = 0.2; // [meter] Enough tolerance condisering empty unprojection on edge.
+  //param.euclidean_filter_tolerance = 0.2; // [meter] Enough tolerance condisering empty unprojection on edge.
+  param.euclidean_filter_tolerance = 0.02; // [meter] small tolerance condisering bg invasion
   param.verbose = GetRequiredParam<bool>(nh, "verbose");
   BoxDetector box_detector(nh, param);
 

@@ -231,6 +231,7 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
 
   // Unproject cloud, boundary
   const int boundary = 5;
+  const int boundary2 = boundary*2;
   const float f_boundary = boundary;
   int max_idx = 0;
   for(int r = boundary; r < depth.rows-boundary; r++){
@@ -243,7 +244,9 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
         continue;
       // Noise remove soluiton for stc_k4a_2021-11-18-13-35-58.bag
       // 이것 없으면, 비스듬하게 대각선 뒷면 다른상자에 cloud를 가져와, 상자가 크게 잡히는 버그가 생김.
-      const float& pixel_distance = dist_transform.at<float>(r,c);
+      float pixel_distance = dist_transform.at<float>(r,c);
+      if( r <  boundary2 || r > depth.rows-boundary2 || c < boundary2 || c > depth.cols-boundary2)
+        pixel_distance = 999.;
       cv::Point2f nuv = GetUV(r,c);
       pcl::PointXYZLNormal xyznormal;
       if(! GetXYZNormal(r,c, xyznormal) )
@@ -905,9 +908,9 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       {
         double w = max_x1[0]-min_x1[0];
         double h = max_x1[1]-min_x1[1];
-        double min_depth = 0.2; // 1. * std::min(w,h);
-        if(min_x1[2] > -min_depth)
-          min_x1[2] = -min_depth;
+        //double min_depth = 0.2; // 1. * std::min(w,h);
+        //if(min_x1[2] > -min_depth)
+        //  min_x1[2] = -min_depth;
       }
 
 
