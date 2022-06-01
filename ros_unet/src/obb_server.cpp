@@ -137,6 +137,10 @@ public:
                                req.plane
                               );
     res.output = obb_process_visualizer->GetUnsyncedOBB();
+    cv_bridge::CvImage cv_img;
+    cv_img.encoding = sensor_msgs::image_encodings::TYPE_32SC1;
+    cv_img.image    = instance_marker;
+    res.marker = *cv_img.toImageMsg();
     obb_process_visualizer->Visualize();
 
     // TODO Future works : matching, publixh xyzrgb
@@ -239,7 +243,7 @@ int main(int argc, char **argv) {
   param.min_points_of_cluster = GetRequiredParam<double>(nh, "min_points_of_cluster");
   param.voxel_leaf = GetRequiredParam<double>(nh, "voxel_leaf");
   //param.euclidean_filter_tolerance = 0.2; // [meter] Enough tolerance condisering empty unprojection on edge.
-  param.euclidean_filter_tolerance = 0.02; // [meter] small tolerance condisering bg invasion
+  param.euclidean_filter_tolerance = 0.1; // [meter] small tolerance condisering bg invasion
   param.verbose = GetRequiredParam<bool>(nh, "verbose");
   BoxDetector box_detector(nh, param);
 

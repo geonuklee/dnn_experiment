@@ -135,16 +135,25 @@ def perform_test(gt_files, screenshot_dir):
             obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
             t1 = time.time()
+            base_bag = osp.splitext(osp.basename(pick['fullfn']))[0]
+
             frame_eval = FrameEval(scene_eval, cam_id, t1-t0, verbose=True)
+
+            marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32)\
+                    .reshape(obb_resp.marker.height, obb_resp.marker.width)
+            
+            dst2d = frame_eval.Evaluate2D(marker)
             frame_eval.GetMatches(obb_resp.output)
             n = evaluator.PutFrame(pick['fullfn'], frame_eval)
-            rate.sleep()
 
-            base_bag = osp.splitext(osp.basename(pick['fullfn']))[0]
+            fn_dst2d = osp.join(screenshot_dir, 'segment_%04d_%s.png'%(evaluator.n_frame, base_bag) )
+            cv2.imwrite(fn_dst2d, dst2d)
+
+            rate.sleep()
             im_screenshot = pyautogui.screenshot()
             im_screenshot = cv2.cvtColor(np.array(im_screenshot), cv2.COLOR_RGB2BGR)
             im_screenshot = cv2.resize( im_screenshot,(1200,800) )
-            fn_screenshot = osp.join(screenshot_dir, '%04d_%s.png'%(evaluator.n_frame, base_bag) )
+            fn_screenshot = osp.join(screenshot_dir, 'screen_%04d_%s.png'%(evaluator.n_frame, base_bag) )
             cv2.imwrite(fn_screenshot, im_screenshot)
 
             print("scene %d/%d ... %s "% (n, len(gt_files), gt_fn) )
@@ -155,7 +164,6 @@ def perform_test(gt_files, screenshot_dir):
         if evaluator.n_frame > 0:
             evaluator.Evaluate(is_final=False)
             print('Evaluate files.. %d/%d'%(i_file, len(gt_files)) )
-    plt.close()
     return evaluator
 
 def get_pkg_dir():
@@ -174,25 +182,26 @@ def yaw_evaluation():
             obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
             gt_files += glob2.glob(obbdatasetpath)
         evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
-        arr_scense, arr_frames, arr = evaluator.GetTables()
+        arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
-            pickle.dump({ 'arr_scense':arr_scense, 'arr_frames':arr_frames, 'arr':arr, }, f)
+            pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
+        plt.savefig( osp.join(eval_dir, 'yaw_chart.png' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
-            arr_scense, arr_frames, arr = pick['arr_scense'], pick['arr_frames'], pick['arr']
+            arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
-    # TODO Draw yaw - histogram only
-    fig = plt.figure(figsize=(8, 6))
+    # Draw yaw - histogram only
+    fig = plt.figure(1,figsize=(8, 6))
+    plt.clf()
     ax = fig.add_subplot(1,1, 1)
     ax.title.set_text('skew angle')
     num_bins = 4
-    tp = np.logical_and(arr['maxIoU'] > tp_iou, arr['crosscheck'])
-    ## TODO under seg 감지가 안되나.
     DrawOverUnderHistogram(ax, num_bins, (0., 60.),
-                tp_iou, tp, arr, arr['degskew_gt'], '[deg]')
+            arr_frames, all_profiles, 'degskew_gt', '[deg]')
     plt.savefig( osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
     plt.close()
+    return
 
 def dist_evaluation():
     pkg_dir = get_pkg_dir()
@@ -207,25 +216,27 @@ def dist_evaluation():
             obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
             gt_files += glob2.glob(obbdatasetpath)
         evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
-        arr_scense, arr_frames, arr = evaluator.GetTables()
+        arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
-            pickle.dump({ 'arr_scense':arr_scense, 'arr_frames':arr_frames, 'arr':arr, }, f)
+            pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
+        plt.savefig( osp.join(eval_dir, 'dist_chart.png' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
-            arr_scense, arr_frames, arr = pick['arr_scense'], pick['arr_frames'], pick['arr']
+            arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
     # TODO Draw yaw - histogram only
-    fig = plt.figure(figsize=(8, 6))
+    fig = plt.figure(1,figsize=(8, 6))
+    plt.clf()
     ax = fig.add_subplot(1,1, 1)
     num_bins = 5
-    tp = np.logical_and(arr['maxIoU'] > tp_iou, arr['crosscheck'])
     ax = fig.add_subplot(1,1, 1)
     ax.title.set_text('center depth')
-    DrawOverUnderHistogram(ax, num_bins, (.8, arr['z_gt'].max()),
-            tp_iou, tp, arr, arr['z_gt'], '[m]')
+    DrawOverUnderHistogram(ax, num_bins, (0., 3.),
+                            arr_frames, all_profiles, 'z_gt', '[m]')
     plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
     plt.close()
+    return
 
 def test_evaluation():
     pkg_dir = get_pkg_dir()
@@ -240,16 +251,19 @@ def test_evaluation():
             obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
             gt_files += glob2.glob(obbdatasetpath)
         evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
-        arr_scense, arr_frames, arr = evaluator.GetTables()
+        arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
-            pickle.dump({ 'arr_scense':arr_scense, 'arr_frames':arr_frames, 'arr':arr, }, f)
+            pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
+        plt.savefig( osp.join(eval_dir, 'test_chart.png' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
-            arr_scense, arr_frames, arr = pick['arr_scense'], pick['arr_frames'], pick['arr']
+            arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
-    evaluator.Evaluate(arr_scense,arr_frames,arr, is_final=False )
+    evaluator.Evaluate(arr_frames, all_profiles, is_final=True )
     plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+    plt.close()
+    return
 
 def roll_evaluation():
     pkg_dir = get_pkg_dir()
@@ -264,20 +278,23 @@ def roll_evaluation():
             obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
             gt_files += glob2.glob(obbdatasetpath)
         evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
-        arr_scense, arr_frames, arr = evaluator.GetTables()
+        arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
-            pickle.dump({ 'arr_scense':arr_scense, 'arr_frames':arr_frames, 'arr':arr, }, f)
+            pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
+        plt.savefig( osp.join(eval_dir, 'roll_chart.png' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
-            arr_scense, arr_frames, arr = pick['arr_scense'], pick['arr_frames'], pick['arr']
+            arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
-    evaluator.Evaluate(arr_scense,arr_frames,arr, is_final=False )
+    evaluator.Evaluate(arr_frames, all_profiles, is_final=True )
     plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
-
+    plt.close()
+    return
 
 if __name__=="__main__":
     yaw_evaluation()
-    #dist_evaluation()
-    #roll_evaluation()
-    #test_evaluation()
+    dist_evaluation()
+    roll_evaluation()
+    test_evaluation()
+    print("#######Evaluation is finished########")

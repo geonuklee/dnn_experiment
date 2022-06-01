@@ -7,4 +7,5 @@ float32 fx
 float32 fy
 float32[] plane
 ---
+sensor_msgs/Image marker
 visualization_msgs/MarkerArray output
