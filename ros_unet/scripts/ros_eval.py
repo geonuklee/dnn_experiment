@@ -157,7 +157,7 @@ def perform_test(gt_files, screenshot_dir):
             cv2.imwrite(fn_screenshot, im_screenshot)
 
             print("scene %d/%d ... %s "% (n, len(gt_files), gt_fn) )
-            evaluator.Evaluate(is_final=False)
+            #evaluator.Evaluate(is_final=False)
             if n%5==0 :  # TODO
                 break
         # Draw for after evaluating a rosbag file.
@@ -260,7 +260,7 @@ def test_evaluation():
             pick = pickle.load(f)
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
-    evaluator.Evaluate(arr_frames, all_profiles, is_final=True )
+    evaluator.Evaluate(arr_frames, all_profiles, is_final=False )
     plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
     plt.close()
     return
@@ -287,7 +287,7 @@ def roll_evaluation():
             pick = pickle.load(f)
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
-    evaluator.Evaluate(arr_frames, all_profiles, is_final=True )
+    evaluator.Evaluate(arr_frames, all_profiles, is_final=False )
     plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
     plt.close()
     return

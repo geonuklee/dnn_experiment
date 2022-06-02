@@ -22,7 +22,6 @@ from tabulate import tabulate
 from unet.util import GetColoredLabel
 
 tp_iou = .5
-th_seg = .3
 
 def GetMarkerCenters(marker):
     centers = {}
@@ -192,26 +191,33 @@ class Evaluator:
         * [x] Table : 
         '''
         if not hasattr(self, 'fig'):
-            self.fig = plt.figure(1, figsize=(12, 9))
+            self.fig = plt.figure(1, figsize=(12, 12), dpi=100)
         else:
             plt.clf()
         fig = self.fig
+        fig.clf()
 
-        sub_rc = (2,2)
-        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 1)
+        ax1 = fig.add_subplot(1, 3, 1)
+        ax1.title.set_text('F scores')
+        ax2 = fig.add_subplot(3, 1, 3)
+
+        DrawFScoreTable(ax1, ax2, arr_frames, all_profiles)
+
+        sub_rc = (3,3)
+        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 2)
         DrawIouRecall(all_profiles,ax)
 
         num_bins = 5
-        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 2)
+        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 3)
         ax.title.set_text('min(w,h)')
         DrawOverUnderHistogram(ax, num_bins, (None,None), arr_frames, all_profiles, 'min_wh_gt', '[m]')
 
-        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 3)
+        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 5)
         ax.title.set_text('center depth')
         DrawOverUnderHistogram(ax, num_bins, (0.5, None),
                 arr_frames, all_profiles, 'z_gt', '[m]')
 
-        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 4)
+        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 6)
         ax.title.set_text('skew angle')
         DrawOverUnderHistogram(ax, num_bins, (0., 50.),
                 arr_frames, all_profiles, 'degskew_gt', '[deg]')
@@ -232,8 +238,11 @@ class Evaluator:
             pick = frame_evals_of_a_scene[0].scene_eval.pick
             for frame_eval in frame_evals_of_a_scene:
                 etime = frame_eval.elapsed_time
-                frames.append( (base, etime) )
-        arr_frames = np.array(frames, dtype=[('scene_basename',object),('elapsed_time',float)] )
+                ninstance = len(frame_eval.scene_eval.gt_obbs)
+                frames.append( (base, ninstance, etime) )
+        arr_frames = np.array(frames, dtype=[('scene_basename',object),
+                                             ('ninstance',int),
+                                             ('elapsed_time',float)] )
 
         all_profiles = {} 
         all_profiles['pairs'] = {}
@@ -242,8 +251,10 @@ class Evaluator:
         all_profiles['gt_max_iou2d'] = {}
         all_profiles['gt_max_iou3d'] = {}
         all_profiles['pred_max_iou2d'] = {}
+        all_profiles['fp_list'] = {}
 
         for i_frame, frame in enumerate(frame_evals):
+            all_profiles['fp_list'][i_frame] = frame.profiles['fp_list']
             for (gt_id,pred_id), info in frame.profiles['pairs'].items():
                 all_profiles['pairs'][(i_frame,gt_id,pred_id)] = info
             for gt_id, v in frame.profiles['gt_states'].items():
@@ -378,6 +389,7 @@ class FrameEval:
         gt_max_iou2d = {}
         gt_properties = {}
         pred_max_iou2d = {}
+        fp_list = set()
 
         (rwc, twc) = self.scene_eval.Twc
         rcw , tcw = rwc.inv(), -np.matmul(rwc.inv().as_dcm(), twc)
@@ -386,6 +398,18 @@ class FrameEval:
         markers0 = {}
         for marker in obj_array0.markers:
             markers0[marker.id] = marker
+
+        for pred_id in pred_indices:
+            if pred_id == 0:
+                continue
+            correspond = arr[arr['pred']==pred_id]
+            correspond = np.sort(correspond, order='area')
+            greatest = correspond[-1]['gt']
+            if greatest > 0:
+                continue
+            #print(tabulate(correspond, correspond.dtype.names) )
+            #import pdb; pdb.set_trace()
+            fp_list.add(pred_id)
 
         for gt_id, gt_area in gt_areas.items():
             if gt_id == 0:
@@ -409,7 +433,7 @@ class FrameEval:
                             'iou2d':iou2d, 'recall2d':recall2d, 'precision2d':precision2d }
                     gt_states[gt_id].add('overseg')
 
-            # TODO gt_properties
+            # gt_properties
             obj0 = markers0[gt_id]
             b0 = marker2box(obj0)
             rwb0 = rotation_util.from_dcm(b0.rotation)
@@ -471,7 +495,9 @@ class FrameEval:
                     = {'state':'', 'iou2d':iou2d, 'recall2d':recall2d, 'precision2d':precision2d }
         self.profiles = {'pairs':pairs, 'gt_states':gt_states,
                 'gt_properties':gt_properties,
-                'gt_max_iou2d':gt_max_iou2d, 'pred_max_iou2d':pred_max_iou2d}
+                'gt_max_iou2d':gt_max_iou2d, 'pred_max_iou2d':pred_max_iou2d,
+                'fp_list':fp_list
+                }
 
         # Visualization
         gt_centers = GetMarkerCenters(gt_marker)
@@ -480,6 +506,13 @@ class FrameEval:
         _,contours,_ = cv2.findContours( (pred_marker>0).astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         for i in range(len(contours) ):
             cv2.drawContours(dst, contours, i, (255,255,255), 2)
+
+        for pred_id, pred_cp in pred_centers.items():
+            if not pred_id in fp_list:
+                continue
+            cv2.putText(dst, "FP %d"%pred_id, pred_cp, cv2.FONT_HERSHEY_SIMPLEX, .5,
+                    (150,150,150), 1)
+
         for gt_id, gt_cp in gt_centers.items():
             msg, states = '', gt_states[gt_id]
             if 'overseg' in states:
@@ -711,15 +744,95 @@ def DrawIouRecall(all_profiles, ax):
                                  ) )
         #print(iou_recall)
         ax.title.set_text('(min IoU-Recall) of detection')
-
-        ax.set_xlabel('min IoU')
-        ax.set_ylabel('Recall')
+        ax.set_xlabel('min IoU', fontsize=7)
+        ax.set_ylabel('Recall', fontsize=7)
         ax.step(iou_recall[:,0], iou_recall[:,1], '-', label=label, where='pre')
-
-        ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.12), ncol=3)
+        ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.18), ncol=2, fontsize=7)
 
     #ax.set_xlim(0.,1.)
     return 
+
+def DrawFScoreTable(ax, ax2, arr_frames, all_profiles):
+    # 1) Count FP
+    fp_list = {}
+    for frame_id, _fp_list in all_profiles['fp_list'].items():
+        base = arr_frames['scene_basename'][frame_id]
+        if not base in fp_list:
+            fp_list[base] = set()
+        for pred_id in _fp_list:
+            fp_list[base].add( (frame_id,pred_id) )
+
+    # 2) Count TP
+    tp_list = {}
+    tp_frame_list = {}
+    for key, properties in all_profiles['gt_properties'].items():
+        frame_id, gt_id = key
+        base = arr_frames['scene_basename'][frame_id]
+        if not base in tp_list:
+            tp_list[base] = set()
+        if not frame_id in tp_frame_list:
+            tp_frame_list[frame_id] = set()
+
+        state = all_profiles['gt_states'][key]
+        if len(state)==0:
+            pred_id, iou_val = all_profiles['gt_max_iou3d'][key]
+            if iou_val > tp_iou:
+                tp_list[base].add( (frame_id,gt_id,pred_id) )
+                tp_frame_list[frame_id].add( (gt_id, pred_id) )
+
+    instance_numbers = {}
+    frame_numbers = {}
+    fn_numbers = {}
+    for frame_id, ninstance in enumerate( arr_frames['ninstance'] ):
+        base = arr_frames['scene_basename'][frame_id]
+        if not base in fn_numbers:
+            fn_numbers[base] = 0
+            instance_numbers[base] = ninstance
+            frame_numbers[base] = 0
+        frame_numbers[base] += 1
+        fn_numbers[base] += ninstance - len(tp_frame_list[frame_id])
+
+    # 3) Count FN : n(exist object) - TP
+    col_labels = ['n(frame)', 'n(box)/frame', 'tp', 'fn', 'fp']
+    row_labels = []
+    #table_vals = [[n_tp, n_fn, n_fp]]
+    table_vals = []
+
+    base_vals = []
+    for base_id, base in enumerate(fp_list.keys()):
+        nframe = frame_numbers[base]
+        nbox = instance_numbers[base]
+        row_vec = [nframe, nbox, len(tp_list[base]), fn_numbers[base], len(fp_list[base]) ]
+        row_labels.append('#%d'%(base_id+1) )
+        table_vals.append(row_vec)
+        base_vals.append([base])
+    
+    # Draw table
+    ax.axis('off')
+    ax.axis('tight')
+    colWidths = [0.15] * len(col_labels)
+    colWidths[0] *= 2.2
+    colWidths[1] *= 2.7
+    the_table = ax.table(cellText=table_vals,
+                         colWidths=colWidths,
+                         rowLabels=row_labels,
+                         colLabels=col_labels,
+                         loc='upper right')
+    the_table.auto_set_font_size(False)
+    the_table.set_fontsize(7)
+
+    row_labels = [ '#%d'%(i+1) for i in range(len(base_vals) ) ]
+    ax2.axis('off')
+    ax2.axis('tight')
+    the_table = ax2.table(cellText=base_vals,
+                         colLabels=['scene name'],
+                         colWidths = [.5],
+                         rowLabels=row_labels,
+                         cellLoc='center',
+                         loc='upper right')
+    the_table.auto_set_font_size(False)
+    the_table.set_fontsize(7)
+    return
 
 def DrawOverUnderHistogram(ax, num_bins, min_max, arr_frames, all_profiles, prop_name, xlabel):
     all_instaces = []
@@ -779,13 +892,13 @@ def DrawOverUnderHistogram(ax, num_bins, min_max, arr_frames, all_profiles, prop
         msg += '\nn(try)=%d'%ntry_hist[i]
         xlabels.append(msg)
 
-    ax.set_ylabel('[%]',rotation=0, fontweight='bold')
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=6)
+    ax.set_ylabel('[%]',rotation=0, fontsize=7, fontweight='bold')
+    ax.set_xticklabels(xlabels, rotation=0.,fontsize=7)
     ax.xaxis.set_label_coords(1.05, -0.02)
     ax.yaxis.set_label_coords(-0.08, 1.)
     ax.set_xticks(x)
-    ax.set_xlabel(xlabel, fontweight='bold')
-    ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.12), ncol=3)
+    ax.set_xlabel(xlabel, fontsize=7, fontweight='bold')
+    ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.18), ncol=3,fontsize=7)
 
 
 if __name__ == '__main__':
