@@ -82,7 +82,7 @@ def rectify(rgb_msg, depth_msg, mx, my, bridge):
 
     rect_rgb_msg = bridge.cv2_to_imgmsg(rgb,encoding='bgr8')
     rect_depth_msg = bridge.cv2_to_imgmsg(depth,encoding='32FC1')
-    return rect_rgb_msg, rect_depth_msg, depth
+    return rect_rgb_msg, rect_depth_msg, depth, rgb
 
 def get_Twc(cam_id):
     rate = rospy.Rate(2)

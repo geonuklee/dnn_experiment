@@ -18,6 +18,7 @@ from unet.gen_obblabeling import ParseGroundTruth
 from os import path as osp
 
 import matplotlib.pyplot as plt
+from matplotlib import gridspec
 from tabulate import tabulate
 from unet.util import GetColoredLabel
 
@@ -181,20 +182,13 @@ class Evaluator:
         self.n_evaluate += 1
         if all_profiles is None:
             arr_frames, all_profiles = self.GetTables()
-        '''
-        * [x] Accumulative graph : minIoU - Recall ratio
-            * ref: https://matplotlib.org/stable/gallery/statistics/histogram_cumulative.html
-        * [x] Histogram : min(w,h) - prob(UnderSeg)*, prob(OverSeg) << for skew less than 20deg
-        * [x] Histogram : skew angle - prob(UnderSeg), prob(OverSeg)* << for min(w,h) over 10cm
-        * [x] Add histogram - 'IoU > .7 ratio for each cases'
-        * [x] GetNSample
-        * [x] Table : 
-        '''
-        if not hasattr(self, 'fig'):
-            self.fig = plt.figure(1, figsize=(12, 12), dpi=100)
-        else:
-            plt.clf()
-        fig = self.fig
+
+        #if not hasattr(self, 'fig'):
+        #    self.fig = plt.figure(1, figsize=(12, 12), dpi=100)
+        #else:
+        #    plt.clf()
+        #fig = self.fig
+        fig = plt.figure(1, figsize=(12, 12), dpi=100)
         fig.clf()
 
         ax1 = fig.add_subplot(1, 3, 1)
@@ -218,9 +212,9 @@ class Evaluator:
                 arr_frames, all_profiles, 'z_gt', '[m]')
 
         ax = fig.add_subplot(sub_rc[0], sub_rc[1], 6)
-        ax.title.set_text('skew angle')
+        ax.title.set_text('Oblique angle')
         DrawOverUnderHistogram(ax, num_bins, (0., 50.),
-                arr_frames, all_profiles, 'degskew_gt', '[deg]')
+                arr_frames, all_profiles, 'degoblique_gt', '[deg]')
 
         if is_final:
             fig.suptitle('Evaluation', fontsize=16)
@@ -228,6 +222,93 @@ class Evaluator:
         fig.canvas.draw()
         #plt.show(block=is_final) # block if this is final call to check.
         plt.show(False)
+        return
+
+    def DrawEachScene(self, screenshot_dir):
+        '''
+        # TODO
+        # 1) Put Text, IoU>.7 / UnderSeg / Over seg for each instance
+        # 2) Put Text, TP, FP, FN For each scene
+        '''
+        cvgt = cv2.imread(self.scene_evals.values()[0].pick['cvgt_fn'])
+        fontsize=10
+        dpi = 100
+        height, width = cvgt.shape[:2]
+        fig = plt.figure(2, figsize=(8,5), dpi=dpi)
+        gs = gridspec.GridSpec(1, 2, width_ratios=[1, 1]) 
+
+        for scene_i, (base, scene_eval) in enumerate(self.scene_evals.items()):
+            fig.clf()
+            K = scene_eval.pick['newK']
+            bb_id = 20
+            cvgt = cv2.imread(scene_eval.pick['cvgt_fn'])
+            rgb = scene_eval.pick['rgb']
+            dst = cvgt.copy()
+
+            col_labels = ['IoU 3d>%.1f'%tp_iou, 'over', 'under']
+            colWidths = [0.3] * len(col_labels)
+            row_labels, table_vals = [], []
+
+            ax = plt.subplot(gs[0])
+            ax.imshow(cv2.cvtColor(dst, cv2.COLOR_BGR2RGB), extent = [0,1,0,1],
+                    aspect=float(height)/float(width) )
+            plt.axis('off')
+            plt.axis('equal')
+            #plt.tight_layout(pad=0., w_pad=0, h_pad=0.)
+
+            for gt_i, (gt_id, gt_obb) in enumerate( scene_eval.gt_obbs.items() ):
+                gt_i += 1
+                n_tp, n_overseg, n_underseg = 0, 0, 0
+                n_frame = len(self.frame_evals[base])
+
+
+                for frame_eval in self.frame_evals[base]:
+                    #frame_id = frame_eval.frame_id
+                    state = frame_eval.profiles['gt_states'][gt_id]
+                    pred_id, iou2d = frame_eval.profiles['gt_max_iou2d'][gt_id]
+                    pred_id, iou3d = frame_eval.profiles['gt_max_iou3d'][gt_id]
+                    if iou3d > tp_iou:
+                        n_tp += 1
+                    else:
+                        if 'overseg' in state:
+                            n_overseg += 1
+                        if 'underseg' in state:
+                            n_underseg += 1
+                row_labels.append('#%d'%gt_i)
+                row = [ float(v)/float(n_frame)*100 for v in [n_tp, n_overseg, n_underseg] ]
+                row = ['%.1f'%v+' %' for v in row ] 
+                table_vals.append( row )
+
+                pose_msg = Posetuple2Rosmsg(gt_obb['pose'])
+                xyz_c, _ = GetSurfCenterPoint0(pose_msg, gt_obb['scale'], daxis=2)
+                xyz_c /= xyz_c[2]
+                uvz = np.matmul(K, xyz_c)
+                
+                #text, font, font_scale, font_thickness = '#%d'%gt_i, cv2.FONT_HERSHEY_PLAIN, 1., 2
+                #text_size, _ = cv2.getTextSize(text, font, font_scale, font_thickness)
+                #text_w, text_h = text_size
+                #cv2.rectangle(dst, (uv[0], uv[1]-5-text_h), (uv[0] + text_w, uv[1] + text_h), (255,255,255), -1)
+                #cv2.putText(dst, text, uv, font, font_scale, (0,0,0), font_thickness)
+                ax.text(uvz[0]/width, 1.-uvz[1]/height, '#%d'%gt_i,
+                        bbox=dict(fill=True, facecolor='white', alpha=.5, edgecolor='black', linewidth=0),
+                        va='center', ha='center',
+                        fontsize=fontsize)
+
+            ax = plt.subplot(gs[1])
+            the_table = ax.table(cellText=table_vals,
+                                 colWidths=colWidths,
+                                 rowLabels=row_labels,
+                                 colLabels=col_labels,
+                                 cellLoc='center right',
+                                 loc='center left')
+            the_table.scale(1,1.2)
+            the_table.auto_set_font_size(True)
+            #the_table.set_fontsize(fontsize)
+            plt.axis('off')
+            plt.axis('tight')
+            plt.tight_layout(pad=0., w_pad=0, h_pad=0.)
+            plt.savefig( osp.join(screenshot_dir, 'scene%04d.png'%(scene_i+1) ) )
+            plt.show(block=False)
         return
 
     def GetTables(self):
@@ -449,16 +530,16 @@ class FrameEval:
             # Denote that x-axis is assigned to normal of front plane.
             nvec0_w = rwb0.as_dcm()[:,0]
             depthvec_w = rwc.as_dcm()[:,2]
-            degskew_gt_a = np.arcsin( np.linalg.norm( np.cross(-nvec0_w, depthvec_w) ) )
-            degskew_gt_b = np.arctan2(np.linalg.norm(tcp0[0:1]), tcp0[2] )
-            degskew_gt = max(degskew_gt_a, degskew_gt_b)
-            degskew_gt = np.rad2deg(degskew_gt)
+            degoblique_gt_a = np.arcsin( np.linalg.norm( np.cross(-nvec0_w, depthvec_w) ) )
+            degoblique_gt_b = np.arctan2(np.linalg.norm(tcp0[0:1]), tcp0[2] )
+            degoblique_gt = max(degoblique_gt_a, degoblique_gt_b)
+            degoblique_gt = np.rad2deg(degoblique_gt)
 
             z_gt = tcp0[2]
             gt_properties[gt_id] = {
                     'min_wh_gt':min(b0.scale[1:]),
                     'z_gt':z_gt,
-                    'degskew_gt':degskew_gt,
+                    'degoblique_gt':degoblique_gt,
                     }
 
 
@@ -868,7 +949,6 @@ def DrawOverUnderHistogram(ax, num_bins, min_max, arr_frames, all_profiles, prop
         min_max[0] = min(unique_instances)
     if min_max[1] is None:
         min_max[1] = max(unique_instances)
-
     ntry_hist, bound = np.histogram(all_instaces, num_bins, range=min_max)
     no_samples = ntry_hist==0
 

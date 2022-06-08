@@ -121,7 +121,7 @@ if __name__=="__main__":
         _, depth_msg, _ = bag.read_messages(topics=[depth_topic]).next()
         _, info_msg, _= bag.read_messages(topics=[info_topic]).next()
         rect_info_msg, mx, my = get_rectification(info_msg)
-        rect_rgb_msg, rect_depth_msg, rect_depth = rectify(rgb_msg, depth_msg, mx, my, bridge)
+        rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb = rectify(rgb_msg, depth_msg, mx, my, bridge)
     
         floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msg)
 

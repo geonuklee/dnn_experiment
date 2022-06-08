@@ -105,7 +105,8 @@ def perform_test(gt_files, screenshot_dir):
             if depth_msg is None or rgb_msg is None:
                 continue
             fx, fy = rect_info_msgs[cam_id].K[0], rect_info_msgs[cam_id].K[4]
-            rect_rgb_msg, rect_depth_msg, rect_depth = rectify(rgb_msg, depth_msg, mx, my, bridge)
+            rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb\
+                = rectify(rgb_msg, depth_msg, mx, my, bridge)
 
             if scene_eval is None:
                 cv_gt = cv2.imread(pick['cvgt_fn'])
@@ -156,13 +157,14 @@ def perform_test(gt_files, screenshot_dir):
             fn_screenshot = osp.join(screenshot_dir, 'screen_%04d_%s.png'%(evaluator.n_frame, base_bag) )
             cv2.imwrite(fn_screenshot, im_screenshot)
 
-            print("scene %d/%d ... %s "% (n, len(gt_files), gt_fn) )
+            print("scene %d/%d, frame %d... %s "% (i_file, len(gt_files), n, gt_fn) )
             #evaluator.Evaluate(is_final=False)
-            if n%5==0 :  # TODO
+            if n%20==0 :  # TODO
                 break
         # Draw for after evaluating a rosbag file.
         if evaluator.n_frame > 0:
             evaluator.Evaluate(is_final=False)
+            evaluator.DrawEachScene(screenshot_dir)
             print('Evaluate files.. %d/%d'%(i_file, len(gt_files)) )
     return evaluator
 
@@ -176,7 +178,7 @@ def yaw_evaluation():
          makedirs(eval_dir)
     profile_fn = osp.join(eval_dir, 'profile.pick')
     if not osp.exists(profile_fn):
-        usages = ['alignedyaw']
+        usages = ['alignedyaw', 'alignedroll']
         gt_files = []
         for usage in usages:
             obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
@@ -192,14 +194,16 @@ def yaw_evaluation():
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
     # Draw yaw - histogram only
-    fig = plt.figure(1,figsize=(8, 6))
+    fig = plt.figure(1,figsize=(5,2))
     plt.clf()
-    ax = fig.add_subplot(1,1, 1)
-    ax.title.set_text('skew angle')
+    ax = fig.add_subplot(211)
+    #ax.title.set_text(' angle')
     num_bins = 4
     DrawOverUnderHistogram(ax, num_bins, (0., 60.),
-            arr_frames, all_profiles, 'degskew_gt', '[deg]')
+            arr_frames, all_profiles, 'degoblique_gt', '[deg]')
+    ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.8), ncol=3,fontsize=7)
     plt.savefig( osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+    #plt.show(block=True)
     plt.close()
     return
 
@@ -226,15 +230,15 @@ def dist_evaluation():
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
     # TODO Draw yaw - histogram only
-    fig = plt.figure(1,figsize=(8, 6))
+    fig = plt.figure(1,figsize=(5,2))
     plt.clf()
-    ax = fig.add_subplot(1,1, 1)
-    num_bins = 5
-    ax = fig.add_subplot(1,1, 1)
-    ax.title.set_text('center depth')
-    DrawOverUnderHistogram(ax, num_bins, (0., 3.),
+    num_bins = 4
+    ax = fig.add_subplot(211)
+    DrawOverUnderHistogram(ax, num_bins, (1.0, 2.5),
                             arr_frames, all_profiles, 'z_gt', '[m]')
+    ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.8), ncol=3,fontsize=7)
     plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+    #plt.show(block=True)
     plt.close()
     return
 
@@ -261,7 +265,7 @@ def test_evaluation():
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
     evaluator.Evaluate(arr_frames, all_profiles, is_final=False )
-    plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+    plt.savefig(osp.join(eval_dir, 'test_chart.png' ) )
     plt.close()
     return
 
@@ -288,13 +292,13 @@ def roll_evaluation():
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
     evaluator.Evaluate(arr_frames, all_profiles, is_final=False )
-    plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+    plt.savefig( osp.join(eval_dir, 'roll_chart.png' ) )
     plt.close()
     return
 
 if __name__=="__main__":
-    yaw_evaluation()
+    #yaw_evaluation()
     dist_evaluation()
-    roll_evaluation()
-    test_evaluation()
+    #roll_evaluation()
+    #test_evaluation()
     print("#######Evaluation is finished########")
