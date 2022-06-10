@@ -23,10 +23,8 @@ find_package(catkin REQUIRED
 
 add_service_files(DIRECTORY srv FILES
   ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv ComputeFloor.srv)
-catkin_install_python(PROGRAMS
-    scripts/ros_unet_server.py
-    scripts/ros_client.py
-    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+#catkin_python_setup() # Call setup.py for catkin. ref for setup.py of catkin : http://docs.ros.org/en/jade/api/catkin/html/howto/format2/installing_python.html
 generate_messages(DEPENDENCIES sensor_msgs std_msgs geometry_msgs visualization_msgs ros_unet)
 
 catkin_package(

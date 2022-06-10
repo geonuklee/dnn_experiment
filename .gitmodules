@@ -4,9 +4,6 @@
 [submodule "PointGroup"]
 	path = PointGroup
 	url = https://github.com/dvlab-research/PointGroup
-[submodule "pybind11"]
-	path = ros_bonet/pybind11
-	url = https://github.com/pybind/pybind11
 [submodule "ros_unet/exts/pybind11"]
-	path = ros_unet/exts/pybind11
+	path = pymodules/exts/pybind11
 	url = https://github.com/pybind/pybind11.git

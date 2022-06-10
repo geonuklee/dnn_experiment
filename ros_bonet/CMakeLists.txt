@@ -131,14 +131,14 @@ set(PYBIND11_PYTHON_VERSION 2)
 set(CMAKE_CXX_STANDARD 14)
 
 # ref : https://stackoverflow.com/questions/50028830/pybind11-where-to-put-pybind11-module
-add_subdirectory(pybind11) # you must have downloaded this repo
-pybind11_add_module(rosbonet_cpp_extension SHARED src/bonet_code.cpp)
+#add_subdirectory(pybind11) # you must have downloaded this repo
+#pybind11_add_module(rosbonet_cpp_extension SHARED src/bonet_code.cpp)
 
-if(${PYBIND11_PYTHON_VERSION} EQUAL 2)
-  set_target_properties(rosbonet_cpp_extension PROPERTIES LIBRARY_OUTPUT_DIRECTORY $ENV{HOME}/.local/lib/python2.7/site-packages/)
-elseif(${PYBIND11_PYTHON_VERSION} EQUAL 3)
-  set_target_properties(rosbonet_cpp_extension PROPERTIES LIBRARY_OUTPUT_DIRECTORY $ENV{HOME}/.local/lib/python3.6/site-packages/)
-endif()
+#if(${PYBIND11_PYTHON_VERSION} EQUAL 2)
+#  set_target_properties(rosbonet_cpp_extension PROPERTIES LIBRARY_OUTPUT_DIRECTORY $ENV{HOME}/.local/lib/python2.7/site-packages/)
+#elseif(${PYBIND11_PYTHON_VERSION} EQUAL 3)
+#  set_target_properties(rosbonet_cpp_extension PROPERTIES LIBRARY_OUTPUT_DIRECTORY $ENV{HOME}/.local/lib/python3.6/site-packages/)
+#endif()
 
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
