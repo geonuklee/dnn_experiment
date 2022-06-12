@@ -11,7 +11,7 @@ import glob2 # For recursive glob for python2
 from os import path as osp
 from cv_bridge import CvBridge #< doesn't work for python3
 import subprocess
-from util import *
+from .util import *
 import unet_ext
 import pickle
 from os import makedirs
@@ -171,10 +171,7 @@ def GetInitFloorMask(cv_gt):
                 break
     return init_floormask
 
-def make_dataset_dir(name='obb_dataset'):
-    script_fn = osp.abspath(__file__)
-    pkg_dir = str('/').join(script_fn.split('/')[:-3])
-    output_path = osp.join(pkg_dir, name)
+def make_dataset_dir(output_path):
     exist_files = set()
     if not osp.exists(output_path):
         makedirs(output_path)

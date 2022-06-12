@@ -7,3 +7,6 @@
 [submodule "ros_unet/exts/pybind11"]
 	path = pymodules/exts/pybind11
 	url = https://github.com/pybind/pybind11.git
+[submodule "thirdparty/g2o"]
+	path = thirdparty/g2o
+	url = https://github.com/RainerKuemmerle/g2o.git

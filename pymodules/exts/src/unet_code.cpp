@@ -14,6 +14,7 @@ namespace py = pybind11;
 #include <opencv2/calib3d.hpp>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/search/kdtree.h>
+#include <pcl/search/impl/search.hpp> // https://github.com/PointCloudLibrary/pcl/issues/2406
 #include <pcl/sample_consensus/method_types.h>
 #include <pcl/sample_consensus/model_types.h>
 #include <pcl/segmentation/sac_segmentation.h>

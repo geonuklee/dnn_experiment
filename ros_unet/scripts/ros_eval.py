@@ -60,16 +60,18 @@ def perform_test(gt_files, screenshot_dir):
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
     rate = rospy.Rate(hz=50)
     evaluator = Evaluator()
+    pkg_dir = get_pkg_dir()
     for i_file, gt_fn in enumerate(gt_files):
         pick = get_pick(gt_fn)
-        bag = rosbag.Bag(pick['fullfn'])
+        rosbag_fn = osp.join(pkg_dir, pick['rosbag_fn'] )
+        bag = rosbag.Bag(rosbag_fn)
         rgb_topics, depth_topics, info_topics = {},{},{}
         rect_info_msgs = {}
         remap_maps = {}
         cameras = [get_camid(gt_fn)] # For each file test.
         for cam_id in cameras:
             rgb_topics[cam_id], depth_topics[cam_id], info_topics[cam_id] \
-                    = get_topicnames(pick['fullfn'], bag, given_camid=cam_id)
+                    = get_topicnames(rosbag_fn, bag, given_camid=cam_id)
             try:
                 _, rgb_msg, _ = bag.read_messages(topics=[rgb_topics[cam_id]]).next()
                 _, info_msg, _= bag.read_messages(topics=[info_topics[cam_id]]).next()
@@ -109,7 +111,8 @@ def perform_test(gt_files, screenshot_dir):
                 = rectify(rgb_msg, depth_msg, mx, my, bridge)
 
             if scene_eval is None:
-                cv_gt = cv2.imread(pick['cvgt_fn'])
+                cvgt_fn = osp.join(pkg_dir,pick['cvgt_fn'])
+                cv_gt = cv2.imread(cvgt_fn)
                 max_z = 5.
                 init_floormask = GetInitFloorMask(cv_gt)
                 if init_floormask is None:
@@ -123,7 +126,7 @@ def perform_test(gt_files, screenshot_dir):
                 Twc = get_Twc(cam_id)
                 scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
                 scene_eval.floor = floor
-                evaluator.PutScene(pick['fullfn'],scene_eval)
+                evaluator.PutScene(rosbag_fn,scene_eval)
                 scene_eval.pubGtObb()
                 rate.sleep()
 
@@ -136,7 +139,7 @@ def perform_test(gt_files, screenshot_dir):
             obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
             t1 = time.time()
-            base_bag = osp.splitext(osp.basename(pick['fullfn']))[0]
+            base_bag = osp.splitext(osp.basename(pick['rosbag_fn']))[0]
 
             frame_eval = FrameEval(scene_eval, cam_id, t1-t0, verbose=True)
 
@@ -145,7 +148,7 @@ def perform_test(gt_files, screenshot_dir):
             
             dst2d = frame_eval.Evaluate2D(marker)
             frame_eval.GetMatches(obb_resp.output)
-            n = evaluator.PutFrame(pick['fullfn'], frame_eval)
+            n = evaluator.PutFrame(pick['rosbag_fn'], frame_eval)
 
             fn_dst2d = osp.join(screenshot_dir, 'segment_%04d_%s.png'%(evaluator.n_frame, base_bag) )
             cv2.imwrite(fn_dst2d, dst2d)

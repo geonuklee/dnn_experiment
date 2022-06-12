@@ -73,11 +73,13 @@ def ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scen_eval):
     return
 
 if __name__=="__main__":
-    pkg_dir = '/home/geo/catkin_ws/src/ros_unet' # TODO Hard coding for now
-    usage='test0523'
+    script_fn = osp.abspath(__file__)
+    pkg_dir = str('/').join(script_fn.split('/')[:-2])
+    usage='test'
     dataset_name = 'obb_dataset_%s'%usage
+    #output_path = osp.join(pkg_dir, name)
     obbdatasetpath = osp.join(pkg_dir,dataset_name)
-    output_path, exist_labels = make_dataset_dir(name=dataset_name)
+    output_path, exist_labels = make_dataset_dir(obbdatasetpath)
 
     rosbag_path = '/home/geo/catkin_ws/src/ros_unet/rosbag_%s/**/*.bag'%usage
     rosbagfiles = glob2.glob(rosbag_path,recursive=True)
@@ -135,10 +137,10 @@ if __name__=="__main__":
             cv_rect_rgb = np.frombuffer(rect_rgb_msg.data, dtype=np.uint8)\
                     .reshape(rect_rgb_msg.height, rect_rgb_msg.width, -1)
             except_ext, ext = osp.splitext(gt_fn)
-            label_fn = "%s.png"%except_ext
-
+            label_fn = osp.join(dataset_name, "%s.png"%osp.basename(except_ext) )
+            rosbag_fn = osp.join('rosbag_%s'%usage, osp.basename(fullfn) )
             pick = {"K":K, "D":D, "newK":newK, "depth":cv_rect_depth, "rgb":cv_rect_rgb,
-                "fullfn":fullfn, "cvgt_fn":osp.abspath(label_fn)}
+                "rosbag_fn":rosbag_fn, "cvgt_fn":label_fn}
             
             backup = None
             if osp.exists(label_fn):
