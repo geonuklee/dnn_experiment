@@ -49,36 +49,38 @@ from torch.utils.data import DataLoader
 class ObbDataset(Dataset):
     def __init__(self, name, augment=True, max_frame_per_scene=None):
         self.augment=augment
-        #script_fn = osp.abspath(__file__)
-        #pkg_dir = str('/').join(script_fn.split('/')[:-3])
-        #dataset_dir = osp.join(pkg_dir, name)
         dataset_dir = name
         assert osp.exists(dataset_dir)
         pick_files = glob2.glob(osp.join(dataset_dir,'*.pick'),recursive=False)
         camid = 'cam0'
         name_depth = '/%s/helios2/depth/image_raw'%camid
-
-        cache_dir = osp.join(dataset_dir, 'cache')
-        if not osp.exists(cache_dir):
-            makedirs(cache_dir)
+        self.pkg_dir = '/'.join(dataset_dir.split('/')[:-1])
+        self.dataset_dir = dataset_dir
+        self.cache_dir = osp.join(dataset_dir, 'cache')
+        if not osp.exists(self.cache_dir):
+            makedirs(self.cache_dir)
             for fn in pick_files:
-                with open(fn, 'rb') as f:
-                    pick = pickle.load(f, encoding='latin1')
+                if version_info.major == 3:
+                    with open(fn, 'rb') as f:
+                        pick = pickle.load(f, encoding='latin1')
+                else:
+                    with open(fn, 'rb') as f:
+                        pick = pickle.load(f)
                 osize = pick['depth'].shape[1], pick['depth'].shape[0]
                 mx,my = cv2.initUndistortRectifyMap(pick['K'],pick['D'],None,pick['newK'],osize,cv2.CV_32F)
-                bag = rosbag.Bag(pick['rosbag_fn'])
+                bag = rosbag.Bag( osp.join(self.pkg_dir, pick['rosbag_fn']) )
                 basename = osp.splitext( osp.basename(fn) )[0]
                 for i, (_, depth_msg, _) in enumerate( bag.read_messages(topics=[name_depth]) ):
                     depth = np.frombuffer(depth_msg.data, dtype=np.float32)\
                             .reshape(depth_msg.height, depth_msg.width)
                     rect_depth = cv2.remap(depth,mx,my,cv2.INTER_NEAREST)
-                    fn_frame = osp.join(cache_dir, '%s_%d.pick'%(basename, i))
+                    fn_frame = osp.join(self.cache_dir, '%s_%d.pick'%(basename, i))
                     with open(fn_frame,'wb') as f_frame:
-                        pickle.dump({'depth':rect_depth,'fn_pick':fn}, f_frame, protocol=2)
-        #self.frame_files = glob2.glob(osp.join(cache_dir, '*.pick'))
+                        pickle.dump({'depth':rect_depth,'fn_pick':osp.basename(fn)}, f_frame, protocol=2)
+        #self.frame_files = glob2.glob(osp.join(self.cache_dir, '*.pick'))
         pattern = re.compile(r"(.*)_(\d+)")
         scenes = {}
-        for i, frame_file in enumerate( glob2.glob(osp.join(cache_dir, '*.pick')) ):
+        for i, frame_file in enumerate( glob2.glob(osp.join(self.cache_dir, '*.pick')) ):
             basename = osp.splitext(osp.basename(frame_file))[0]
             scene, frame_idx = pattern.findall(basename)[0]
             if not scene in scenes:
@@ -99,15 +101,15 @@ class ObbDataset(Dataset):
         if version_info.major == 3:
             with open(frame_fn, 'rb') as f:
                     pick_frame = pickle.load(f, encoding='latin1')
-            with open(pick_frame['fn_pick'], 'rb') as f:
+            with open(osp.join(self.dataset_dir, pick_frame['fn_pick']), 'rb') as f:
                 pick = pickle.load(f, encoding='latin1')
         else:
             with open(frame_fn, 'rb') as f:
                     pick_frame = pickle.load(f)
-            with open(pick_frame['fn_pick'], 'rb') as f:
+            with open(osp.join(self.dataset_dir, pick_frame['fn_pick']), 'rb') as f:
                 pick = pickle.load(f)
 
-        cvgt = cv2.imread(pick['cvgt_fn'])
+        cvgt = cv2.imread( osp.join(self.pkg_dir,pick['cvgt_fn']) )
         # Remove bacgrkground from input
         outline, marker, _, _ = ParseMarker(cvgt)
         rgb, depth = pick['rgb'], pick_frame['depth']
@@ -161,21 +163,12 @@ class ObbDataset(Dataset):
 
         frame = {'rgb':rgb, 'depth':depth, 'idx':idx, 'input_x': input_x, 'outline':outline,
                 'outline_dist':outline_dist.reshape( (1,outline_dist.shape[0],outline_dist.shape[1]) ),
-                'validmask':validmask,
+                'K':K,
+                'validmask':validmask,'marker':marker,
                 }
         return frame
 
 if __name__ == '__main__':
-    # Shuffle two dataset while keep single source for each batch
-    #dataset_loader = CombinedDatasetLoader(batch_size=2)
-    #for batch in dataset_loader:
-    #    print(batch['source'])
-    #print(batch)
-    # Check cache for valid also, 
-    #dataset = SegmentDataset('segment_dataset','valid')
-    #dataset = SegmentDataset('vtk_dataset','valid')
-    #for data in dataset:
-    #    print("asdf")
     dataset = ObbDataset('obb_dataset_alignedroll',max_frame_per_scene=5)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
     for j, data in enumerate(dataloader):

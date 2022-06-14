@@ -102,12 +102,16 @@ def ParseMarker(cv_gt, rgb=None):
         marker[marker0==idx] = pidx
         front_marker[plane_marker0==pidx] = pidx
 
+    dist, ext_marker = cv2.distanceTransformWithLabels( (marker==0).astype(np.uint8),
+            distanceType=cv2.DIST_L2, maskSize=5)
+    ext_marker[dist > 7.] = 0
     verbose=False
     if verbose:
-        cv2.imshow("outline", 255*outline.astype(np.uint8))
-        cv2.imshow("color_pm0", color_pm0)
+        #cv2.imshow("outline", 255*outline.astype(np.uint8))
+        #cv2.imshow("color_pm0", color_pm0)
+        #cv2.imshow("front_marker", GetColoredLabel(front_marker))
         cv2.imshow("marker", GetColoredLabel(marker))
-        cv2.imshow("front_marker", GetColoredLabel(front_marker))
+        cv2.imshow("ext_marker", GetColoredLabel(ext_marker))
         dst = GetColoredLabel(marker)
         for pidx, arr_oyz, cp in planemarker2vertices:
             pt_org = tuple(arr_oyz[:2].astype(np.int32).tolist())
@@ -119,7 +123,8 @@ def ParseMarker(cv_gt, rgb=None):
         cv2.imshow("dst", dst)
         if ord('q') == cv2.waitKey():
             exit(1)
-    return outline, marker, front_marker, planemarker2vertices
+    #return outline, marker, front_marker, planemarker2vertices
+    return outline, ext_marker, front_marker, planemarker2vertices
 
 def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
     # 1) watershed, 꼭지점 따기.

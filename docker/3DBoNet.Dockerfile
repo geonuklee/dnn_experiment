@@ -71,3 +71,12 @@ RUN pip install pybind11
 RUN python2 -m pip install --user --force-reinstall pip==20.0.1 &&\
     python2 -m pip install deepdish==0.2.0 numexpr==2.6.2 tables==3.5.2
 
+# torch to comparing with 'unet' with ObbDataset which depend on torch
+RUN python2 -m pip install future torch torchvision glob2
+
+RUN sudo apt install -y software-properties-common && \
+    sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
+    sudo apt-get update && \
+    sudo apt install -y gcc-8 g++-8 && \
+    sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 1 && \
+    sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 1

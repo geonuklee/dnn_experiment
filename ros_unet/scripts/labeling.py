@@ -53,7 +53,6 @@ def MakeLabel(rect_rgb, rect_depth, label_fn):
     #fx, fy = info.K[0], info.K[4]
     #outline = ConvertDepth2input(depth, fx, fy)[3]
     #dst[outline>0, 2] = 200
-
     if not osp.exists(label_fn):
         cv2.imwrite(label_fn, dst)
     callout = subprocess.call(['kolourpaint', label_fn] )
@@ -141,6 +140,7 @@ if __name__=="__main__":
             rosbag_fn = osp.join('rosbag_%s'%usage, osp.basename(fullfn) )
             pick = {"K":K, "D":D, "newK":newK, "depth":cv_rect_depth, "rgb":cv_rect_rgb,
                 "rosbag_fn":rosbag_fn, "cvgt_fn":label_fn}
+            label_fn = osp.join(pkg_dir,label_fn)
             
             backup = None
             if osp.exists(label_fn):
