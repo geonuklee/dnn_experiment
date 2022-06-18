@@ -113,14 +113,15 @@ class ObbDataset(Dataset):
         # Remove bacgrkground from input
         outline, marker, _, _ = ParseMarker(cvgt)
         rgb, depth = pick['rgb'], pick_frame['depth']
-        outline,marker = [img.astype(np.uint8) for img in [outline,marker]]
+        outline = outline.astype(np.uint8)
 
         K = pick['newK'].copy()
         if self.augment:
             # Reesize image height to h0 * fx/fy, before rotaiton augment.
             dsize = (rgb.shape[1], int(rgb.shape[0]*K[0,0]/K[1,1]) )
             K[1,1] = K[0,0]
-            rgb,depth,outline,marker = [cv2.resize(img, dsize, cv2.INTER_NEAREST) for img in [rgb,depth,outline,marker] ]
+            rgb,depth,outline = [cv2.resize(img, dsize, cv2.INTER_NEAREST) for img in [rgb,depth,outline] ]
+            marker = cv2.resize(marker.astype(np.float), dsize, cv2.INTER_NEAREST).astype(np.int32)
             rgb,depth,outline,marker = [Tensor(img) for img in [rgb,depth,outline,marker] ]
             rgb,outline,marker = [img.long() for img in [rgb,outline,marker] ]
             outline,marker = [img.unsqueeze(-1) for img in [outline,marker]]
@@ -164,7 +165,7 @@ class ObbDataset(Dataset):
         frame = {'rgb':rgb, 'depth':depth, 'idx':idx, 'input_x': input_x, 'outline':outline,
                 'outline_dist':outline_dist.reshape( (1,outline_dist.shape[0],outline_dist.shape[1]) ),
                 'K':K,
-                'validmask':validmask,'marker':marker,
+                'validmask':validmask,'marker':cv_marker,
                 }
         return frame
 

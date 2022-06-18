@@ -760,7 +760,7 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
   const int rows = buf_labels.shape[0];
   const int cols = buf_labels.shape[1];
 
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>());
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
   {
     const float min_depth = 0.0001;
     cv::Mat rgb(rows, cols, CV_8UC3);
@@ -786,7 +786,6 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
     }
     cv::undistortPoints(uv_points, normalized_points, K, D);
 
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
     cloud->reserve(uv_points.size());
     for(size_t i = 0; i < normalized_points.size(); i++){
       const cv::Point2f& xbar = normalized_points.at(i);
@@ -802,15 +801,18 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
       cloud->push_back(pt);
     }
 
+#if 0
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>());
     pcl::VoxelGrid<pcl::PointXYZRGB> sor;
     sor.setInputCloud(cloud);
     sor.setLeafSize(leaf_xy, leaf_xy, leaf_z);
     sor.filter(*cloud_filtered);
-
     //std::cout << "filter " << cloud->size() << "->" << cloud_filtered->size() << std::endl;
+    cloud = cloud_filtered;
+#endif
   }
 
-  const int n_points = cloud_filtered->size();
+  const int n_points = cloud->size();
   py::array_t<float> xyzrgb(6*n_points);
   py::array_t<int32_t> ins_points(n_points);
   xyzrgb.resize({n_points, 6});
@@ -821,8 +823,8 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
 
   {
     std::vector<cv::Point3f> obj_points;
-    obj_points.reserve(cloud_filtered->size());
-    for(const pcl::PointXYZRGB& pt : *cloud_filtered)
+    obj_points.reserve(cloud->size());
+    for(const pcl::PointXYZRGB& pt : *cloud)
       obj_points.push_back(cv::Point3f(pt.x,pt.y,pt.z));
 
     std::vector<cv::Point2f> img_points;
@@ -844,7 +846,7 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
   }
 
   for(int i = 0; i < n_points; i++){
-    const pcl::PointXYZRGB& pt = cloud_filtered->at(i);
+    const pcl::PointXYZRGB& pt = cloud->at(i);
     float* ptr = (float*)xyzrgb.request().ptr + 6*i;
     ptr[0] = pt.x;
     ptr[1] = pt.y;
