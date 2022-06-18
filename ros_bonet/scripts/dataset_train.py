@@ -15,7 +15,7 @@ import unet_ext
 
 class Data_Configs:
     sem_names = ['bg', 'box']
-    sem_ids = [0,1]
+    sem_ids = [-1, 0]
 
     points_cc = 9
     sem_num = len(sem_names)
@@ -102,14 +102,20 @@ class Data_ObbDataset:
             D = np.zeros((4,1),dtype=K.dtype)
             xyzrgb, ins_points\
                     = unet_ext.UnprojectPointscloud(rgb,depth,marker,K,D,leaf_xy=0.01,leaf_z=0.01)
-            #print(np.unique(ins_points), np.unique(marker) )
-            sem_points = np.full_like(ins_points, Data_Configs.sem_names.index('bg') )
-            sem_points[ins_points > 0] = Data_Configs.sem_names.index('box')
+            sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
+            ins_points -= 1 # Data_S3DIS assign -1 for ins_labels of bg points.
+            sem_points = np.full_like(ins_points, -1)
+            sem_points[ins_points > -1] = sem_label_box
+
+            xyzrgb = xyzrgb[ins_points>-1,:]
+            ins_points = ins_points[ins_points > -1]
+            sem_points = np.full_like(ins_points, sem_label_box)
+            print('num_point = %d' % xyzrgb.shape[0] )
+
             self.amin = np.amin(xyzrgb[:,:3],0)
             self.amax = np.amax(xyzrgb[:,:3],0)
-            self.blocks =tof2blocks(xyzrgb, sem_points, ins_points,
-                    num_point=min(xyzrgb.shape[0], 4096),
-                    block_size=1., stride=0.8, random_sample=False, sample_num=None, sample_aug=1)
+            self.blocks =tof2blocks(xyzrgb, sem_points, ins_points, num_point=min(xyzrgb.shape[0], 4096),
+                    block_size=.2, stride=0.2, random_sample=False, sample_num=None, sample_aug=1)
             self.train_next_frame_index += 1
             if self.train_next_frame_index == len(self.dataset):
                 # TODO ??
@@ -123,7 +129,6 @@ class Data_ObbDataset:
         # pc[3:6] = normalized rgb. therefore, keep
         # pc[6:9] = min max 를 기준으로 정규화된 xyz
         width = self.amax - self.amin
-        #width = np.maximum(width, np.ones_like(width) )
         normalized_xyz = (xyzrgb[:,:3] - self.amin)/width
         pc = np.concatenate([xyzrgb, normalized_xyz], axis=1)
         if np.isnan(pc).any():
@@ -163,11 +168,17 @@ class Data_ObbDataset:
 
         psem_onehot_labels = np.zeros((pc_xyzrgb.shape[0], Data_Configs.sem_num), dtype=np.int8)
         for idx, s in enumerate(sem_labels):
-            #if sem_labels[idx] < 1: continue # invalid points # << Important : Deal with bg. 
+            if sem_labels[idx]==-1: continue # invalid points
             sem_idx = Data_Configs.sem_ids.index(s)
             psem_onehot_labels[idx, sem_idx] =1
 
-        #import pdb; pdb.set_trace()
+        if np.isnan(bbvert_padded_labels).any():
+            print("!!!!!! Nan in array")
+            import pdb; pdb.set_trace()
+        if np.isnan(pmask_padded_labels).any():
+            print("!!!!!! Nan in array")
+            import pdb; pdb.set_trace()
+
         return pc_xyzrgb, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels
 
 
