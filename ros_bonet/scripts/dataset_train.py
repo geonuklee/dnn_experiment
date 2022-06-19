@@ -12,6 +12,8 @@ import random
 import glob2
 import unet_ext
 import cv2
+from os import makedirs
+import pickle
 
 class Data_Configs:
     sem_names = ['bg', 'box']
@@ -23,6 +25,10 @@ class Data_Configs:
     train_pts_num = 4096
     test_pts_num = 4096
 
+def get_chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
 
 def tof2blocks(data, label, inslabel, num_point, block_size=1.0, stride=1.0,
                 random_sample=False, sample_num=None, sample_aug=1):
@@ -42,15 +48,69 @@ class Data_ObbDataset:
     @brief Replacement of Data_S3DIS for Data_ObbDataset.
     """
 
-    def __init__(self , name, batch_size=1, max_frame_per_scene=1):
+    def save_cache(self, cache_dir, dataset):
+        indices = []
+        for i, data in enumerate(dataset):
+            print("cache %d/%d"%(i,len(dataset)) )
+            bgr, depth, marker = data['rgb'], data['depth'], data['marker']
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            K = data['K']
+            D = np.zeros((4,1),dtype=K.dtype)
+            xyzrgb, ins_points\
+                    = unet_ext.UnprojectPointscloud(rgb,depth,marker,K,D,leaf_xy=0.01,leaf_z=0.01)
+            sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
+            ins_points -= 1 # Data_S3DIS assign -1 for ins_labels of bg points.
+            sem_points = np.full_like(ins_points, -1)
+            sem_points[ins_points > -1] = sem_label_box
+
+            xyzrgb = xyzrgb[ins_points>-1,:]
+            ins_points = ins_points[ins_points > -1]
+            sem_points = np.full_like(ins_points, sem_label_box)
+
+            #amin = np.amin(xyzrgb[:,:3],0)
+            #amax = np.amax(xyzrgb[:,:3],0)
+            blocks = tof2blocks(xyzrgb, sem_points, ins_points, num_point=Data_Configs.train_pts_num,
+                    block_size=1., stride=.8, random_sample=False, sample_num=None, sample_aug=1)
+
+            amin = np.amin(xyzrgb[:,:3],0)
+            amax = np.amax(xyzrgb[:,:3],0)
+
+            # xyzrgb, sems, ins = blocks
+            fn_frame = osp.join(cache_dir, '%d.pick'%data['idx'] )
+            with open(fn_frame,'wb') as f_frame:
+                data['amin'] = amin
+                data['amax'] = amax
+                data['blocks'] = blocks
+                pickle.dump(data, f_frame, protocol=2)
+            for j in range(blocks[0].shape[0]):
+                indices.append( (i,j) )
+        fn_info = osp.join(cache_dir, 'info.pick')
+        with open(fn_info,'wb') as f:
+            pickle.dump(indices, f, protocol=2)
+        return
+
+    def __init__(self , name, batch_size=4, max_frame_per_scene=1):
         from unet.segment_dataset import ObbDataset
         from torch.utils.data import Dataset, DataLoader
-        self.dataset = ObbDataset(name, False, max_frame_per_scene)
+        cache_dir = osp.join(name,'cache_points')
+        if not osp.exists(cache_dir):
+            makedirs(cache_dir)
+            dataset = ObbDataset(name, False, max_frame_per_scene)
+            self.save_cache(cache_dir, dataset)
+        fn_info = osp.join(cache_dir, 'info.pick')
 
-        self.total_train_batch_num = len(self.dataset) * 20
-        self.train_next_bat_index = 0
-        self.train_next_frame_index = 0
+        self.scene_num = -1
+        with open(fn_info,'rb') as f:
+            indices = pickle.load(f)
+        for i,j in indices:
+            self.scene_num = max(self.scene_num, i)
+
+        self.cache_dir = cache_dir
+        self.indices = indices
+        self.total_train_batch_num = len(indices) / batch_size
         self.batch_size = batch_size
+        self.next_ch_index = 0
+        self.next_scene_index = 0
 
     @staticmethod
     def get_bbvert_pmask_labels(pc, ins_labels):
@@ -95,54 +155,30 @@ class Data_ObbDataset:
         return self.load_train_next_batch()
 
     def load_raw_data(self):
-        if not hasattr(self, 'blocks'):
-            data = self.dataset[self.train_next_frame_index]
-            bgr, depth, marker = data['rgb'], data['depth'], data['marker']
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            K = data['K']
-            D = np.zeros((4,1),dtype=K.dtype)
-            xyzrgb, ins_points\
-                    = unet_ext.UnprojectPointscloud(rgb,depth,marker,K,D,leaf_xy=0.01,leaf_z=0.01)
+        frame_idx, ch_idx = self.indices[self.next_ch_index]
+        self.next_ch_index += 1
+        if self.next_ch_index == len(self.indices):
+            self.next_ch_index = 0
+        if not hasattr(self, 'blocks') or self.frame_idx != frame_idx:
+            fn_frame = osp.join(self.cache_dir, '%d.pick'% frame_idx)
+            with open(fn_frame,'rb') as f_frame:
+                pick = pickle.load(f_frame)
+            self.blocks = pick['blocks']
+            self.frame_idx = frame_idx
+            self.amin = pick['amin']
+            self.amax = pick['amax']
+        #print("file, ch/n(ch) = %d, %d/%d" % (frame_idx, ch_idx, self.blocks[0].shape[0]) )
 
-            sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
-            ins_points -= 1 # Data_S3DIS assign -1 for ins_labels of bg points.
-            sem_points = np.full_like(ins_points, -1)
-            sem_points[ins_points > -1] = sem_label_box
+        xyzrgb = self.blocks[0][ch_idx,:,:]
+        sems   = self.blocks[1][ch_idx,:]
+        ins    = self.blocks[2][ch_idx,:]
 
-            xyzrgb = xyzrgb[ins_points>-1,:]
-            ins_points = ins_points[ins_points > -1]
-            sem_points = np.full_like(ins_points, sem_label_box)
-
-            self.amin = np.amin(xyzrgb[:,:3],0)
-            self.amax = np.amax(xyzrgb[:,:3],0)
-            self.blocks =tof2blocks(xyzrgb, sem_points, ins_points, num_point=Data_Configs.train_pts_num,
-                    block_size=2., stride=1.5, random_sample=False, sample_num=None, sample_aug=1)
-            self.train_next_frame_index += 1
-            if self.train_next_frame_index == len(self.dataset):
-                # TODO ??
-                self.train_next_frame_index = 0
-
-        xyzrgb = self.blocks[0][self.train_next_bat_index,:,:]
-        sems   = self.blocks[1][self.train_next_bat_index,:]
-        ins    = self.blocks[2][self.train_next_bat_index,:]
-        # xyzrgb -> pc 
-        # pc[:3] = global coordinate (keep)
-        # pc[3:6] = normalized rgb. therefore, keep
-        # pc[6:9] = min max 를 기준으로 정규화된 xyz
         width = self.amax - self.amin
         normalized_xyz = (xyzrgb[:,:3] - self.amin)/width
         pc = np.concatenate([xyzrgb, normalized_xyz], axis=1)
         if np.isnan(pc).any():
             print("!!!!!! Nan in array")
             import pdb; pdb.set_trace()
-
-        #print("%d, %d/%d"%(self.train_next_frame_index, self.train_next_bat_index,self.blocks[0].shape[0] ) )
-        self.train_next_bat_index +=1
-        if self.train_next_bat_index == self.blocks[0].shape[0]:
-            delattr(self, 'blocks')
-            delattr(self, 'amin')
-            delattr(self, 'amax')
-            self.train_next_bat_index = 0
         return pc, sems, ins
 
     def load_fixed_points(self):
@@ -182,6 +218,36 @@ class Data_ObbDataset:
 
         return pc_xyzrgb, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels
 
+    def load_next_scene(self):
+        bat_pc=[]
+        bat_sem_labels=[]
+        bat_ins_labels=[]
+        bat_psem_onehot_labels =[]
+        bat_bbvert_padded_labels=[]
+        bat_pmask_padded_labels =[]
+        while True:
+            try:
+                frame_idx, _ = self.indices[self.next_ch_index]
+            except:
+                print("something wrong")
+                import pdb; pdb.set_trace()
+            if frame_idx != self.next_scene_index:
+                break
+            pc, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels = self.load_fixed_points()
+            bat_pc.append(pc)
+            bat_sem_labels.append(sem_labels)
+            bat_ins_labels.append(ins_labels)
+            bat_psem_onehot_labels.append(psem_onehot_labels)
+            bat_bbvert_padded_labels.append(bbvert_padded_labels)
+            bat_pmask_padded_labels.append(pmask_padded_labels)
+        bat_pc = np.asarray(bat_pc, dtype=np.float32)
+        bat_sem_labels = np.asarray(bat_sem_labels, dtype=np.float32)
+        bat_ins_labels = np.asarray(bat_ins_labels, dtype=np.float32)
+        bat_psem_onehot_labels = np.asarray(bat_psem_onehot_labels, dtype=np.float32)
+        bat_bbvert_padded_labels = np.asarray(bat_bbvert_padded_labels, dtype=np.float32)
+        bat_pmask_padded_labels = np.asarray(bat_pmask_padded_labels, dtype=np.float32)
+        self.next_scene_index += 1
+        return bat_pc, bat_sem_labels, bat_ins_labels, bat_psem_onehot_labels, bat_bbvert_padded_labels, bat_pmask_padded_labels
 
     def load_train_next_batch(self):
         bat_pc=[]
@@ -225,7 +291,7 @@ def mytrain():
 
     pkg_dir = get_pkg_dir()
     dataset_dir ='/home/docker/obb_dataset_train'
-    data = Data_ObbDataset(dataset_dir)
+    data = Data_ObbDataset(dataset_dir, batch_size=4)
     train(net, data, test_areas = None)
     print("Train is done")
 
