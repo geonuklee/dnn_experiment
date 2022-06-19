@@ -11,7 +11,7 @@ from indoor3d_util import room2blocks
 import random
 import glob2
 import unet_ext
-
+import cv2
 
 class Data_Configs:
     sem_names = ['bg', 'box']
@@ -42,7 +42,7 @@ class Data_ObbDataset:
     @brief Replacement of Data_S3DIS for Data_ObbDataset.
     """
 
-    def __init__(self , name, train_batch_size=1, max_frame_per_scene=1):
+    def __init__(self , name, batch_size=1, max_frame_per_scene=1):
         from unet.segment_dataset import ObbDataset
         from torch.utils.data import Dataset, DataLoader
         self.dataset = ObbDataset(name, False, max_frame_per_scene)
@@ -50,7 +50,7 @@ class Data_ObbDataset:
         self.total_train_batch_num = len(self.dataset) * 20
         self.train_next_bat_index = 0
         self.train_next_frame_index = 0
-        self.train_batch_size = train_batch_size
+        self.batch_size = batch_size
 
     @staticmethod
     def get_bbvert_pmask_labels(pc, ins_labels):
@@ -97,11 +97,13 @@ class Data_ObbDataset:
     def load_raw_data(self):
         if not hasattr(self, 'blocks'):
             data = self.dataset[self.train_next_frame_index]
-            rgb, depth, marker = data['rgb'], data['depth'], data['marker']
+            bgr, depth, marker = data['rgb'], data['depth'], data['marker']
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             K = data['K']
             D = np.zeros((4,1),dtype=K.dtype)
             xyzrgb, ins_points\
                     = unet_ext.UnprojectPointscloud(rgb,depth,marker,K,D,leaf_xy=0.01,leaf_z=0.01)
+
             sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
             ins_points -= 1 # Data_S3DIS assign -1 for ins_labels of bg points.
             sem_points = np.full_like(ins_points, -1)
@@ -110,12 +112,11 @@ class Data_ObbDataset:
             xyzrgb = xyzrgb[ins_points>-1,:]
             ins_points = ins_points[ins_points > -1]
             sem_points = np.full_like(ins_points, sem_label_box)
-            print('num_point = %d' % xyzrgb.shape[0] )
 
             self.amin = np.amin(xyzrgb[:,:3],0)
             self.amax = np.amax(xyzrgb[:,:3],0)
-            self.blocks =tof2blocks(xyzrgb, sem_points, ins_points, num_point=min(xyzrgb.shape[0], 4096),
-                    block_size=.2, stride=0.2, random_sample=False, sample_num=None, sample_aug=1)
+            self.blocks =tof2blocks(xyzrgb, sem_points, ins_points, num_point=Data_Configs.train_pts_num,
+                    block_size=2., stride=1.5, random_sample=False, sample_num=None, sample_aug=1)
             self.train_next_frame_index += 1
             if self.train_next_frame_index == len(self.dataset):
                 # TODO ??
@@ -189,7 +190,7 @@ class Data_ObbDataset:
         bat_psem_onehot_labels =[]
         bat_bbvert_padded_labels=[]
         bat_pmask_padded_labels =[]
-        for i in range(self.train_batch_size):
+        for i in range(self.batch_size):
             pc, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels = self.load_fixed_points()
             bat_pc.append(pc)
             bat_sem_labels.append(sem_labels)
