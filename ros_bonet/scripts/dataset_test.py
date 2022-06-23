@@ -25,10 +25,11 @@ def restore_net():
     with tf.variable_scope('pmask'):
         net.y_pmask_pred_raw = net.pmask_net(net.point_features, net.global_features, net.y_bbvert_pred_raw, net.y_bbscore_pred_raw)
 
-    model_path = 'log/train_mod/model050.cptk'
-    if not os.path.isfile(model_path + '.data-00000-of-00001'):
-        print ('please download the released model!')
-        return
+    model_path = 'log/train_mod/model.cptk'
+    fn = model_path + '.data-00000-of-00001'
+    if not os.path.isfile(fn):
+        print ('please train the model! Can\'t find %s'%fn )
+        exit(1)
     config = tf.ConfigProto(allow_soft_placement=True)
     config.gpu_options.visible_device_list = '0'
     net.sess = tf.Session(config=config)
@@ -62,21 +63,21 @@ if __name__ == '__main__':
         shutil.rmtree(bonet_output_dir)
     makedirs(bonet_output_dir)
 
-    #for i in range(data.total_train_batch_num):
-    #    bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask = data.load_train_next_batch()
-    #    print("--------------")
     for i in range(data.scene_num):
         bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask = data.load_next_scene()
         # pc_all.shape = N,12 , ins_gt_all.shape = N,
         pc_all = []; ins_gt_all = []; sem_pred_all = []; sem_gt_all = []
-        gap = 5e-3
+        gap = .01 #gap = 5e-3
         volume_num = int(1. / gap) + 2
         volume = -1 * np.ones([volume_num, volume_num, volume_num]).astype(np.int32)
         volume_sem = -1 * np.ones([volume_num, volume_num, volume_num]).astype(np.int32)
         for b in range(bat_pc.shape[0]):
             X_pc = np.expand_dims(bat_pc[b,:,:], 0)
-            [y_psem_pred_sq_raw, y_bbvert_pred_sq_raw, y_bbscore_pred_sq_raw, y_pmask_pred_sq_raw] = \
-                net.sess.run([net.y_psem_pred, net.y_bbvert_pred_raw, net.y_bbscore_pred_raw, net.y_pmask_pred_raw],feed_dict={net.X_pc: X_pc[:, :, 0:9], net.is_train: False})
+            try:
+                [y_psem_pred_sq_raw, y_bbvert_pred_sq_raw, y_bbscore_pred_sq_raw, y_pmask_pred_sq_raw] = \
+                    net.sess.run([net.y_psem_pred, net.y_bbvert_pred_raw, net.y_bbscore_pred_raw, net.y_pmask_pred_raw],feed_dict={net.X_pc: X_pc[:, :, 0:9], net.is_train: False})
+            except:
+                import pdb; pdb.set_trace()
 
             pc = bat_pc[b].astype(np.float16)
             sem_gt = bat_sem_gt[b].astype(np.int16)
@@ -90,7 +91,7 @@ if __name__ == '__main__':
             pmask_pred = pmask_pred_raw * np.tile(bbscore_pred_raw[:, None], [1, pmask_pred_raw.shape[-1]])
             ins_pred = np.argmax(pmask_pred, axis=-2)
             ins_sem_dic = Eval_Tools.get_sem_for_ins(ins_by_pts=ins_pred, sem_by_pts=sem_pred)
-            Eval_Tools.BlockMerging(volume, volume_sem, pc[:, 6:9], ins_pred, ins_sem_dic, gap)
+            Eval_Tools.BlockMerging(volume, volume_sem, pc[:, :3], ins_pred, ins_sem_dic, gap)
 
             pc_all.append(pc)
             ins_gt_all.append(ins_gt)
@@ -102,25 +103,51 @@ if __name__ == '__main__':
         sem_pred_all = np.concatenate(sem_pred_all, axis=0)
         sem_gt_all = np.concatenate(sem_gt_all, axis=0)
 
-        pc_xyz_int = (pc_all[:, 6:9] / gap).astype(np.int32)
+        pc_xyz_int = (pc_all[:, :3] / gap).astype(np.int32)
         ins_pred_all = volume[tuple(pc_xyz_int.T)]
-
+        sub_rows, sub_cols = 2, bat_pc.shape[0]
         fig = plt.figure(1, figsize=(10,5), dpi=100)
         fig.clf()
         ax = fig.add_subplot(1,2,1, projection='3d')
         #ax.scatter(pc_all[:, 9],pc_all[:, 10],pc_all[:, 11], c=pc_all[:,3:6])
-        ax.scatter(pc_all[:, 9],pc_all[:, 10],pc_all[:, 11], c=pc_all[:,3:6], s=2, linewidths=0)
+        ax.scatter(pc_all[:,-3],pc_all[:, -2],pc_all[:, -1], c=pc_all[:,3:6], s=2, linewidths=0)
         ax.axis('off')
-        ax.view_init(elev=90., azim=90)
-
+        ax.view_init(elev=-90., azim=-90)
         colors = get_colors(ins_pred_all)
         ax = fig.add_subplot(1,2,2, projection='3d')
-        ax.scatter(pc_all[:, 9],pc_all[:, 10],pc_all[:, 11], c=colors, s=2, linewidths=0)
-        ax.view_init(elev=90., azim=90)
+        ax.scatter(pc_all[:,-3],pc_all[:,-2],pc_all[:,-1], c=colors, s=2, linewidths=0)
+        ax.view_init(elev=-90., azim=-90)
         ax.axis('off')
-        plt.savefig(osp.join(bonet_output_dir,'%04d.png'%i))
+
+        fig = plt.figure(2, figsize=(15,5), dpi=80)
+        fig.clf()
+        for b in range(bat_pc.shape[0]):
+            if b > sub_cols:
+                break
+            pc = bat_pc[b].astype(np.float16)
+            sem_gt = bat_sem_gt[b].astype(np.int16)
+            ins_gt = bat_ins_gt[b].astype(np.int32)
+            sem_pred_raw = np.asarray(y_psem_pred_sq_raw[0], dtype=np.float16)
+            bbvert_pred_raw = np.asarray(y_bbvert_pred_sq_raw[0], dtype=np.float16)
+            bbscore_pred_raw = y_bbscore_pred_sq_raw[0].astype(np.float16)
+            pmask_pred_raw = y_pmask_pred_sq_raw[0].astype(np.float16)
+            sem_pred = np.argmax(sem_pred_raw, axis=-1)
+            pmask_pred = pmask_pred_raw * np.tile(bbscore_pred_raw[:, None], [1, pmask_pred_raw.shape[-1]])
+            ins_pred = np.argmax(pmask_pred, axis=-2)
+
+            ax = fig.add_subplot(sub_rows,sub_cols,b+1, projection='3d')
+            ax.scatter(pc[:,-3],pc[:, -2],pc[:, -1], c=pc[:,3:6], s=2, linewidths=0)
+            ax.view_init(elev=-90., azim=-90)
+            ax.axis('off')
+            colors = get_colors(ins_pred)
+            ax = fig.add_subplot(sub_rows,sub_cols,sub_cols+b+1, projection='3d')
+            ax.scatter(pc[:,-3],pc[:, -2],pc[:, -1], c=colors, s=2, linewidths=0)
+            ax.view_init(elev=-90., azim=-90)
+            ax.axis('off')
+
 
         fig.canvas.draw()
-        plt.show(block=False)
+        plt.show(block=True)
         #Plot.draw_pc(np.concatenate([pc_all[:,9:12], pc_all[:,3:6]], axis=1))
         #Plot.draw_pc_semins(pc_xyz=pc_all[:, 9:12], pc_semins=ins_pred_all)
+        break

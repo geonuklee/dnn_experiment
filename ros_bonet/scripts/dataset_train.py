@@ -7,13 +7,88 @@ import os
 import copy
 from os import listdir, makedirs
 import deepdish as dd
-from indoor3d_util import room2blocks
+#from indoor3d_util import room2blocks
 import random
 import glob2
 import unet_ext
 import cv2
 from os import makedirs
 import pickle
+from bonet import Plot
+
+def sample_data(data, num_sample):
+    """ data is in N x ...
+        we want to keep num_samplexC of them.
+        if N > num_sample, we will randomly keep num_sample of them.
+        if N < num_sample, we will randomly duplicate samples.
+    """
+    N = data.shape[0]
+    if (N == num_sample):
+        return data, range(N)
+    elif (N > num_sample):
+        sample = np.random.choice(N, num_sample)
+        return data[sample, ...], sample
+    else:
+        sample = np.random.choice(N, num_sample-N)
+        dup_data = data[sample, ...]
+        return np.concatenate([data, dup_data], 0), range(N)+list(sample)
+
+def sample_data_label(data, label, inslabel, num_sample):
+    new_data, sample_indices = sample_data(data, num_sample)
+    new_label = label[sample_indices]
+    new_inslabel = inslabel[sample_indices]
+    return new_data, new_label, new_inslabel
+
+def get_colors(pc_semins):
+    ins_colors = Plot.random_colors(len(np.unique(pc_semins))+1, seed=2)
+    semins_labels = np.unique(pc_semins)
+    semins_bbox = []
+    Y_colors = np.zeros((pc_semins.shape[0], 3))
+    for id, semins in enumerate(semins_labels):
+        valid_ind = np.argwhere(pc_semins == semins)[:, 0]
+        if semins<=-1:
+            tp=[0,0,0]
+        else:
+            tp = ins_colors[id]
+        Y_colors[valid_ind] = tp
+    return Y_colors
+
+def get_blocks(xyzrgb, sem_points, ins_points, num_points=1000):
+    n = 2
+    lim0 = np.amin(xyzrgb[:,:2], axis=0)
+    lim1 = np.amax(xyzrgb[:,:2], axis=0)
+    xy_boundary, step = np.linspace(lim0, lim1, n+1, retstep=True) # N x 2
+    margin = .1 * step
+    boundaries = []
+    for ix in range(n):
+        x0, x1 = xy_boundary[ix:ix+2,0]
+        x0 -= margin[0]
+        x1 += margin[0]
+        for iy in range(n):
+            y0, y1 = xy_boundary[iy:iy+2,1]
+            y0 -= margin[1]
+            y1 += margin[1]
+            boundaries.append( (x0,x1,y0,y1) )
+    pc_blocks = []
+    sem_blocks = []
+    ins_blocks = []
+    for x0,x1,y0,y1 in boundaries:
+        inblock = xyzrgb[:,0] > x0
+        inblock = np.logical_and(inblock, xyzrgb[:,0] < x1)
+        inblock = np.logical_and(inblock, xyzrgb[:,1] > y0)
+        inblock = np.logical_and(inblock, xyzrgb[:,1] < y1)
+        if not inblock.any():
+            continue
+        pc_sampled, sem_sampled, ins_sampled\
+                = sample_data_label(xyzrgb[inblock,:], sem_points[inblock], ins_points[inblock], num_points)
+        pc_blocks.append(pc_sampled)
+        sem_blocks.append(sem_sampled)
+        ins_blocks.append(ins_sampled)
+    pc_blocks  = np.stack(pc_blocks, axis=0)
+    sem_blocks = np.stack(sem_blocks,axis=0)
+    ins_blocks = np.stack(ins_blocks,axis=0)
+    return pc_blocks, sem_blocks, ins_blocks
+
 
 class Data_Configs:
     sem_names = ['bg', 'box']
@@ -22,25 +97,13 @@ class Data_Configs:
     points_cc = 9
     sem_num = len(sem_names)
     ins_max_num = 100 # 24 for ...
-    train_pts_num = 4096
-    test_pts_num = 4096
+    train_pts_num = 4000 
+    test_pts_num = 4000
 
 def get_chunks(lst, n):
     """Yield successive n-sized chunks from lst."""
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
-
-def tof2blocks(data, label, inslabel, num_point, block_size=1.0, stride=1.0,
-                random_sample=False, sample_num=None, sample_aug=1):
-    limit = np.amin(data[:,:3], 0)
-    ndata = data.copy()
-    #for i in range(ndata.shape[0]):
-    #    ndata[i,:3] -= limit
-    ndata[:,:3] -= limit
-
-    blocks = room2blocks(ndata, label, inslabel, num_point, block_size, stride, random_sample, sample_num, sample_aug)
-    blocks[0][:, :, :3] += limit
-    return blocks
 
 
 class Data_ObbDataset:
@@ -50,6 +113,7 @@ class Data_ObbDataset:
 
     def save_cache(self, cache_dir, dataset):
         indices = []
+        sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
         for i, data in enumerate(dataset):
             print("cache %d/%d"%(i,len(dataset)) )
             bgr, depth, marker = data['rgb'], data['depth'], data['marker']
@@ -57,8 +121,7 @@ class Data_ObbDataset:
             K = data['K']
             D = np.zeros((4,1),dtype=K.dtype)
             xyzrgb, ins_points\
-                    = unet_ext.UnprojectPointscloud(rgb,depth,marker,K,D,leaf_xy=0.01,leaf_z=0.01)
-            sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
+                    = unet_ext.UnprojectPointscloud(rgb,depth,marker,K,D,leaf_xy=0.02,leaf_z=0.01)
             ins_points -= 1 # Data_S3DIS assign -1 for ins_labels of bg points.
             sem_points = np.full_like(ins_points, -1)
             sem_points[ins_points > -1] = sem_label_box
@@ -67,19 +130,15 @@ class Data_ObbDataset:
             ins_points = ins_points[ins_points > -1]
             sem_points = np.full_like(ins_points, sem_label_box)
 
-            #amin = np.amin(xyzrgb[:,:3],0)
-            #amax = np.amax(xyzrgb[:,:3],0)
-            blocks = tof2blocks(xyzrgb, sem_points, ins_points, num_point=Data_Configs.train_pts_num,
-                    block_size=1., stride=.8, random_sample=False, sample_num=None, sample_aug=1)
+            in_range = xyzrgb[:,2] < 2. # TODO Parameter
+            xyzrgb     = xyzrgb[in_range]
+            ins_points = ins_points[in_range]
+            sem_points = sem_points[in_range]
 
-            amin = np.amin(xyzrgb[:,:3],0)
-            amax = np.amax(xyzrgb[:,:3],0)
-
+            blocks = get_blocks(xyzrgb, sem_points, ins_points, num_points=Data_Configs.train_pts_num)
             # xyzrgb, sems, ins = blocks
             fn_frame = osp.join(cache_dir, '%d.pick'%data['idx'] )
             with open(fn_frame,'wb') as f_frame:
-                data['amin'] = amin
-                data['amax'] = amax
                 data['blocks'] = blocks
                 pickle.dump(data, f_frame, protocol=2)
             for j in range(blocks[0].shape[0]):
@@ -92,7 +151,7 @@ class Data_ObbDataset:
     def __init__(self , name, batch_size=4, max_frame_per_scene=1):
         from unet.segment_dataset import ObbDataset
         from torch.utils.data import Dataset, DataLoader
-        cache_dir = osp.join(name,'cache_points')
+        cache_dir = osp.join(name,'cached_block')
         if not osp.exists(cache_dir):
             makedirs(cache_dir)
             dataset = ObbDataset(name, False, max_frame_per_scene)
@@ -102,8 +161,10 @@ class Data_ObbDataset:
         self.scene_num = -1
         with open(fn_info,'rb') as f:
             indices = pickle.load(f)
+        indices = filter(lambda pair: pair[0]==0 , indices)
+
         for i,j in indices:
-            self.scene_num = max(self.scene_num, i)
+            self.scene_num = max(self.scene_num, i+1)
 
         self.cache_dir = cache_dir
         self.indices = indices
@@ -149,53 +210,45 @@ class Data_ObbDataset:
         # ep : Have no idea that ep is short for what. but it is sued as random seed.
         # It shuffle self.train_files
         self.train_next_bat_index=0
+        self.next_ch_index = 0
+        self.next_scene_index = 0
         return
 
     def load_test_next_batch_random(self):
         return self.load_train_next_batch()
 
     def load_raw_data(self):
+        if self.next_ch_index == len(self.indices):
+            return None
         frame_idx, ch_idx = self.indices[self.next_ch_index]
         self.next_ch_index += 1
-        if self.next_ch_index == len(self.indices):
-            self.next_ch_index = 0
         if not hasattr(self, 'blocks') or self.frame_idx != frame_idx:
             fn_frame = osp.join(self.cache_dir, '%d.pick'% frame_idx)
             with open(fn_frame,'rb') as f_frame:
                 pick = pickle.load(f_frame)
             self.blocks = pick['blocks']
             self.frame_idx = frame_idx
-            self.amin = pick['amin']
-            self.amax = pick['amax']
         #print("file, ch/n(ch) = %d, %d/%d" % (frame_idx, ch_idx, self.blocks[0].shape[0]) )
 
-        xyzrgb = self.blocks[0][ch_idx,:,:]
+        pc_xyzrgb = self.blocks[0][ch_idx,:,:]
         sems   = self.blocks[1][ch_idx,:]
         ins    = self.blocks[2][ch_idx,:]
-
-        width = self.amax - self.amin
-        normalized_xyz = (xyzrgb[:,:3] - self.amin)/width
-        pc = np.concatenate([xyzrgb, normalized_xyz], axis=1)
-        if np.isnan(pc).any():
-            print("!!!!!! Nan in array")
-            import pdb; pdb.set_trace()
-        return pc, sems, ins
+        return pc_xyzrgb, sems, ins
 
     def load_fixed_points(self):
-        pc_xyzrgb, sem_labels, ins_labels = self.load_raw_data()
+        ret = self.load_raw_data()
+        if ret is None:
+            return None
+        pc_xyzrgb, sem_labels, ins_labels = ret
 
         ### center xy within the block
         min_x = np.min(pc_xyzrgb[:,0]); max_x = np.max(pc_xyzrgb[:,0])
         min_y = np.min(pc_xyzrgb[:,1]); max_y = np.max(pc_xyzrgb[:,1])
         min_z = np.min(pc_xyzrgb[:,2]); max_z = np.max(pc_xyzrgb[:,2])
-
         ori_xyz = copy.deepcopy(pc_xyzrgb[:, 0:3])  # reserved for final visualization
-        use_zero_one_center = True
-        if use_zero_one_center:
-            pc_xyzrgb[:, 0:1] = (pc_xyzrgb[:, 0:1] - min_x)/ np.maximum((max_x - min_x), 1e-3)
-            pc_xyzrgb[:, 1:2] = (pc_xyzrgb[:, 1:2] - min_y)/ np.maximum((max_y - min_y), 1e-3)
-            pc_xyzrgb[:, 2:3] = (pc_xyzrgb[:, 2:3] - min_z)/ np.maximum((max_z - min_z), 1e-3)
-
+        pc_xyzrgb[:, 0:1] = (pc_xyzrgb[:, 0:1] - min_x)/ np.maximum((max_x - min_x), 1e-3)
+        pc_xyzrgb[:, 1:2] = (pc_xyzrgb[:, 1:2] - min_y)/ np.maximum((max_y - min_y), 1e-3)
+        pc_xyzrgb[:, 2:3] = (pc_xyzrgb[:, 2:3] - min_z)/ np.maximum((max_z - min_z), 1e-3)
         pc_xyzrgb = np.concatenate([pc_xyzrgb, ori_xyz], axis=-1)
 
         ########
@@ -229,11 +282,16 @@ class Data_ObbDataset:
             try:
                 frame_idx, _ = self.indices[self.next_ch_index]
             except:
-                print("something wrong")
-                import pdb; pdb.set_trace()
+                break
+                #print("something wrong")
+                #import pdb; pdb.set_trace()
             if frame_idx != self.next_scene_index:
                 break
-            pc, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels = self.load_fixed_points()
+            ret = self.load_fixed_points()
+            if ret is None:
+                break
+            pc, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels \
+                    = ret
             bat_pc.append(pc)
             bat_sem_labels.append(sem_labels)
             bat_ins_labels.append(ins_labels)
@@ -256,8 +314,13 @@ class Data_ObbDataset:
         bat_psem_onehot_labels =[]
         bat_bbvert_padded_labels=[]
         bat_pmask_padded_labels =[]
+        #print('---------')
         for i in range(self.batch_size):
-            pc, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels = self.load_fixed_points()
+            #print('ch of batch : %d/%d, ch over all : %d/%d' % (i, self.batch_size, self.next_ch_index, len(self.indices)))
+            ret = self.load_fixed_points()
+            if ret is None:
+                break
+            pc, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels = ret
             bat_pc.append(pc)
             bat_sem_labels.append(sem_labels)
             bat_ins_labels.append(ins_labels)
@@ -266,11 +329,11 @@ class Data_ObbDataset:
             bat_pmask_padded_labels.append(pmask_padded_labels)
         bat_pc = np.asarray(bat_pc, dtype=np.float32)
         bat_sem_labels = np.asarray(bat_sem_labels, dtype=np.float32)
-        bat_ins_labels = np.asarray(bat_ins_labels, dtype=np.float32)
         bat_psem_onehot_labels = np.asarray(bat_psem_onehot_labels, dtype=np.float32)
         bat_bbvert_padded_labels = np.asarray(bat_bbvert_padded_labels, dtype=np.float32)
         bat_pmask_padded_labels = np.asarray(bat_pmask_padded_labels, dtype=np.float32)
-
+        if bat_pc.shape[0] == 0:
+            import pdb; pdb.set_trace()
         return bat_pc, bat_sem_labels, bat_ins_labels, bat_psem_onehot_labels, bat_bbvert_padded_labels, bat_pmask_padded_labels
 
 def get_pkg_dir():
