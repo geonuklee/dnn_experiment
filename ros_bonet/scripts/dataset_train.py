@@ -53,12 +53,20 @@ def get_colors(pc_semins):
         Y_colors[valid_ind] = tp
     return Y_colors
 
-def get_blocks(xyzrgb, sem_points, ins_points, num_points=1000):
-    n = 2
+def xyz_normalize(xyz, mins, wvec):
+    return (xyz - mins)/wvec
+
+def get_blocks(xyzrgb, ins_points, sem_points, num_points=1000):
+    n = 1
+    if n == 1:
+        pc_sampled, sem_sampled, ins_sampled\
+                = sample_data_label(xyzrgb, sem_points, ins_points, num_points)
+        return np.expand_dims(pc_sampled,0), np.expand_dims(sem_sampled,0), np.expand_dims(ins_sampled,0)
     lim0 = np.amin(xyzrgb[:,:2], axis=0)
     lim1 = np.amax(xyzrgb[:,:2], axis=0)
     xy_boundary, step = np.linspace(lim0, lim1, n+1, retstep=True) # N x 2
-    margin = .1 * step
+    #margin = .05 * step
+    margin = .5 * step
     boundaries = []
     for ix in range(n):
         x0, x1 = xy_boundary[ix:ix+2,0]
@@ -91,14 +99,17 @@ def get_blocks(xyzrgb, sem_points, ins_points, num_points=1000):
 
 
 class Data_Configs:
-    sem_names = ['bg', 'box']
-    sem_ids = [-1, 0]
+    #sem_names = ['bg', 'box']
+    #sem_ids = [0, 1]
+    sem_names = ['box']
+    sem_ids = [0]
+
 
     points_cc = 9
     sem_num = len(sem_names)
-    ins_max_num = 100 # 24 for ...
-    train_pts_num = 4000 
-    test_pts_num = 4000
+    ins_max_num = 24 # 24 for ...
+    train_pts_num =8000 
+    test_pts_num = 8000
 
 def get_chunks(lst, n):
     """Yield successive n-sized chunks from lst."""
@@ -111,61 +122,71 @@ class Data_ObbDataset:
     @brief Replacement of Data_S3DIS for Data_ObbDataset.
     """
 
-    def save_cache(self, cache_dir, dataset):
-        indices = []
-        sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
-        for i, data in enumerate(dataset):
-            print("cache %d/%d"%(i,len(dataset)) )
-            bgr, depth, marker = data['rgb'], data['depth'], data['marker']
-            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            K = data['K']
-            D = np.zeros((4,1),dtype=K.dtype)
-            xyzrgb, ins_points\
-                    = unet_ext.UnprojectPointscloud(rgb,depth,marker,K,D,leaf_xy=0.02,leaf_z=0.01)
-            ins_points -= 1 # Data_S3DIS assign -1 for ins_labels of bg points.
-            sem_points = np.full_like(ins_points, -1)
-            sem_points[ins_points > -1] = sem_label_box
-
-            xyzrgb = xyzrgb[ins_points>-1,:]
-            ins_points = ins_points[ins_points > -1]
-            sem_points = np.full_like(ins_points, sem_label_box)
-
-            in_range = xyzrgb[:,2] < 2. # TODO Parameter
-            xyzrgb     = xyzrgb[in_range]
-            ins_points = ins_points[in_range]
-            sem_points = sem_points[in_range]
-
-            blocks = get_blocks(xyzrgb, sem_points, ins_points, num_points=Data_Configs.train_pts_num)
-            # xyzrgb, sems, ins = blocks
-            fn_frame = osp.join(cache_dir, '%d.pick'%data['idx'] )
-            with open(fn_frame,'wb') as f_frame:
-                data['blocks'] = blocks
-                pickle.dump(data, f_frame, protocol=2)
-            for j in range(blocks[0].shape[0]):
-                indices.append( (i,j) )
-        fn_info = osp.join(cache_dir, 'info.pick')
-        with open(fn_info,'wb') as f:
-            pickle.dump(indices, f, protocol=2)
-        return
-
-    def __init__(self , name, batch_size=4, max_frame_per_scene=1):
-        from unet.segment_dataset import ObbDataset
-        from torch.utils.data import Dataset, DataLoader
+    def check_cache(self, name):
+        assert(False)
         cache_dir = osp.join(name,'cached_block')
-        if not osp.exists(cache_dir):
-            makedirs(cache_dir)
-            dataset = ObbDataset(name, False, max_frame_per_scene)
-            self.save_cache(cache_dir, dataset)
-        fn_info = osp.join(cache_dir, 'info.pick')
+        #if osp.exists(cache_dir):
+        #    return cache_dir
+        #makedirs(cache_dir)
 
+        #from unet.segment_dataset import ObbDataset
+        #from torch.utils.data import Dataset, DataLoader
+        #dataset = ObbDataset(name, False, max_frame_per_scene)
+        ## cache_dir, dataset
+        #indices = []
+        #sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
+
+        #vget_coord = np.vectorize(get_coord)
+
+        #for i, data in enumerate(dataset):
+        #    print("cache %d/%d"%(i,len(dataset)) )
+        #    bgr, depth, marker = data['rgb'], data['depth'], data['marker']
+        #    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        #    K = data['K']
+        #    D = np.zeros((4,1),dtype=K.dtype)
+        #    xyzrgb, ins_points\
+        #            = unet_ext.UnprojectPointscloud(rgb,depth,marker,K,D,leaf_xy=0.02,leaf_z=0.01)
+
+        #    #TODO coord 추가 
+
+        #    ins_points -= 1 # Data_S3DIS assign -1 for ins_labels of bg points.
+        #    sem_points = np.full_like(ins_points, -1)
+        #    sem_points[ins_points > -1] = sem_label_box
+
+        #    xyzrgb = xyzrgb[ins_points>-1,:]
+        #    ins_points = ins_points[ins_points > -1]
+        #    sem_points = np.full_like(ins_points, sem_label_box)
+
+        #    in_range = xyzrgb[:,2] < 2. # TODO Parameter
+        #    xyzrgb     = xyzrgb[in_range]
+        #    ins_points = ins_points[in_range]
+        #    sem_points = sem_points[in_range]
+
+        #    blocks = get_blocks(xyzrgb, ins_points, sem_points, num_points=Data_Configs.train_pts_num)
+
+        #    import pdb; pdb.set_trace()
+        #    # xyzrgb, sems, ins = blocks
+        #    fn_frame = osp.join(cache_dir, '%d.pick'%data['idx'] )
+        #    with open(fn_frame,'wb') as f_frame:
+        #        data['blocks'] = blocks
+        #        pickle.dump(data, f_frame, protocol=2)
+        #    for j in range(blocks[0].shape[0]):
+        #        indices.append( (i,j) )
+        #fn_info = osp.join(cache_dir, 'info.pick')
+        #with open(fn_info,'wb') as f:
+        #    pickle.dump(indices, f, protocol=2)
+        return cache_dir
+
+    def __init__(self , name, batch_size=1, max_frame_per_scene=1):
+        cache_dir = self.check_cache(name)
+        fn_info = osp.join(cache_dir, 'info.pick')
         self.scene_num = -1
         with open(fn_info,'rb') as f:
             indices = pickle.load(f)
-        indices = filter(lambda pair: pair[0]==0 , indices)
+        #indices = filter(lambda pair: pair[0]==0 , indices)
 
         for i,j in indices:
             self.scene_num = max(self.scene_num, i+1)
-
         self.cache_dir = cache_dir
         self.indices = indices
         self.total_train_batch_num = len(indices) / batch_size
@@ -184,7 +205,10 @@ class Data_ObbDataset:
         for ins_ind in unique_ins_labels:
             if ins_ind <= -1: continue
             count += 1
-            if count >= Data_Configs.ins_max_num: print('ignored! more than max instances:', len(unique_ins_labels)); continue
+            if count >= Data_Configs.ins_max_num:
+                print('ignored! more than max instances:', len(unique_ins_labels));
+                import pdb; pdb.set_trace()
+                continue
         
             ins_labels_tp = np.zeros(ins_labels.shape, dtype=np.int8)
             ins_labels_tp[ins_labels == ins_ind] = 1
@@ -203,6 +227,10 @@ class Data_ObbDataset:
             gt_bbvert_padded[count, 1, 0] = x_max = np.max(pc_xyz_tp[:, 0])
             gt_bbvert_padded[count, 1, 1] = y_max = np.max(pc_xyz_tp[:, 1])
             gt_bbvert_padded[count, 1, 2] = z_max = np.max(pc_xyz_tp[:, 2])
+        if False:
+            print(unique_ins_labels)
+            print('gt_pmask =', np.amax(gt_pmask,axis=1) )
+            import pdb; pdb.set_trace() 
         return gt_bbvert_padded, gt_pmask
 
 

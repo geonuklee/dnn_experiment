@@ -801,7 +801,7 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
       cloud->push_back(pt);
     }
 
-#if 0
+#if 1
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>());
     pcl::VoxelGrid<pcl::PointXYZRGB> sor;
     sor.setInputCloud(cloud);

@@ -76,7 +76,7 @@ def test1():
         ax.axis('off')
         ax.axis('equal')
 
-        blocks = get_blocks(xyzrgb, sem_points, ins_points, num_points=4000)
+        blocks = get_blocks(xyzrgb, ins_points, sem_points, num_points=4000)
         ax = fig.add_subplot(sub_rows, sub_cols, 3, projection='3d')
         ax.set_title('overlap block cloud')
         for ch_idx in range(blocks[0].shape[0]):
@@ -143,7 +143,8 @@ def test1():
             pc   = pc_xyzrgb[ch_idx,:,:3]
             sems = blocks[1][ch_idx,:]
             ins  = blocks[2][ch_idx,:]
-            new_ins =ins + 10 *ch_idx
+            u, new_ins = np.unique(ins, return_inverse=True)
+            #import pdb; pdb.set_trace()
             block_ins_pred[ch_idx,:] = new_ins
             ax.scatter(pc[:,0],pc[:,1],pc[:,2], c=colors[new_ins], s=4, linewidths=0)
         ax.set_zticks([])

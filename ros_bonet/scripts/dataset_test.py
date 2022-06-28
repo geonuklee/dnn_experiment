@@ -55,8 +55,17 @@ def get_colors(pc_semins):
 if __name__ == '__main__':
     net = restore_net()
     pkg_dir = get_pkg_dir()
-    dataset_dir ='/home/docker/obb_dataset_train'
-    data = Data_ObbDataset(dataset_dir, batch_size=1)
+
+    #dataset_dir ='/home/docker/obb_dataset_train'
+    #data = Data_ObbDataset(dataset_dir, batch_size=1)
+
+    #from vtk_train import Data_VtkDataset
+    #dataset_dir ='/home/docker/catkin_ws/src/ros_bonet/vtk_dataset'
+    #data = Data_VtkDataset(dataset_dir, batch_size=1)
+
+    from virtual_train import Data_Virtual 
+    dataset_dir ='/home/docker/catkin_ws/src/ros_bonet/virtual_dataset'
+    data = Data_Virtual(dataset_dir, batch_size=1)
 
     bonet_output_dir = osp.join(dataset_dir, 'bonet_output')
     if osp.exists(bonet_output_dir):
@@ -71,6 +80,13 @@ if __name__ == '__main__':
         volume_num = int(1. / gap) + 2
         volume = -1 * np.ones([volume_num, volume_num, volume_num]).astype(np.int32)
         volume_sem = -1 * np.ones([volume_num, volume_num, volume_num]).astype(np.int32)
+        X_pc = bat_pc
+        #try:
+        #    [y_psem_pred_sq_raw, y_bbvert_pred_sq_raw, y_bbscore_pred_sq_raw, y_pmask_pred_sq_raw] = \
+        #        net.sess.run([net.y_psem_pred, net.y_bbvert_pred_raw, net.y_bbscore_pred_raw, net.y_pmask_pred_raw],feed_dict={net.X_pc: X_pc[:, :, 0:9], net.is_train: False})
+        #except:
+        #    import pdb; pdb.set_trace()
+
         for b in range(bat_pc.shape[0]):
             X_pc = np.expand_dims(bat_pc[b,:,:], 0)
             try:
@@ -78,14 +94,21 @@ if __name__ == '__main__':
                     net.sess.run([net.y_psem_pred, net.y_bbvert_pred_raw, net.y_bbscore_pred_raw, net.y_pmask_pred_raw],feed_dict={net.X_pc: X_pc[:, :, 0:9], net.is_train: False})
             except:
                 import pdb; pdb.set_trace()
-
             pc = bat_pc[b].astype(np.float16)
             sem_gt = bat_sem_gt[b].astype(np.int16)
             ins_gt = bat_ins_gt[b].astype(np.int32)
+
+            print( np.amin(pc[:,6:9],axis=0),np.amax(pc[:,6:9],axis=0) )
+            #import pdb; pdb.set_trace()
+
             sem_pred_raw = np.asarray(y_psem_pred_sq_raw[0], dtype=np.float16)
             bbvert_pred_raw = np.asarray(y_bbvert_pred_sq_raw[0], dtype=np.float16)
             bbscore_pred_raw = y_bbscore_pred_sq_raw[0].astype(np.float16)
             pmask_pred_raw = y_pmask_pred_sq_raw[0].astype(np.float16)
+            #sem_pred_raw = np.asarray(y_psem_pred_sq_raw[b], dtype=np.float16)
+            #bbvert_pred_raw = np.asarray(y_bbvert_pred_sq_raw[b], dtype=np.float16)
+            #bbscore_pred_raw = y_bbscore_pred_sq_raw[b].astype(np.float16)
+            #pmask_pred_raw = y_pmask_pred_sq_raw[b].astype(np.float16)
 
             sem_pred = np.argmax(sem_pred_raw, axis=-1)
             pmask_pred = pmask_pred_raw * np.tile(bbscore_pred_raw[:, None], [1, pmask_pred_raw.shape[-1]])
@@ -105,21 +128,31 @@ if __name__ == '__main__':
 
         pc_xyz_int = (pc_all[:, :3] / gap).astype(np.int32)
         ins_pred_all = volume[tuple(pc_xyz_int.T)]
-        sub_rows, sub_cols = 2, bat_pc.shape[0]
-        fig = plt.figure(1, figsize=(10,5), dpi=100)
+
+        print('ins_gt=', np.unique(ins_gt_all)) # TODO << 이게 왜 0,1,2가 아니라..
+        print('ins_pred=', np.unique(ins_pred_all))
+        print('sem_gt=', np.unique(sem_gt_all))
+        print('sem_pred=', np.unique(sem_pred_all))
+        #continue
+        sub_rows, sub_cols = 3, bat_pc.shape[0]
+        fig = plt.figure(1, figsize=(15,3), dpi=100)
         fig.clf()
-        ax = fig.add_subplot(1,2,1, projection='3d')
+        ax = fig.add_subplot(1,3,1, projection='3d')
         #ax.scatter(pc_all[:, 9],pc_all[:, 10],pc_all[:, 11], c=pc_all[:,3:6])
         ax.scatter(pc_all[:,-3],pc_all[:, -2],pc_all[:, -1], c=pc_all[:,3:6], s=2, linewidths=0)
         ax.axis('off')
         ax.view_init(elev=-90., azim=-90)
-        colors = get_colors(ins_pred_all)
-        ax = fig.add_subplot(1,2,2, projection='3d')
+        colors = get_colors(ins_gt_all)
+        ax = fig.add_subplot(1,3,2, projection='3d')
         ax.scatter(pc_all[:,-3],pc_all[:,-2],pc_all[:,-1], c=colors, s=2, linewidths=0)
         ax.view_init(elev=-90., azim=-90)
         ax.axis('off')
-
-        fig = plt.figure(2, figsize=(15,5), dpi=80)
+        colors = get_colors(ins_pred_all)
+        ax = fig.add_subplot(1,3,3, projection='3d')
+        ax.scatter(pc_all[:,-3],pc_all[:,-2],pc_all[:,-1], c=colors, s=2, linewidths=0)
+        ax.view_init(elev=-90., azim=-90)
+        ax.axis('off')
+        fig = plt.figure(2, figsize=(15,10), dpi=80)
         fig.clf()
         for b in range(bat_pc.shape[0]):
             if b > sub_cols:
@@ -139,15 +172,18 @@ if __name__ == '__main__':
             ax.scatter(pc[:,-3],pc[:, -2],pc[:, -1], c=pc[:,3:6], s=2, linewidths=0)
             ax.view_init(elev=-90., azim=-90)
             ax.axis('off')
-            colors = get_colors(ins_pred)
+
+            colors = get_colors(ins_gt)
             ax = fig.add_subplot(sub_rows,sub_cols,sub_cols+b+1, projection='3d')
             ax.scatter(pc[:,-3],pc[:, -2],pc[:, -1], c=colors, s=2, linewidths=0)
             ax.view_init(elev=-90., azim=-90)
             ax.axis('off')
 
-
+            colors = get_colors(ins_pred)
+            ax = fig.add_subplot(sub_rows,sub_cols,2*sub_cols+b+1, projection='3d')
+            ax.scatter(pc[:,-3],pc[:, -2],pc[:, -1], c=colors, s=2, linewidths=0)
+            ax.view_init(elev=-90., azim=-90)
+            ax.axis('off')
+        print("Draw")
         fig.canvas.draw()
         plt.show(block=True)
-        #Plot.draw_pc(np.concatenate([pc_all[:,9:12], pc_all[:,3:6]], axis=1))
-        #Plot.draw_pc_semins(pc_xyz=pc_all[:, 9:12], pc_semins=ins_pred_all)
-        break
