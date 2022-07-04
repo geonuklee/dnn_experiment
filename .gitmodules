@@ -10,3 +10,7 @@
 [submodule "thirdparty/g2o"]
 	path = thirdparty/g2o
 	url = https://github.com/RainerKuemmerle/g2o.git
+[submodule "thirdparty/opencv"]
+	path = thirdparty/opencv
+	url = https://github.com/opencv/opencv
+	branch = 3.4

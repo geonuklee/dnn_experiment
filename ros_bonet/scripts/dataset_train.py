@@ -6,7 +6,6 @@ from os import path as osp
 import os
 import copy
 from os import listdir, makedirs
-import deepdish as dd
 #from indoor3d_util import room2blocks
 import random
 import glob2
@@ -15,6 +14,10 @@ import cv2
 from os import makedirs
 import pickle
 from bonet import Plot
+from bonet import Eval_Tools
+from bonet import BoNet
+import scipy.stats
+import matplotlib.pyplot as plt
 
 def sample_data(data, num_sample):
     """ data is in N x ...
@@ -65,8 +68,7 @@ def get_blocks(xyzrgb, ins_points, sem_points, num_points=1000):
     lim0 = np.amin(xyzrgb[:,:2], axis=0)
     lim1 = np.amax(xyzrgb[:,:2], axis=0)
     xy_boundary, step = np.linspace(lim0, lim1, n+1, retstep=True) # N x 2
-    #margin = .05 * step
-    margin = .5 * step
+    margin = .05 * step
     boundaries = []
     for ix in range(n):
         x0, x1 = xy_boundary[ix:ix+2,0]
@@ -100,14 +102,14 @@ def get_blocks(xyzrgb, ins_points, sem_points, num_points=1000):
 
 class Data_Configs:
     #sem_names = ['bg', 'box']
-    #sem_ids = [0, 1]
+    #sem_ids = [-1, 0]
     sem_names = ['box']
     sem_ids = [0]
 
 
     points_cc = 9
     sem_num = len(sem_names)
-    ins_max_num = 24 # 24 for ...
+    ins_max_num = 50 # 24 for ...
     train_pts_num =8000 
     test_pts_num = 8000
 
@@ -123,61 +125,65 @@ class Data_ObbDataset:
     """
 
     def check_cache(self, name):
-        assert(False)
         cache_dir = osp.join(name,'cached_block')
-        #if osp.exists(cache_dir):
-        #    return cache_dir
-        #makedirs(cache_dir)
+        if osp.exists(cache_dir):
+            return cache_dir
+        makedirs(cache_dir)
 
-        #from unet.segment_dataset import ObbDataset
-        #from torch.utils.data import Dataset, DataLoader
-        #dataset = ObbDataset(name, False, max_frame_per_scene)
-        ## cache_dir, dataset
-        #indices = []
-        #sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
+        from unet.segment_dataset import ObbDataset
+        from torch.utils.data import Dataset, DataLoader
+        dataset = ObbDataset(name, False, max_frame_per_scene=1)
+        # cache_dir, dataset
+        indices = []
+        sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
+        vnormalize = np.vectorize(xyz_normalize)
 
-        #vget_coord = np.vectorize(get_coord)
+        for i, data in enumerate(dataset):
+            print("cache %d/%d"%(i,len(dataset)) )
+            bgr, depth, marker = data['rgb'], data['depth'], data['marker']
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            K = data['K']
+            D = np.zeros((4,1),dtype=K.dtype)
+            xyzrgb, ins_points\
+                    = unet_ext.UnprojectPointscloud(rgb,depth,marker,K,D,leaf_xy=0.02,leaf_z=0.01)
+            if (xyzrgb[:,2]==0.).any():
+                import pdb; pdb.set_trace()
 
-        #for i, data in enumerate(dataset):
-        #    print("cache %d/%d"%(i,len(dataset)) )
-        #    bgr, depth, marker = data['rgb'], data['depth'], data['marker']
-        #    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        #    K = data['K']
-        #    D = np.zeros((4,1),dtype=K.dtype)
-        #    xyzrgb, ins_points\
-        #            = unet_ext.UnprojectPointscloud(rgb,depth,marker,K,D,leaf_xy=0.02,leaf_z=0.01)
+            ins_points -= 1 # Data_S3DIS assign -1 for ins_labels of bg points.
+            sem_points = np.full_like(ins_points, -1)
+            sem_points[ins_points > -1] = sem_label_box
 
-        #    #TODO coord 추가 
+            xyzrgb = xyzrgb[ins_points>-1,:]
+            ins_points = ins_points[ins_points > -1]
+            sem_points = np.full_like(ins_points, sem_label_box)
 
-        #    ins_points -= 1 # Data_S3DIS assign -1 for ins_labels of bg points.
-        #    sem_points = np.full_like(ins_points, -1)
-        #    sem_points[ins_points > -1] = sem_label_box
+            #in_range = xyzrgb[:,2] < 2. # TODO Parameter
+            #xyzrgb     = xyzrgb[in_range]
+            #ins_points = ins_points[in_range]
+            #sem_points = sem_points[in_range]
 
-        #    xyzrgb = xyzrgb[ins_points>-1,:]
-        #    ins_points = ins_points[ins_points > -1]
-        #    sem_points = np.full_like(ins_points, sem_label_box)
+            mins, maxs = np.amin(xyzrgb[:,:3],axis=0), np.amax(xyzrgb[:,:3],axis=0)
+            wvec = maxs - mins
+            normalized_xyz = np.zeros( (xyzrgb.shape[0],3), dtype=xyzrgb.dtype)
+            for k in range(3):
+                normalized_xyz[:,k] = vnormalize(xyzrgb[:,k], mins[k], wvec[k])
+            xyzrgb = np.concatenate([xyzrgb, normalized_xyz], axis=-1)
+            blocks = get_blocks(xyzrgb, ins_points, sem_points, num_points=Data_Configs.train_pts_num)
+            # xyzrgb, sems, ins = blocks
+            fn_frame = osp.join(cache_dir, '%d.pick'%data['idx'] )
+            with open(fn_frame,'wb') as f_frame:
+                data['blocks'] = blocks
+                pickle.dump(data, f_frame, protocol=2)
 
-        #    in_range = xyzrgb[:,2] < 2. # TODO Parameter
-        #    xyzrgb     = xyzrgb[in_range]
-        #    ins_points = ins_points[in_range]
-        #    sem_points = sem_points[in_range]
-
-        #    blocks = get_blocks(xyzrgb, ins_points, sem_points, num_points=Data_Configs.train_pts_num)
-
-        #    import pdb; pdb.set_trace()
-        #    # xyzrgb, sems, ins = blocks
-        #    fn_frame = osp.join(cache_dir, '%d.pick'%data['idx'] )
-        #    with open(fn_frame,'wb') as f_frame:
-        #        data['blocks'] = blocks
-        #        pickle.dump(data, f_frame, protocol=2)
-        #    for j in range(blocks[0].shape[0]):
-        #        indices.append( (i,j) )
-        #fn_info = osp.join(cache_dir, 'info.pick')
-        #with open(fn_info,'wb') as f:
-        #    pickle.dump(indices, f, protocol=2)
+            for j in range(blocks[0].shape[0]):
+                indices.append( (i,j) )
+        fn_info = osp.join(cache_dir, 'info.pick')
+        with open(fn_info,'wb') as f:
+            pickle.dump(indices, f, protocol=2)
         return cache_dir
 
     def __init__(self , name, batch_size=1, max_frame_per_scene=1):
+        self.name = name
         cache_dir = self.check_cache(name)
         fn_info = osp.join(cache_dir, 'info.pick')
         self.scene_num = -1
@@ -189,8 +195,8 @@ class Data_ObbDataset:
             self.scene_num = max(self.scene_num, i+1)
         self.cache_dir = cache_dir
         self.indices = indices
-        self.total_train_batch_num = len(indices) / batch_size
-        self.batch_size = batch_size
+        self.batch_size = min(len(indices), batch_size)
+        self.total_train_batch_num = len(indices) / self.batch_size
         self.next_ch_index = 0
         self.next_scene_index = 0
 
@@ -224,9 +230,10 @@ class Data_ObbDataset:
             gt_bbvert_padded[count, 0, 0] = x_min = np.min(pc_xyz_tp[:, 0])
             gt_bbvert_padded[count, 0, 1] = y_min = np.min(pc_xyz_tp[:, 1])
             gt_bbvert_padded[count, 0, 2] = z_min = np.min(pc_xyz_tp[:, 2])
-            gt_bbvert_padded[count, 1, 0] = x_max = np.max(pc_xyz_tp[:, 0])
-            gt_bbvert_padded[count, 1, 1] = y_max = np.max(pc_xyz_tp[:, 1])
-            gt_bbvert_padded[count, 1, 2] = z_max = np.max(pc_xyz_tp[:, 2])
+            gt_bbvert_padded[count, 1, 0] = x_max = max(np.max(pc_xyz_tp[:, 0]), x_min+1e-5)
+            gt_bbvert_padded[count, 1, 1] = y_max = max(np.max(pc_xyz_tp[:, 1]), y_min+1e-5)
+            gt_bbvert_padded[count, 1, 2] = z_max = max(np.max(pc_xyz_tp[:, 2]), z_min+1e-5)
+
         if False:
             print(unique_ins_labels)
             print('gt_pmask =', np.amax(gt_pmask,axis=1) )
@@ -268,6 +275,8 @@ class Data_ObbDataset:
         if ret is None:
             return None
         pc_xyzrgb, sem_labels, ins_labels = ret
+        if (pc_xyzrgb[:,2]==0.).any():
+            import pdb; pdb.set_trace()
 
         ### center xy within the block
         min_x = np.min(pc_xyzrgb[:,0]); max_x = np.max(pc_xyzrgb[:,0])
@@ -307,12 +316,10 @@ class Data_ObbDataset:
         bat_bbvert_padded_labels=[]
         bat_pmask_padded_labels =[]
         while True:
-            try:
+            if self.next_ch_index == len(self.indices):
+                frame_idx = self.indices[-1][0] + 1
+            else:
                 frame_idx, _ = self.indices[self.next_ch_index]
-            except:
-                break
-                #print("something wrong")
-                #import pdb; pdb.set_trace()
             if frame_idx != self.next_scene_index:
                 break
             ret = self.load_fixed_points()
@@ -357,6 +364,7 @@ class Data_ObbDataset:
             bat_pmask_padded_labels.append(pmask_padded_labels)
         bat_pc = np.asarray(bat_pc, dtype=np.float32)
         bat_sem_labels = np.asarray(bat_sem_labels, dtype=np.float32)
+        bat_ins_labels = np.asarray(bat_ins_labels, dtype=np.float32)
         bat_psem_onehot_labels = np.asarray(bat_psem_onehot_labels, dtype=np.float32)
         bat_bbvert_padded_labels = np.asarray(bat_bbvert_padded_labels, dtype=np.float32)
         bat_pmask_padded_labels = np.asarray(bat_pmask_padded_labels, dtype=np.float32)
@@ -367,26 +375,175 @@ class Data_ObbDataset:
 def get_pkg_dir():
     return osp.abspath( osp.join(osp.dirname(__file__),'..') )
 
-def mytrain():
-    #import faulthandler
-    #faulthandler.enable()
-    import tensorflow as tf
-    from bonet import BoNet, Plot, Eval_Tools, train
+def evaluation(net, test_dataset, configs, min_iou=.5):
+    # TODO Evaluation.ttest(), Evaluation.evaluation()
+    #total_n = test_dataaset.total_train_batch_num
 
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = '0'  ## specify the GPU to use
-    configs = Data_Configs()
-    net = BoNet(configs = configs)
-    net.creat_folders(name='log', re_train=False)
-    net.build_graph()
+    TP_FP_Total = {}
+    for sem_id in configs.sem_ids:
+        TP_FP_Total[sem_id] = {}
+        TP_FP_Total[sem_id]['TP'] = 0
+        TP_FP_Total[sem_id]['FP'] = 0
+        TP_FP_Total[sem_id]['Total'] = 0
 
-    pkg_dir = get_pkg_dir()
-    dataset_dir ='/home/docker/obb_dataset_train'
-    data = Data_ObbDataset(dataset_dir, batch_size=4)
-    train(net, data, test_areas = None)
-    print("Train is done")
+    for i in range(test_dataset.scene_num):
+        bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask \
+                = test_dataset.load_next_scene()
+
+        gap = .01 #gap = 5e-3
+        volume_num = int(1. / gap) + 2
+        volume = -1 * np.ones([volume_num, volume_num, volume_num]).astype(np.int32)
+        volume_sem = -1 * np.ones([volume_num, volume_num, volume_num]).astype(np.int32)
+
+        target = [net.y_psem_pred, net.y_bbvert_pred_raw, net.y_bbscore_pred_raw, net.y_pmask_pred_raw]
+        feed_dict = {net.X_pc: bat_pc[:, :, 0:9], net.is_train: False}
+
+        [y_psem_pred_sq_raw, y_bbvert_pred_raw, y_bbscore_pred_sq_raw, y_pmask_pred_sq_raw] = \
+            net.sess.run(target,feed_dict=feed_dict)
+
+        pc_all = []; ins_gt_all = []; sem_pred_all = []; sem_gt_all = []
+        for b in range(y_psem_pred_sq_raw.shape[0]):
+            pc = bat_pc[b].astype(np.float16)
+            sem_gt = bat_sem_gt[b].astype(np.int16)
+            ins_gt = bat_ins_gt[b].astype(np.int32)
+            sem_pred_raw = np.asarray(y_psem_pred_sq_raw[b], dtype=np.float16)
+            bbvert_pred_raw = np.asarray(y_bbvert_pred_raw[b], dtype=np.float16)
+            bbscore_pred_raw = y_bbscore_pred_sq_raw[b].astype(np.float16)
+            pmask_pred_raw = y_pmask_pred_sq_raw[b].astype(np.float16)
+            sem_pred = np.argmax(sem_pred_raw, axis=-1)
+            pmask_pred = pmask_pred_raw * np.tile(bbscore_pred_raw[:, None], [1, pmask_pred_raw.shape[-1]])
+            ins_pred = np.argmax(pmask_pred, axis=-2)
+            ins_sem_dic = Eval_Tools.get_sem_for_ins(ins_by_pts=ins_pred, sem_by_pts=sem_pred)
+            Eval_Tools.BlockMerging(volume, volume_sem, pc[:, :3], ins_pred, ins_sem_dic, gap)
+            pc_all.append(pc)
+            ins_gt_all.append(ins_gt)
+            sem_pred_all.append(sem_pred)
+            sem_gt_all.append(sem_gt)
+            #print('%d/%d' % (np.unique(ins_pred).shape[0], np.unique(bat_ins_gt).shape[0] ) )
+
+        pc_all = np.concatenate(pc_all, axis=0)
+        ins_gt_all = np.concatenate(ins_gt_all, axis=0)
+        sem_pred_all = np.concatenate(sem_pred_all, axis=0)
+        sem_gt_all = np.concatenate(sem_gt_all, axis=0)
+
+        pc_xyz_int = (pc_all[:, :3] / gap).astype(np.int32)
+        ins_pred_all = volume[tuple(pc_xyz_int.T)]
+
+        ###################
+        # pred ins
+        ins_pred_by_sem = {}
+        for sem in configs.sem_ids: ins_pred_by_sem[sem] = []
+        ins_idx, cnts = np.unique(ins_pred_all, return_counts=True)
+        for ins_id, cn in zip(ins_idx, cnts):
+            if ins_id <= -1: continue
+            tmp = (ins_pred_all == ins_id)
+            sem = scipy.stats.mode(sem_pred_all[tmp])[0][0]
+            #if cn <= 0.3*mean_insSize_by_sem[sem]: continue  # remove small instances
+            ins_pred_by_sem[sem].append(tmp)
+        # gt ins
+        ins_gt_by_sem = {}
+        for sem in configs.sem_ids: ins_gt_by_sem[sem] = []
+        ins_idx = np.unique(ins_gt_all)
+        for ins_id in ins_idx:
+            if ins_id <= -1: continue
+            tmp = (ins_gt_all == ins_id)
+            sem = scipy.stats.mode(sem_gt_all[tmp])[0][0]
+            if len(np.unique(sem_gt_all[ins_gt_all == ins_id])) != 1: print('sem ins label error'); exit()
+            ins_gt_by_sem[sem].append(tmp)
+        # to associate
+        for sem_id, sem_name in zip(configs.sem_ids, configs.sem_names):
+            ins_pred_tp = ins_pred_by_sem[sem_id]
+            ins_gt_tp = ins_gt_by_sem[sem_id]
+
+            flag_pred = np.zeros(len(ins_pred_tp), dtype=np.int8)
+            for i_p, ins_p in enumerate(ins_pred_tp):
+                iou_max = -1
+                for i_g, ins_g in enumerate(ins_gt_tp):
+                    u = ins_g | ins_p
+                    i = ins_g & ins_p
+                    iou_tp = float(np.sum(i)) / (np.sum(u) + 1e-8)
+                    if iou_tp > iou_max:
+                        iou_max = iou_tp
+                if iou_max >= min_iou:
+                    flag_pred[i_p] = 1
+            ###
+            TP_FP_Total[sem_id]['TP'] += np.sum(flag_pred)
+            TP_FP_Total[sem_id]['FP'] += len(flag_pred) - np.sum(flag_pred)
+            TP_FP_Total[sem_id]['Total'] += len(ins_gt_tp)
+    ###############
+    pre_all = []
+    rec_all = []
+    for sem_id, sem_name in zip(configs.sem_ids, configs.sem_names):
+        TP = TP_FP_Total[sem_id]['TP']
+        FP = TP_FP_Total[sem_id]['FP']
+        Total = TP_FP_Total[sem_id]['Total']
+        pre = float(TP) / (TP + FP + 1e-8)
+        rec = float(TP) / (Total + 1e-8)
+        if Total > 0:
+            pre_all.append(pre)
+            rec_all.append(rec)
+    return pre_all, rec_all
+
+def train(net, train_dataset, valid_dataset, test_dataset, configs):
+    # TODO 인식률 올라가는거 확인한다음에 graph 저장 추가
+    n_ep = 10000
+    valid_aps = []
+    test_aps = []
+    iters = []
+    niter = 0
+    fig = plt.figure('train for %s'%train_dataset.name.split('/')[0], figsize=(4,3), dpi=100)
+    net.saver.save(net.sess, save_path=net.train_mod_dir + 'model.cptk')
+    net.saver.restore(net.sess,net.train_mod_dir+'model.cptk')
+    l_min = 0.00001
+    for ep in range(0, n_ep,1):
+        # TODO 이거 너무 낮은거 아니야?..
+        l_rate = max(0.0005/(2**(ep//20)), l_min)
+        #l_rate = 0.01
+        train_dataset.shuffle_train_files(ep)
+        total_train_batch_num = train_dataset.total_train_batch_num
+        for i in range(total_train_batch_num):
+            bat_pc, _, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask = train_dataset.load_train_next_batch()
+            target = [net.optim, net.psemce_loss, net.bbvert_loss, net.bbvert_loss_l2, net.bbvert_loss_ce, net.bbvert_loss_iou,net.bbscore_loss, net.pmask_loss]
+            feed_dict = {net.X_pc:bat_pc[:, :, 0:9], net.Y_bbvert:bat_bbvert, net.Y_pmask:bat_pmask, net.Y_psem:bat_psem_onehot, net.lr:l_rate, net.is_train:True}
+
+            try:
+                _, ls_psemce, ls_bbvert_all, ls_bbvert_l2, ls_bbvert_ce, ls_bbvert_iou, ls_bbscore, ls_pmask \
+                        = net.sess.run(target, feed_dict=feed_dict)
+                #assert(i%15!=0)
+            except:
+                net.saver.restore(net.sess,net.train_mod_dir+'model.cptk')
+                l_min /= 2.
+                import pdb; pdb.set_trace()
+                continue
+            niter += 1
+
+            net.saver.save(net.sess, save_path=net.train_mod_dir+'model.cptk')
+            if i%20 == 0:
+                min_iou = .7
+                valid_dataset.shuffle_train_files(ep)
+                test_dataset.shuffle_train_files(ep)
+                pred, recall = evaluation(net, test_dataset, configs, min_iou)
+                test_aps.append(pred[0])
+
+                pred, recall = evaluation(net, valid_dataset, configs, min_iou)
+                iters.append(niter)
+                valid_aps.append(pred[0])
+
+                print("for ep %d/%d, batch %d/%d, l_rate=%.2e" % (ep, n_ep, i, total_train_batch_num,l_rate) )
+                fig.clf()
+                plt.xticks(fontsize=7)
+                plt.yticks(fontsize=7)
+                plt.plot(iters,valid_aps, 'b-', label='valid set' )
+                plt.plot(iters,test_aps, 'g-', label='train set' )
+                plt.legend(fontsize=7,loc='upper left')
+                fig.axes[0].set_xlabel('iter', fontsize=7)
+                fig.axes[0].set_ylabel('AP', fontsize=7)
+                fig.canvas.draw()
+                plt.show(block=False)
+                plt.savefig(net.train_mod_dir+'train_pred.png')
+
+                ###### saving model
+                net.saver.save(net.sess, save_path=net.train_mod_dir + 'model' + str(niter).zfill(3) + '.cptk')
 
 
-if __name__=='__main__':
-    mytrain()
 

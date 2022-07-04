@@ -34,7 +34,6 @@ class Data_Virtual(Data_ObbDataset):
         indices = []
         sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
         vnormalize = np.vectorize(xyz_normalize)
-        sem_label_box = Data_Configs.sem_ids[ Data_Configs.sem_names.index('box') ]
        
         all_pc, all_sem, all_ins = [], [], []
         for i, cx in enumerate( [0., 1.] ):

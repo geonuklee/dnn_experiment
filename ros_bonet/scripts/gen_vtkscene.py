@@ -40,8 +40,9 @@ import shutil
 import pickle
 
 from unet_ext import FindEdge, UnprojectPointscloud
-from unet.util import colors, AddEdgeNoise
+from unet.util import colors, AddEdgeNoise, GetColoredLabel
 
+box_round = .005
 
 class RBoxSource:
     def __init__(self, w, h, d):
@@ -54,7 +55,7 @@ class RBoxSource:
         self.glyph_filter.SetInputData(polydata)
 
         self.sphere_source = vtk.vtkSphereSource()
-        resol = 20
+        resol = 100
         self.sphere_source.SetThetaResolution(resol)
         self.sphere_source.SetPhiResolution(resol)
 
@@ -75,11 +76,12 @@ class RBoxSource:
         self.texturemap = vtk.vtkTextureMapToPlane()
         self.texturemap.SetInputConnection(self.hull_filter.GetOutputPort())
 
-        self.SetRoundRatio(w, h, d, 0.01)
+        self.SetRoundRatio(w, h, d, box_round)
+        #self.SetRoundRatio(w, h, d, 0.05) # Train sucess
 
 
-    def SetRoundRatio(self, w, h, d, radius):
-        r = radius/w
+    def SetRoundRatio(self, w, h, d, round_ratio):
+        r = round_ratio/w
         hw = 0.5 - r
         self.corners.SetPoint(0, hw, hw, hw)
         self.corners.SetPoint(1, -hw, hw, hw)
@@ -133,8 +135,7 @@ class RBoxSource:
 
     def CreateTexturedActor(self):
         actor = vtk.vtkActor()
-        actor.SetTexture(self.texture)
-        actor.GetProperty().SetLineWidth(20)
+        #actor.SetTexture(self.texture)
         return actor
 
 
@@ -227,133 +228,44 @@ class Scene:
         if event.key == 'q':
             self.quit = True
 
-    def GenerateSingleScene(self):
+    def GenerateSeparatedScene(self, dataset_name='vtk_dataset'):
         script_fn = osp.abspath(__file__)
         pkg_dir = str('/').join(script_fn.split('/')[:-2])
-        dataset_path = osp.join(pkg_dir, 'vtk_dataset')
+        dataset_path = osp.join(pkg_dir, dataset_name)
         verbose = True
         # TODO 1)
         if osp.exists(dataset_path):
             shutil.rmtree(dataset_path)
         makedirs(dataset_path)
+        shutil.copyfile(__file__, osp.join(dataset_path,'gen_vtkscene.py') )
 
-        #fig, _ = plt.subplots()
-        #fig.canvas.mpl_connect('key_press_event', self.OnPress)
-        n_image = 1
-        for img_idx in range(n_image):
-            print("%d/%d"%(img_idx,n_image) )
-
-            if hasattr(self, 'box_actors'):
-                for actor in self.box_actors:
-                    self.ren.RemoveActor(actor)
-            self.box_actors = []
-            self.MakeSeparatedBoxes()
-            #self.MakeAlignedStack()
-            self.renwin.Render()
-            rgb = self.GetRgb()
-            vis, mask = self.GetMask()
-            edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
-            mask[edge>0] = 0
-            org_depth = self.GetDepth()
-            org_depth[ np.sum(vis,axis=2) == 0] = 0.
-            depth = org_depth.copy()
-
-            dst_label = np.zeros((org_depth.shape[0], org_depth.shape[1],3), np.uint8)
-            dst_label[org_depth>0,2] = 255
-            dst_label[edge>0,:] = 255
-
-            minirgb  = cv2.resize(rgb, (200,200) )
-            minirgb = cv2.cvtColor(minirgb,cv2.COLOR_RGB2BGR)
-            dst = np.zeros((dst_label.shape[0],
-                            dst_label.shape[1]+minirgb.shape[1],3), np.uint8)
-            for i in range(3):
-                dst[minirgb.shape[0]:,dst_label.shape[1]:,i] = 100
-            dst[:,:dst_label.shape[1],:] = dst_label
-            dst[:minirgb.shape[0],dst_label.shape[1]:,:] = minirgb
-            K, D = self.GetIntrinsic()
-            K = K.astype(np.float32)
-            D = D.astype(np.float32)
-            width, height = self.renwin.GetSize()
-            info = {"K":K, "D":D, "width":width, "height":height}
-            box_face = np.logical_and(edge==0, mask >0)
-            box_face = box_face.astype(np.uint8)
-            retval, labels = cv2.connectedComponents(box_face)
-            # Edge noise
-            #edge = AddEdgeNoise(edge)
-            # I have no idea reason for need this. but without it, cpp receive wrong rgb.
-            bgr = cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR)
-            #cv2.imshow("bgr", bgr)
-            #cv2.waitKey()
-            rgb = cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB)
-            xyzrgb, ins_points = UnprojectPointscloud(rgb, depth, labels,
-                    K, D, 0.02, 0.01)
-            print('unique ins = ', np.unique(ins_points) )
-            pick = { 'xyzrgb':xyzrgb, 'ins_points':ins_points, 'rgb':rgb, 'K':K, 'D':D}
-
-            # TODO 2)
-            fn = osp.join(dataset_path, "%d.pick"%img_idx)
-            with open(fn, 'wb') as f:
-                pickle.dump(pick, f, protocol=2)
-
-        return
-
-    def GenerateMultipleScene(self,verbose):
-        script_fn = osp.abspath(__file__)
-        pkg_dir = str('/').join(script_fn.split('/')[:-2])
-        dataset_path = osp.join(pkg_dir, 'vtk_dataset')
-
-        usages = ['train', 'valid']
-        numbers = [200, 20]
-        if not verbose:
-            if osp.exists(dataset_path):
-                shutil.rmtree(dataset_path)
-            makedirs(dataset_path)
-            makedirs(osp.join(dataset_path, 'src') )
-            for usage in usages:
-                usagepath = osp.join(dataset_path,'src',usage)
-                if not osp.exists(usagepath):
-                    makedirs(usagepath)
-
-        if verbose:
-            fig, _  = plt.subplots()
-            fig.canvas.mpl_connect('key_press_event', self.OnPress)
-        self.quit = False
-        for k, usage in enumerate(usages):
-            for img_idx in range(numbers[k]):
-                if self.quit:
-                    break
-                print("%d/%d"%(img_idx, numbers[k]) )
-
+        usages = [('train',200), ('test',10)]
+        for usage,n_image in usages:
+            usage_path = osp.join(dataset_path, usage)
+            makedirs(usage_path)
+            #n_image = 10
+            for img_idx in range(n_image):
+                print("%d/%d"%(img_idx,n_image) )
                 if hasattr(self, 'box_actors'):
                     for actor in self.box_actors:
                         self.ren.RemoveActor(actor)
                 self.box_actors = []
-
-                if img_idx < 0.1*numbers[k]:
-                    self.MakeAlignedStack()
-                else:
-                    self.MakeRandomStack()
-
+                self.MakeSeparatedBoxes()
+                self.ren.ResetCameraClippingRange()
                 self.renwin.Render()
-
                 rgb = self.GetRgb()
                 vis, mask = self.GetMask()
                 edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
                 mask[edge>0] = 0
-
                 org_depth = self.GetDepth()
                 org_depth[ np.sum(vis,axis=2) == 0] = 0.
-
-                depth = org_depth.copy()
-                dist = cv2.distanceTransform( (edge<1).astype(np.uint8)*255, cv2.DIST_L2,5)
-
-                # Detph noise
-                noise = np.random.normal(0.,0.0002,depth.shape)
-                depth[depth>0] += noise[depth>0]
+                #depth = org_depth.copy()
+                depth = org_depth + np.random.normal(0,.001,org_depth.size).reshape(org_depth.shape).astype(org_depth.dtype)
+                depth[org_depth==0] = 0.
 
                 dst_label = np.zeros((org_depth.shape[0], org_depth.shape[1],3), np.uint8)
                 dst_label[org_depth>0,2] = 255
-                dst_label[edge>0,:] = 255
+                #dst_label[edge>0,:] = 255
 
                 minirgb  = cv2.resize(rgb, (200,200) )
                 minirgb = cv2.cvtColor(minirgb,cv2.COLOR_RGB2BGR)
@@ -363,99 +275,67 @@ class Scene:
                     dst[minirgb.shape[0]:,dst_label.shape[1]:,i] = 100
                 dst[:,:dst_label.shape[1],:] = dst_label
                 dst[:minirgb.shape[0],dst_label.shape[1]:,:] = minirgb
-
                 K, D = self.GetIntrinsic()
                 K = K.astype(np.float32)
                 D = D.astype(np.float32)
-
                 width, height = self.renwin.GetSize()
                 info = {"K":K, "D":D, "width":width, "height":height}
 
-                box_face = np.logical_and(edge==0, mask >0)
-                box_face = box_face.astype(np.uint8)
-                retval, labels = cv2.connectedComponents(box_face)
-
-                # Edge noise
-                noised_edge = AddEdgeNoise(edge)
+                #box_face = np.logical_and(edge==0, mask >0)
+                #box_face = box_face.astype(np.uint8)
+                #retval, labels = cv2.connectedComponents(box_face)
+                dist, labels = cv2.distanceTransformWithLabels( (mask==0).astype(np.uint8),
+                        distanceType=cv2.DIST_L2, maskSize=5)
+                labels[dist > 7.] = 0
 
                 # I have no idea reason for need this. but without it, cpp receive wrong rgb.
                 bgr = cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR)
+                cv2.imshow("bgr", bgr)
+                if cv2.waitKey(1) == ord('q'):
+                    exit(1)
                 rgb = cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB)
                 xyzrgb, ins_points = UnprojectPointscloud(rgb, depth, labels,
-                        K, D, 0.04, 0.01)
-                sem_points = np.ones_like(ins_points)
-                sem_points[ins_points==0] = 0
-                
-                xyz_rgb_i_s = { 'xyzrgb':xyzrgb, 'ins_points':ins_points, 'sem_points':sem_points }
+                        K, D, 0.02, 0.01)
+                #print('unique ins = ', np.unique(ins_points) )
+                pick = { 'xyzrgb':xyzrgb, 'ins_points':ins_points, 'rgb':rgb, 'K':K, 'D':D}
 
-                fn_form = osp.join(dataset_path, 'src', usage,"%d_%s.%s")
-                if not verbose:
-                    np.save(fn_form%(img_idx,"depth","npy"),depth)
-                    np.save(fn_form%(img_idx,"rgb","npy"),cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR))
-                    cv2.imwrite(fn_form%(img_idx,"gt","png"), dst)
-                    cv2.imwrite(fn_form%(img_idx,"edgedetection","png"), 255*noised_edge)
-                    # https://stackoverflow.com/questions/18071075/saving-dictionaries-to-file-numpy-and-python-2-3-friendly
-                    dd.io.save(fn_form%(img_idx,"caminfo","h5"), info, compression=('blosc', 9))
-                    dd.io.save(fn_form%(img_idx,"pointscloud","h5"), xyz_rgb_i_s, compression=('blosc', 9))
-                    continue
+                fn = osp.join(usage_path, "%d.pick"%img_idx)
+                with open(fn, 'wb') as f:
+                    pickle.dump(pick, f, protocol=2)
 
-                cv2.imshow("dst", dst)
-                r = cv2.normalize(dist,None,255,0,cv2.NORM_MINMAX,cv2.CV_8UC1)
-                cv2.imshow("dist", r)
-
-                r = cv2.normalize(depth,None,255,0,cv2.NORM_MINMAX,cv2.CV_8UC1)
-                cv2.imshow("depth", r)
-
-                cv2.imshow("edge", 255*noised_edge)
-
-                plt.subplot(221).title.set_text('depth map')
-                plt.imshow(depth)
-
-                plt.subplot(222).title.set_text('org image')
-                plt.imshow(rgb)
-
-                plt.subplot(223).title.set_text('vis mask')
-                plt.imshow(vis)
-
-                ax = plt.subplot(224, projection="3d")
-                ax.title.set_text('xyzrgb')
-                ax.scatter(xyzrgb[:,0], xyzrgb[:,1], xyzrgb[:,2],
-                    edgecolor=None, c=xyzrgb[:,3:], cmap="RGB", linewidth=0, s=5)
-                ax.axis("equal")
-
-                plt.suptitle('Move cursor on iamge and see value')
-                #plt.draw()
-                #plt.waitforbuttonpress(timeout=0.01)
-                c=cv2.waitKey(1)
-                plt.show(block=True)
-                self.quit=c==ord('q')
+        return
 
     def MakeSeparatedBoxes(self):
-        nr, nc = 1,4
+        nr, nc = np.random.randint(low=2,high=7,size=2)
         camera = self.ren.GetActiveCamera()
         camera.SetViewAngle( 40. );
-        dx = np.random.uniform(-0.3,0.3)
-        camera.SetViewUp(dx,-1.,0.);
-        w = .25
-        h = .23
-        d= .4
-        z = 8. # np.random.uniform(2.,6.)
-        margin = 0. # To remove gap.
-        camera.SetFocalPoint(0.5*nc*w,0.5*nr*h,z)
-        cx = 0.5*nc*w + np.random.uniform(-0.1,0.1)
-        cy = 0.5*nr*h + np.random.uniform(-0.1,0.1)
-        camera.SetPosition(cx, cy, 0.)
+        camera.SetViewUp(0.,-1.,0.);
+        w = np.random.uniform(.2,.8)
+        h = np.random.uniform(.2,.8)
+        #dx = np.random.uniform(-.2,.2)
+        #dy = np.random.uniform(-.2,.2)
+        dx, dy = .05, .05
+        d= .1
+        #z = 3. # np.random.uniform(2.,6.)
+        z = np.random.uniform(2.,6.)
+        margin = 0.05*box_round
+        cx = 0.5*nc*w #+ np.random.uniform(-0.5,0.5)
+        cy = 0.5*nr*h #+ np.random.uniform(-0.5,0.5)
+        camera.SetPosition(0,0,0.)
+        camera.SetFocalPoint(0,0,z+1.)
+        #camera.SetClippingRange(0.1, 99.)
         rbox_source = RBoxSource(w+margin,h+margin, d)
         box_mapper = vtk.vtkPolyDataMapper()
         box_mapper.SetInputConnection(rbox_source.GetOutputPort())
         for r in range(nr):
-            y = 5. * h * float(r)
+            y = (h + dy )* float(r) - cy
             for c in range(nc):
-                #x = 4.5 * w * float(c)
-                x = 5. * w * float(c)
+                x = (w + dx) * float(c) - cx
                 actor = rbox_source.CreateTexturedActor()
                 actor.SetMapper(box_mapper)
                 actor.SetPosition(x, y, z)
+                actor.SetScale(w,h,d)
+                actor.Modified()
                 self.ren.AddActor(actor)
                 self.box_actors.append(actor)
 
@@ -494,7 +374,6 @@ class Scene:
     def MakeRandomStack(self):
         camera = self.ren.GetActiveCamera()
         camera.SetViewAngle( 40. );
-
         camera.SetViewUp(0.,-1.,0.);
 
         nr, nc = 10, 20
@@ -535,8 +414,9 @@ class Scene:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument( "--verbose", "-v", action="count", help="verbose")
+    parser.add_argument('dataset_name', type=str, nargs='?', help='The name of output dataset')
     args = parser.parse_args()
+    if args.dataset_name==None:
+        args.dataset_name = 'vtk_dataset'
     scene = Scene()
-    #scene.GenerateMultipleScene(args.verbose)
-    scene.GenerateSingleScene()
+    scene.GenerateSeparatedScene(args.dataset_name)
