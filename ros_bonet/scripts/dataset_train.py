@@ -261,6 +261,7 @@ class Data_ObbDataset:
             fn_frame = osp.join(self.cache_dir, '%d.pick'% frame_idx)
             with open(fn_frame,'rb') as f_frame:
                 pick = pickle.load(f_frame)
+            self.rgb = pick['rgb']
             self.blocks = pick['blocks']
             self.frame_idx = frame_idx
         #print("file, ch/n(ch) = %d, %d/%d" % (frame_idx, ch_idx, self.blocks[0].shape[0]) )
@@ -268,13 +269,13 @@ class Data_ObbDataset:
         pc_xyzrgb = self.blocks[0][ch_idx,:,:]
         sems   = self.blocks[1][ch_idx,:]
         ins    = self.blocks[2][ch_idx,:]
-        return pc_xyzrgb, sems, ins
+        return self.rgb, pc_xyzrgb, sems, ins
 
     def load_fixed_points(self):
         ret = self.load_raw_data()
         if ret is None:
             return None
-        pc_xyzrgb, sem_labels, ins_labels = ret
+        rgb, pc_xyzrgb, sem_labels, ins_labels = ret
         if (pc_xyzrgb[:,2]==0.).any():
             import pdb; pdb.set_trace()
 
@@ -306,7 +307,7 @@ class Data_ObbDataset:
             print("!!!!!! Nan in array")
             import pdb; pdb.set_trace()
 
-        return pc_xyzrgb, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels
+        return pc_xyzrgb, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels, rgb
 
     def load_next_scene(self):
         bat_pc=[]
@@ -325,7 +326,8 @@ class Data_ObbDataset:
             ret = self.load_fixed_points()
             if ret is None:
                 break
-            pc, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels \
+            pc, sem_labels, ins_labels, psem_onehot_labels, \
+                    bbvert_padded_labels, pmask_padded_labels, rgb \
                     = ret
             bat_pc.append(pc)
             bat_sem_labels.append(sem_labels)
@@ -340,7 +342,7 @@ class Data_ObbDataset:
         bat_bbvert_padded_labels = np.asarray(bat_bbvert_padded_labels, dtype=np.float32)
         bat_pmask_padded_labels = np.asarray(bat_pmask_padded_labels, dtype=np.float32)
         self.next_scene_index += 1
-        return bat_pc, bat_sem_labels, bat_ins_labels, bat_psem_onehot_labels, bat_bbvert_padded_labels, bat_pmask_padded_labels
+        return bat_pc, bat_sem_labels, bat_ins_labels, bat_psem_onehot_labels, bat_bbvert_padded_labels, bat_pmask_padded_labels, rgb
 
     def load_train_next_batch(self):
         bat_pc=[]
@@ -355,7 +357,8 @@ class Data_ObbDataset:
             ret = self.load_fixed_points()
             if ret is None:
                 break
-            pc, sem_labels, ins_labels, psem_onehot_labels, bbvert_padded_labels, pmask_padded_labels = ret
+            pc, sem_labels, ins_labels, psem_onehot_labels, \
+                    bbvert_padded_labels, pmask_padded_labels, _ = ret
             bat_pc.append(pc)
             bat_sem_labels.append(sem_labels)
             bat_ins_labels.append(ins_labels)
@@ -387,7 +390,7 @@ def evaluation(net, test_dataset, configs, min_iou=.5):
         TP_FP_Total[sem_id]['Total'] = 0
 
     for i in range(test_dataset.scene_num):
-        bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask \
+        bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask, _ \
                 = test_dataset.load_next_scene()
 
         gap = .01 #gap = 5e-3
@@ -498,7 +501,6 @@ def train(net, train_dataset, valid_dataset, test_dataset, configs):
     for ep in range(0, n_ep,1):
         # TODO 이거 너무 낮은거 아니야?..
         l_rate = max(0.0005/(2**(ep//20)), l_min)
-        #l_rate = 0.01
         train_dataset.shuffle_train_files(ep)
         total_train_batch_num = train_dataset.total_train_batch_num
         for i in range(total_train_batch_num):

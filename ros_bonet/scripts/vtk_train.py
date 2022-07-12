@@ -97,6 +97,7 @@ if __name__=='__main__':
     net = BoNet(configs = configs)
     net.creat_folders(name=log_name, re_train=False)
     shutil.copyfile(__file__, osp.join(log_name,'vtk_train.py') )
+    shutil.copyfile(osp.join(pkg_dir, 'scripts','dataset_train.py'), osp.join(log_name,'dataset_train.py') )
     shutil.copyfile(args.dataset_name+'/gen_vtkscene.py', osp.join(log_name,'gen_vtkscene.py') )
     net.build_graph()
     train(net, train_dataset, valid_dataset, test_dataaset, configs)

@@ -9,7 +9,7 @@ import shutil
 from os import makedirs
 import argparse
 
-def restore_net(configs):
+def restore_net(model_path, configs):
     #from bonet import BoNet, Plot, Eval_Tools, train
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = '0'  ## specify the GPU to use
@@ -25,7 +25,6 @@ def restore_net(configs):
     with tf.variable_scope('pmask'):
         net.y_pmask_pred_raw = net.pmask_net(net.point_features, net.global_features, net.y_bbvert_pred_raw, net.y_bbscore_pred_raw)
 
-    model_path = 'log/train_mod/model.cptk'
     fn = model_path + '.data-00000-of-00001'
     if not os.path.isfile(fn):
         print ('please train the model! Can\'t find %s'%fn )
@@ -92,8 +91,10 @@ if __name__ == '__main__':
     if args.dataset_name==None:
         args.dataset_name = 'vtk_dataset'
 
+    model_path = 'log-%s/train_mod/model.cptk'%args.dataset_name
     configs = Data_Configs()
-    net = restore_net(configs)
+    net = restore_net(model_path, configs)
+
     data = Data_VtkDataset(args.dataset_name+'/test', batch_size=1)
     pred, recall = evaluation(net, data, configs, min_iou=.5)
     print("pred = ", pred)
@@ -105,7 +106,8 @@ if __name__ == '__main__':
     makedirs(bonet_output_dir)
 
     for i in range(data.scene_num):
-        bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask = data.load_next_scene()
+        bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask, rgb \
+                = data.load_next_scene()
         # pc_all.shape = N,12 , ins_gt_all.shape = N,
         pc_all = []; ins_gt_all = []; sem_pred_all = []; sem_gt_all = []
         gap = .01 #gap = 5e-3
@@ -156,17 +158,17 @@ if __name__ == '__main__':
         #continue
 
         sub_rows, sub_cols = 3, bat_pc.shape[0]
-        fig = plt.figure(1, figsize=(15,3), dpi=100)
+        fig = plt.figure(1, figsize=(8,7), dpi=100)
         fig.clf()
-        ax = fig.add_subplot(1,3,1, projection='3d')
-        ax.scatter(pc_all[:,-3],pc_all[:, -2],pc_all[:, -1], c=pc_all[:,3:6], s=2, linewidths=0)
+        ax = fig.add_subplot(2,2,1, projection='3d')
+        ax.scatter(pc_all[:,-3],pc_all[:, -2],pc_all[:, -1], c=pc_all[:,3:6], s=4, linewidths=0)
         #ax.axis('off')
         ax.view_init(elev=-90., azim=-90)
         ax.set_zticks([])
         plt.axis('equal')
 
         colors = get_colors(ins_gt_all)
-        ax = fig.add_subplot(1,3,2, projection='3d')
+        ax = fig.add_subplot(2,2,2, projection='3d')
         ax.scatter(pc_all[:,-3],pc_all[:,-2],pc_all[:,-1], c=colors, s=2, linewidths=0)
         ax.view_init(elev=-90., azim=-90)
         ax.axis('off')
@@ -185,7 +187,7 @@ if __name__ == '__main__':
             bb_err = np.abs( pred_bb - gt_bb ).max()
 
         colors = get_colors(ins_pred_all)
-        ax = fig.add_subplot(1,3,3, projection='3d')
+        ax = fig.add_subplot(2,2,3, projection='3d')
         ax.scatter(pc_all[:,0],pc_all[:,1],pc_all[:,2], c=colors, s=2, linewidths=0)
         for i, ins in enumerate( np.unique(ins_pred) ):
             edges = bbvert2edges( bbvert_pred_raw[ins] )
@@ -201,6 +203,12 @@ if __name__ == '__main__':
 
         ax.view_init(elev=-90., azim=-90)
         ax.axis('off')
+        plt.axis('equal')
+
+        ax = fig.add_subplot(2,2,4)
+        ax.imshow(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB), extent = [0,1,0,1],
+                aspect=float(rgb.shape[0])/float(rgb.shape[1]) )
+        plt.axis('off')
         plt.axis('equal')
 
 
