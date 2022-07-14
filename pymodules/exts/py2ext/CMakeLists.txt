@@ -3,8 +3,10 @@ project(py2ext)
 set(CMAKE_CXX_STANDARD 14)
 
 find_package(OpenCV 3 REQUIRED )
-find_package(PCL 1 REQUIRED COMPONENTS common filters search)
-find_package(PCL 1 REQUIRED COMPONENTS sample_consensus segmentation) # It cause error for python3, but it works for python2. ???
+find_package(PCL 1 QUIET REQUIRED COMPONENTS common filters search sample_consensus)
+
+# Below Depends on pcl::segmentation > pcl::io > vtk > python2 which cause import failure at python3
+find_package(PCL 1 QUIET REQUIRED COMPONENTS segmentation)
 
 set(PYBIND11_PYTHON_VERSION 2.7)
 add_subdirectory(../pybind11 pybind11_2)
