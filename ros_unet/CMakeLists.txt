@@ -43,12 +43,35 @@ include_directories(
   ${G2O_INCLUDE_DIR}
 )
 
-add_executable(obb_server
-  src/obb_server.cpp
+# Above Depends on pcl::segmentation > pcl::io > vtk > python2 which cause import failure at python3
+# To exclude libpython2.7, use hard coded library path. (I can't remove the libpython2.7 from the string with CMake)
+set(PCL_LIBRARIES
+  /usr/lib/x86_64-linux-gnu/libpcl_surface.so.1.8
+  /usr/lib/x86_64-linux-gnu/libpcl_common.so.1.8
+  /usr/lib/x86_64-linux-gnu/libpcl_filters.so.1.8
+  /usr/lib/x86_64-linux-gnu/libpcl_segmentation.so.1.8
+  /usr/lib/x86_64-linux-gnu/libpcl_sample_consensus.so.1.8
+  /usr/lib/x86_64-linux-gnu/libpcl_search.so.1.8
+  /usr/lib/x86_64-linux-gnu/libpcl_kdtree.so.1.8
+  /usr/lib/x86_64-linux-gnu/libpcl_octree.so.1.8
+  /usr/lib/x86_64-linux-gnu/libpcl_ml.so.1.8
+  /usr/lib/x86_64-linux-gnu/libpcl_features.so.1.8
+  /lib/x86_64-linux-gnu/libutil.so.1
+)
+
+add_library(unetsegment SHARED
   src/segment2d.cpp
+  src/utils.cpp
+)
+target_link_libraries(unetsegment ${OpenCV_LIBS} ${PCL_LIBRARIES})
+
+add_executable(obb_server
+  src/mask2obb.cpp
+  src/obb_server.cpp
   src/ros_util.cpp
-  src/mask2obb.cpp)
-target_link_libraries(obb_server ${catkin_LIBRARIES} ${OpenCV_LIBS})
+)
+
+target_link_libraries(obb_server unetsegment ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
 add_executable(floor_detector src/floor_detector.cpp)
 target_link_libraries(floor_detector ${catkin_LIBRARIES} ${OpenCV_LIBS})

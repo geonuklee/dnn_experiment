@@ -8,6 +8,9 @@
 #include <g2o/types/slam3d/se3quat.h>
 #include <string>
 #include <ros/ros.h>
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/CameraInfo.h>
+
 #include <visualization_msgs/MarkerArray.h>
 #include <pcl/features/moment_of_inertia_estimation.h>
 #include <pcl/point_types.h>
@@ -180,6 +183,19 @@ private:
   geometry_msgs::PoseArray pose0_array_;
   geometry_msgs::PoseArray pose_array_;
   visualization_msgs::MarkerArray obb_current_, obb_old_;
+};
+
+struct MarkerCamera{
+  MarkerCamera() { }
+  MarkerCamera(const cv::Mat& K,
+               const cv::Mat& D,
+               const cv::Size& image_size);
+
+  sensor_msgs::CameraInfo AsCameraInfo() const;
+
+  cv::Mat K_;
+  cv::Mat D_;
+  cv::Size image_size_;
 };
 
 

@@ -69,26 +69,6 @@ public:
     return true;
   }
 
-  cv::Mat ExpandOutline(const cv::Mat depth, const cv::Mat outline, float fx, float fy) const {
-    const float radius = 0.02; // exapnd range [meter]
-    const float f_radius = std::max(fx,fy) * radius;
-    cv::Mat expanded_outline = cv::Mat::zeros(depth.rows, depth.cols, CV_8UC1);
-    cv::Mat dist_transform;
-    cv::distanceTransform(~outline, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
-    //std::cout << "input outline shape = " << outline.rows << "," << outline.cols << std::endl;
-    for(int r = 0; r < depth.rows; r++){
-      for(int c = 0; c < depth.cols; c++){
-        const float& d = depth.at<float>(r,c);
-        if(d == 0)
-          continue;
-        int dr = f_radius/d;
-        if( dist_transform.at<float>(r,c) < dr )
-          expanded_outline.at<unsigned char>(r,c) = 1;
-      }
-    }
-    return expanded_outline;
-  }
-
   bool ComputeObb(ros_unet::ComputeObb::Request  &req,
                   ros_unet::ComputeObb::Response &res)
   {

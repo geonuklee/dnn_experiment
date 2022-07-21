@@ -1,6 +1,8 @@
+#ifndef ROS_UTILS_H_
+#define ROS_UTILS_H_
 #include <ros/ros.h>
-#include <opencv2/opencv.hpp>
-#include <eigen3/Eigen/Dense>
+
+#include "utils.h"
 
 //the following are UBUNTU/LINUX, and MacOS ONLY terminal color codes.
 const std::string RESET = "\033[0m";
@@ -90,16 +92,4 @@ Eigen::Matrix<T, r, c> GetRequiredMatrix(const ros::NodeHandle &nh, std::string 
   return mat;
 }
 
-
-template <typename K, typename T>
-using EigenMap = std::map<K, T, std::less<K>, Eigen::aligned_allocator<std::pair<const K, T> > >;
-
-template <typename T>
-using EigenVector = std::vector<T, Eigen::aligned_allocator<T> >;
-extern std::vector<cv::Scalar> colors;
-
-cv::Mat GetColoredLabel(cv::Mat mask);
-cv::Mat Overlap(cv::Mat bg, cv::Mat mask);
-
-uint64_t GetMilliSec();
-
+#endif

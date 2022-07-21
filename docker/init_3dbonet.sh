@@ -9,7 +9,7 @@ sudo make -j8 && sudo make install
 cd ~/thirdparty/opencv
 sudo rm -rf build4docker; sudo mkdir build4docker
 cd build4docker
-sudo cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF ..
+sudo cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF -DWITH_CUDA=OFF ..
 sudo make -j8 && sudo make install
 
 cd ~/pymodules/exts/

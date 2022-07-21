@@ -2,6 +2,7 @@
 #-*- coding:utf-8 -*-
 
 from dataset_train import *
+from bonet_dataset.dataset import Data_ObbDataset, Data_Configs
 import tensorflow as tf
 from bonet import BoNet, Plot, Eval_Tools, train
 import matplotlib.pyplot as plt
@@ -106,8 +107,9 @@ if __name__ == '__main__':
     makedirs(bonet_output_dir)
 
     for i in range(data.scene_num):
-        bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask, rgb \
+        bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask, pick \
                 = data.load_next_scene()
+        rgb = pick['rgb']
         # pc_all.shape = N,12 , ins_gt_all.shape = N,
         pc_all = []; ins_gt_all = []; sem_pred_all = []; sem_gt_all = []
         gap = .01 #gap = 5e-3

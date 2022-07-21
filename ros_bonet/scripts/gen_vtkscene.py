@@ -40,12 +40,10 @@ import shutil
 import pickle
 
 from unet_ext import FindEdge, UnprojectPointscloud
-from unet.util import colors, AddEdgeNoise, GetColoredLabel
-
-box_round = .005
+from unet.util import colors, AddEdgeNoise, GetColoredLabel, GetNormalizedDepth, remove_small_instance
 
 class RBoxSource:
-    def __init__(self, w, h, d):
+    def __init__(self, w, h, d, edge_round):
         self.corners = vtk.vtkPoints()
         self.corners.SetNumberOfPoints(8)
         polydata = vtk.vtkPolyData()
@@ -76,22 +74,34 @@ class RBoxSource:
         self.texturemap = vtk.vtkTextureMapToPlane()
         self.texturemap.SetInputConnection(self.hull_filter.GetOutputPort())
 
-        self.SetRoundRatio(w, h, d, box_round)
-        #self.SetRoundRatio(w, h, d, 0.05) # Train sucess
+        self.SetEdgeRound(w, h, d, edge_round)
 
 
-    def SetRoundRatio(self, w, h, d, round_ratio):
-        r = round_ratio/w
-        hw = 0.5 - r
-        self.corners.SetPoint(0, hw, hw, hw)
-        self.corners.SetPoint(1, -hw, hw, hw)
-        self.corners.SetPoint(2, -hw, -hw, hw)
-        self.corners.SetPoint(3, hw, -hw, hw)
-        self.corners.SetPoint(4, hw, hw, -hw)
-        self.corners.SetPoint(5, -hw, hw, -hw)
-        self.corners.SetPoint(6, -hw, -hw, -hw)
-        self.corners.SetPoint(7, hw, -hw, -hw)
-        self.sphere_source.SetRadius(r)
+    def SetEdgeRound(self, w, h, d, edge_round):
+        # TODO computing
+        #r = edge_round / min(w,h)
+        #hw = 0.5 - r
+        #self.corners.SetPoint(0, hw, hw, hw)
+        #self.corners.SetPoint(1, -hw, hw, hw)
+        #self.corners.SetPoint(2, -hw, -hw, hw)
+        #self.corners.SetPoint(3, hw, -hw, hw)
+        #self.corners.SetPoint(4, hw, hw, -hw)
+        #self.corners.SetPoint(5, -hw, hw, -hw)
+        #self.corners.SetPoint(6, -hw, -hw, -hw)
+        #self.corners.SetPoint(7, hw, -hw, -hw)
+        #self.sphere_source.SetRadius(r)
+        hw = w/2.-edge_round
+        hh = h/2.-edge_round
+        hd = d/2.-edge_round
+        self.corners.SetPoint(0,  hw,  hh,  hd)
+        self.corners.SetPoint(1, -hw,  hh,  hd)
+        self.corners.SetPoint(2, -hw, -hh,  hd)
+        self.corners.SetPoint(3,  hw, -hh,  hd)
+        self.corners.SetPoint(4,  hw,  hh, -hd)
+        self.corners.SetPoint(5, -hw,  hh, -hd)
+        self.corners.SetPoint(6, -hw, -hh, -hd)
+        self.corners.SetPoint(7,  hw, -hh, -hd)
+        self.sphere_source.SetRadius(edge_round)
 
         self.texturemap.Modified()
         self.texturemap.Update()
@@ -128,7 +138,6 @@ class RBoxSource:
                 uv = np.delete(delta, max_axis) + np.array((0.5,0.5))
                 vtk_id = id_lists[j]
                 tcoords.SetTuple(vtk_id, uv.tolist())
-        #self.poly_data = poly_data
 
     def GetOutputPort(self):
         return self.texturemap.GetOutputPort()
@@ -146,6 +155,7 @@ class Scene:
         self.renwin = vtk.vtkRenderWindow()
         self.renwin.AddRenderer(self.ren)
         self.renwin.SetSize(1280, 960)
+        #self.renwin.SetSize(640, 480)
         self.iren = vtk.vtkRenderWindowInteractor()
         self.iren.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
         self.iren.SetRenderWindow(self.renwin)
@@ -187,6 +197,8 @@ class Scene:
         return np.asarray(depth)
 
     def GetRgb(self):
+        #for i, actor in enumerate(self.box_actors):
+        #    actor.GetProperty().LightingOff()
         vtk_win_im = vtk.vtkWindowToImageFilter()
         vtk_win_im.SetInput(self.renwin)
         vtk_win_im.Update()
@@ -204,7 +216,7 @@ class Scene:
                 if target == 'vis':
                     color = [c/255. for c in colors[i%len(colors)]]
                 else:
-                    color = [float(i+1)/255.,0,0]
+                    color = [float(2*i+1)/255.,0,0]
                 actor.GetProperty().SetColor(color)
                 actor.GetProperty().LightingOff()
                 actor.SetTexture(None)
@@ -239,12 +251,15 @@ class Scene:
         makedirs(dataset_path)
         shutil.copyfile(__file__, osp.join(dataset_path,'gen_vtkscene.py') )
 
-        usages = [('train',200), ('test',10)]
+        usages = [('train',50), ('test',10)]
         for usage,n_image in usages:
             usage_path = osp.join(dataset_path, usage)
             makedirs(usage_path)
+            vis_path = osp.join(usage_path, 'vis')
+            makedirs(vis_path)
             #n_image = 10
-            for img_idx in range(n_image):
+            img_idx = 0
+            while img_idx < n_image:
                 print("%d/%d"%(img_idx,n_image) )
                 if hasattr(self, 'box_actors'):
                     for actor in self.box_actors:
@@ -257,11 +272,21 @@ class Scene:
                 vis, mask = self.GetMask()
                 edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
                 mask[edge>0] = 0
+                mask, _ = remove_small_instance(mask, min_width=100)
+                if mask.max() < 3:
+                    continue
+                # TODO Check
+                rgb[np.logical_and(mask==0, edge==0),:] = 0.
+
                 org_depth = self.GetDepth()
-                org_depth[ np.sum(vis,axis=2) == 0] = 0.
+                #org_depth[ np.sum(vis,axis=2) == 0] = 0.
                 #depth = org_depth.copy()
+
+                # Depth noise
                 depth = org_depth + np.random.normal(0,.001,org_depth.size).reshape(org_depth.shape).astype(org_depth.dtype)
+                #depth = org_depth.copy()
                 depth[org_depth==0] = 0.
+                depth[np.logical_and(mask==0, edge==0)] = 0.
 
                 dst_label = np.zeros((org_depth.shape[0], org_depth.shape[1],3), np.uint8)
                 dst_label[org_depth>0,2] = 255
@@ -286,22 +311,36 @@ class Scene:
                 #retval, labels = cv2.connectedComponents(box_face)
                 dist, labels = cv2.distanceTransformWithLabels( (mask==0).astype(np.uint8),
                         distanceType=cv2.DIST_L2, maskSize=5)
-                labels[dist > 7.] = 0
+                mask[dist > 7.] = 0
+                depth[dist > 7.] = 0
+                rgb[dist > 7.,:] = 0
 
                 # I have no idea reason for need this. but without it, cpp receive wrong rgb.
                 bgr = cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR)
-                cv2.imshow("bgr", bgr)
+                cv2.imshow("mask",   GetColoredLabel(mask) )
+                cv2.imshow("labels", GetColoredLabel(labels) )
+                cv2.imshow("bgr",    bgr)
+                cv2.imshow("depth", (depth>0).astype(np.uint8)*255 )
                 if cv2.waitKey(1) == ord('q'):
                     exit(1)
+
+                cv2.imwrite(osp.join(vis_path,'%04d_bgr.png'%img_idx), bgr)
+                cv2.imwrite(osp.join(vis_path,'%04d_markers.png'%img_idx), GetColoredLabel(mask) )
+
                 rgb = cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB)
                 xyzrgb, ins_points = UnprojectPointscloud(rgb, depth, labels,
                         K, D, 0.02, 0.01)
                 #print('unique ins = ', np.unique(ins_points) )
-                pick = { 'xyzrgb':xyzrgb, 'ins_points':ins_points, 'rgb':rgb, 'K':K, 'D':D}
+                # TODO "edges", "markers"
+                pick = { 'xyzrgb':xyzrgb, 'ins_points':ins_points,
+                        'rgb':rgb, 'depth':depth,
+                        'edge':edge, 'mask':mask,
+                        'K':K, 'newK':K, 'D':D}
 
                 fn = osp.join(usage_path, "%d.pick"%img_idx)
                 with open(fn, 'wb') as f:
                     pickle.dump(pick, f, protocol=2)
+                img_idx += 1
 
         return
 
@@ -310,21 +349,21 @@ class Scene:
         camera = self.ren.GetActiveCamera()
         camera.SetViewAngle( 40. );
         camera.SetViewUp(0.,-1.,0.);
-        w = np.random.uniform(.2,.8)
-        h = np.random.uniform(.2,.8)
-        #dx = np.random.uniform(-.2,.2)
-        #dy = np.random.uniform(-.2,.2)
-        dx, dy = .05, .05
-        d= .1
+        w = np.random.uniform(.5, 1.5)
+        h = np.random.uniform(.5, 1.5)
+        d= .2
+        dx, dy = 0.05 , 0.05
+        #dx, dy = 0. , 0.
         #z = 3. # np.random.uniform(2.,6.)
-        z = np.random.uniform(2.,6.)
-        margin = 0.05*box_round
+        z = np.random.uniform(2., 4.)
+        edge_round = .02
+        margin = 0.01*edge_round
         cx = 0.5*nc*w #+ np.random.uniform(-0.5,0.5)
         cy = 0.5*nr*h #+ np.random.uniform(-0.5,0.5)
         camera.SetPosition(0,0,0.)
         camera.SetFocalPoint(0,0,z+1.)
         #camera.SetClippingRange(0.1, 99.)
-        rbox_source = RBoxSource(w+margin,h+margin, d)
+        rbox_source = RBoxSource(w+margin,h+margin, d, edge_round)
         box_mapper = vtk.vtkPolyDataMapper()
         box_mapper.SetInputConnection(rbox_source.GetOutputPort())
         for r in range(nr):
@@ -334,83 +373,10 @@ class Scene:
                 actor = rbox_source.CreateTexturedActor()
                 actor.SetMapper(box_mapper)
                 actor.SetPosition(x, y, z)
-                actor.SetScale(w,h,d)
+                #actor.SetScale(w,h,d)
                 actor.Modified()
                 self.ren.AddActor(actor)
                 self.box_actors.append(actor)
-
-    def MakeAlignedStack(self):
-        camera = self.ren.GetActiveCamera()
-        camera.SetViewAngle( 40. );
-        dx = np.random.uniform(-0.3,0.3)
-        camera.SetViewUp(dx,-1.,0.);
-
-        nr, nc = 10,20
-        w = np.random.uniform(0.3,0.8)
-        h = np.random.uniform(0.5,2.)*w
-        d=1.
-        z = np.random.uniform(2.,6.)
-        margin = 0. # To remove gap.
-
-        camera.SetFocalPoint(0.5*nc*w,0.5*nr*h,z)
-        cx = 0.5*nc*w + np.random.uniform(-0.1,0.1)
-        cy = 0.5*nr*h + np.random.uniform(-0.1,0.1)
-        camera.SetPosition(cx, cy, 0.)
-
-        rbox_source = RBoxSource(w+margin,h+margin, d)
-        box_mapper = vtk.vtkPolyDataMapper()
-        box_mapper.SetInputConnection(rbox_source.GetOutputPort())
-
-        for r in range(nr):
-            y = h*float(r)
-            for c in range(nc):
-                x = w*float(c)
-                actor = rbox_source.CreateTexturedActor()
-                actor.SetMapper(box_mapper)
-                actor.SetPosition(x, y, z)
-                self.ren.AddActor(actor)
-                self.box_actors.append(actor)
-
-    def MakeRandomStack(self):
-        camera = self.ren.GetActiveCamera()
-        camera.SetViewAngle( 40. );
-        camera.SetViewUp(0.,-1.,0.);
-
-        nr, nc = 10, 20
-        w0 = np.random.uniform(0.3,0.8)
-        h0 = np.random.uniform(0.5,2.)*w0
-        d=1.
-        z0 = 5.
-        cx, cy = w0*float(nc)/2., h0*float(nr)/2.
-        tx = np.random.uniform(cx-0.1,cx+0.1)
-        ty = np.random.uniform(cy-0.5, cy+0.5)
-        camera.SetFocalPoint(cx, cy, z0);
-        camera.SetPosition(tx, ty, 0.);
-
-        rbox_source = RBoxSource(w0,h0,d)
-        box_mapper = vtk.vtkPolyDataMapper()
-        box_mapper.SetInputConnection(rbox_source.GetOutputPort())
-
-        for r in range(nr):
-            y0 = 1.2* h0*float(r)
-            for c in range(nc):
-                if len(self.box_actors) >= 253:
-                    break
-                x0 = 1.2*  w0*float(c)
-                x = np.random.uniform(x0, x0+0.5)
-                y = np.random.uniform(y0, y0+0.5)
-                z = np.random.uniform(z0,z0+1.)
-                h = np.random.uniform(0.9*h0, 1.2*h0)
-                w = np.random.uniform(0.9*w0, 1.2*w0)
-
-                actor = rbox_source.CreateTexturedActor()
-                actor.SetMapper(box_mapper)
-                actor.SetPosition(x, y, z)
-                self.ren.AddActor(actor)
-                self.box_actors.append(actor)
-                th0, th1 = np.random.uniform(-40.,40.,2)
-                actor.RotateX(th0)
-                actor.RotateY(th1)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

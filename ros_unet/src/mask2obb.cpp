@@ -3,6 +3,31 @@
 #include <opencv2/opencv.hpp>
 #include <cv_bridge/cv_bridge.h>
 
+MarkerCamera::MarkerCamera(const cv::Mat& K,
+                           const cv::Mat& D,
+                           const cv::Size& image_size)
+: K_(K), D_(D), image_size_(image_size)
+{
+}
+
+
+sensor_msgs::CameraInfo MarkerCamera::AsCameraInfo() const {
+  sensor_msgs::CameraInfo info;
+  //info.K.reserve(9);
+  int i = 0;
+  for(int r = 0; r < 3; r++)
+    for(int c = 0; c < 3; c++)
+      info.K[i++] = K_.at<float>(r,c);
+  info.D.reserve(D_.rows);
+  for(int r = 0; r < D_.rows; r++)
+    info.D.push_back(D_.at<float>(r,0));
+  info.height = image_size_.height;
+  info.width = image_size_.width;
+  return info;
+}
+
+
+
 void GetCvMat(const sensor_msgs::CameraInfo& camera_info, cv::Mat& K, cv::Mat& D ){
   K = cv::Mat::zeros(3,3,CV_32F);
   for(int i = 0; i<K.rows; i++)

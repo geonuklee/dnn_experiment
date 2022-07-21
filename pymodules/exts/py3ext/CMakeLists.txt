@@ -33,3 +33,8 @@ target_include_directories(unet_ext3 PUBLIC ${OpenCV_INCLUDE_DIRS} ${PCL_INCLUDE
 target_link_libraries(unet_ext3 PUBLIC ${PCL_LIBRARIES} ${OpenCV_LIBS})
 set_target_properties(unet_ext3 PROPERTIES OUTPUT_NAME "unet_ext")
 
+# TODO Hard coded path..
+pybind11_add_module(unetsegment SHARED ../src/unet_segment.cpp)
+set_target_properties(unetsegment PROPERTIES LIBRARY_OUTPUT_DIRECTORY $ENV{HOME}/.local/lib/python3.6/site-packages/)
+target_include_directories(unetsegment PUBLIC ${OpenCV_INCLUDE_DIRS} ${PCL_INCLUDE_DIRS} /home/geo/catkin_ws/src/ros_unet/include/)
+target_link_libraries(unetsegment PUBLIC ${OpenCV_LIBS} /home/geo/catkin_ws/devel/lib/libunetsegment.so)

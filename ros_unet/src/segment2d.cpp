@@ -1,5 +1,5 @@
 #include "segment2d.h"
-#include "ros_util.h"
+#include "utils.h"
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
@@ -7,29 +7,6 @@
 #include <opencv2/core/matx.hpp>
 #include <opencv2/imgproc.hpp>
 #include <numeric>
-
-MarkerCamera::MarkerCamera(const cv::Mat& K,
-                           const cv::Mat& D,
-                           const cv::Size& image_size)
-: K_(K), D_(D), image_size_(image_size)
-{
-}
-
-
-sensor_msgs::CameraInfo MarkerCamera::AsCameraInfo() const {
-  sensor_msgs::CameraInfo info;
-  //info.K.reserve(9);
-  int i = 0;
-  for(int r = 0; r < 3; r++)
-    for(int c = 0; c < 3; c++)
-      info.K[i++] = K_.at<float>(r,c);
-  info.D.reserve(D_.rows);
-  for(int r = 0; r < D_.rows; r++)
-    info.D.push_back(D_.at<float>(r,0));
-  info.height = image_size_.height;
-  info.width = image_size_.width;
-  return info;
-}
 
 int Convert(const std::map<int,int>& convert_lists,
              const std::set<int>& leaf_seeds,
@@ -517,7 +494,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     //cv::flip(dst,dst,1);
     //cv::imshow(name_+"dst", dst);
     cv::imshow(name_+"outline_edge", 255*outline_edge);
-    cv::waitKey(1);
+    cv::waitKey(0);
 
     cv::Mat norm_depth, norm_dist;
     cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
@@ -580,4 +557,44 @@ Segment2DEdgeBasedAbstract(name),
 lap_depth_threshold_(lap_depth_threshold){
 
 }
+
+cv::Mat ExpandOutline(const cv::Mat depth, const cv::Mat outline, float fx, float fy) {
+  assert(false); // obb_server doesn't use.
+#if 0
+  // Doesn'work 
+    const float radius = 0.02; // exapnd range [meter]
+    const float f_radius = std::max(fx,fy) * radius;
+    cv::Mat expanded_outline = cv::Mat::zeros(depth.rows, depth.cols, CV_8UC1);
+    cv::Mat dist_transform;
+    cv::distanceTransform(~outline, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
+    //std::cout << "input outline shape = " << outline.rows << "," << outline.cols << std::endl;
+    for(int r = 0; r < depth.rows; r++){
+      for(int c = 0; c < depth.cols; c++){
+        const float& d = depth.at<float>(r,c);
+        if(d == 0)
+          continue;
+        float dr = f_radius/d;
+        //printf("f_radius, dr = %f, %f\n", f_radius, dr);
+        if( dist_transform.at<float>(r,c) < dr )
+          expanded_outline.at<unsigned char>(r,c) = 1;
+      }
+    }
+#else
+    cv::Mat dist_transform;
+    cv::distanceTransform(outline==0,  dist_transform, cv::DIST_L2, cv::DIST_MASK_5);
+    cv::Mat expanded_outline = cv::Mat::zeros(depth.rows, depth.cols, CV_8UC1);
+    for(int r = 0; r < depth.rows; r++){
+      for(int c = 0; c < depth.cols; c++){
+        const float& d = depth.at<float>(r,c);
+        if( dist_transform.at<float>(r,c) < 10. )
+          expanded_outline.at<unsigned char>(r,c) = 1;
+      }
+    }
+#endif
+    std::cout << "outline type = " << outline.type() << std::endl;
+    cv::imshow("expanded_outline", expanded_outline);
+    cv::waitKey(1);
+    return expanded_outline;
+  }
+
 

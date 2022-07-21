@@ -2,21 +2,6 @@
 #define SEGMENT2D_H_
 
 #include <opencv2/opencv.hpp>
-#include <sensor_msgs/Image.h>
-#include <sensor_msgs/CameraInfo.h>
-
-struct MarkerCamera{
-  MarkerCamera() { }
-  MarkerCamera(const cv::Mat& K,
-               const cv::Mat& D,
-               const cv::Size& image_size);
-
-  sensor_msgs::CameraInfo AsCameraInfo() const;
-
-  cv::Mat K_;
-  cv::Mat D_;
-  cv::Size image_size_;
-};
 
 class Segment2DAbstract {
 public:
@@ -112,5 +97,6 @@ cv::Mat GetGroove(const cv::Mat marker,
                   const cv::Mat vignett,
                   int bg_idx);
 
+cv::Mat ExpandOutline(const cv::Mat depth, const cv::Mat outline, float fx, float fy);
 
 #endif

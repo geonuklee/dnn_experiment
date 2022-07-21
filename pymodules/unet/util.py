@@ -130,14 +130,12 @@ class SplitAdapter:
         dst = cv2.addWeighted(dst, 0.9, gray, 0.1, 0.)
         return dst
 
-def Convert2InterInput(rgb, depth, fx, fy):
+def Convert2InterInput(rgb, depth, fx, fy, threshold_curvature=20.):
     gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
     dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.01)
     fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
     grad, valid = cpp_ext.GetGradient(fd, sample_offset=0.01, fx=fx,fy=fy)
     hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
-
-    threshold_curvature = 20.
 
     convex_edge = (hessian > 40.).astype(np.uint8)
     concave_edge = hessian < -threshold_curvature
@@ -236,6 +234,26 @@ def GetColoredLabel(marker):
             continue
         dst[marker==u] = colors[u%n]
     return dst
+
+def GetNormalizedDepth(depth):
+    depth = cv2.normalize(depth, 0, 255, cv2.NORM_MINMAX)
+    return depth.astype(np.uint8)
+
+def remove_small_instance(marker, min_width=20):
+    retval, marker, stats, centroids = cv2.connectedComponentsWithStats( (marker>0).astype(np.uint8) )
+    outlier = set()
+    for i in range(stats.shape[0]):
+        if i == 0:
+            continue # bg
+        l,t,w,h,s = stats[i,:]
+        if w < min_width:
+            outlier.add(i)
+        elif h < min_width:
+            outlier.add(i)
+    for i in outlier:
+        marker[marker==i] = 0
+    return marker, outlier
+
 
 if __name__ == '__main__':
     from segment_dataset import CombinedDatasetLoader

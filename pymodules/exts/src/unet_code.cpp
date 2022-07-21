@@ -9,7 +9,6 @@
 #include <pcl/filters/voxel_grid.h>
 
 namespace py = pybind11;
-#ifndef WITHOUT_OBB
 #include <g2o/types/slam3d/se3quat.h>
 #include <opencv2/calib3d.hpp>
 #include <pcl/filters/extract_indices.h>
@@ -58,6 +57,49 @@ cv::Mat GetColoredLabel(cv::Mat marker){
     }
   }
   return dst;
+}
+
+template<typename PointT>
+void EuclideanCluster(const float euclidean_tolerance, boost::shared_ptr<pcl::PointCloud<PointT> > all_cloud){
+  boost::shared_ptr< pcl::search::KdTree<PointT> > tree(new pcl::search::KdTree<PointT>);
+  tree->setInputCloud(all_cloud);
+  std::vector<pcl::PointIndices> cluster_indices;
+  pcl::EuclideanClusterExtraction<PointT> ec;
+  ec.setClusterTolerance(euclidean_tolerance);
+  ec.setMinClusterSize(0);
+  ec.setMaxClusterSize(all_cloud->size());
+  ec.setSearchMethod(tree);
+  ec.setInputCloud(all_cloud);
+  ec.extract(cluster_indices); // << Failure with pybind11 at python3
+
+  std::sort(std::begin(cluster_indices),
+            std::end(cluster_indices),
+            [](const pcl::PointIndices& a, const pcl::PointIndices& b) {
+            return a.indices.size() > b.indices.size(); });
+
+  for(int i = 0; i < cluster_indices.size(); i++){
+    const pcl::PointIndices& inliers = cluster_indices[i];
+    //bool contact_with_plane = false;
+    //for(int j : inliers.indices){
+    //  const auto& pt = all_cloud->at(j);
+    //  float d = Eigen::Vector4f(pt.x,pt.y,pt.z,1.).dot(plane);
+    //  if( std::abs(d) < 0.1){
+    //    contact_with_plane = true;
+    //    break;
+    //  }
+    //}
+    //if(!contact_with_plane)
+    //  continue;
+    pcl::ExtractIndices<PointT> extract;
+    extract.setInputCloud(all_cloud);
+    pcl::PointIndices::Ptr ptr(new pcl::PointIndices);
+    ptr->indices = inliers.indices;
+    extract.setIndices(ptr);
+    extract.setNegative(false);
+    extract.filter(*all_cloud);
+    break;
+  }
+  return;
 }
 
 template <typename K, typename T>
@@ -191,46 +233,8 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     }
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr all_cloud = allpoints.at(it.first);
-    {
-      const float euclidean_tolerance = 0.05;
-      pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ>);
-      tree->setInputCloud(all_cloud);
-      std::vector<pcl::PointIndices> cluster_indices;
-      pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
-      ec.setClusterTolerance(euclidean_tolerance);
-      ec.setMinClusterSize(0);
-      ec.setMaxClusterSize(all_cloud->size());
-      ec.setSearchMethod(tree);
-      ec.setInputCloud(all_cloud);
-      ec.extract(cluster_indices);
-      std::sort(std::begin(cluster_indices),
-                std::end(cluster_indices),
-                [](const pcl::PointIndices& a, const pcl::PointIndices& b) {
-                return a.indices.size() > b.indices.size(); });
-
-      for(int i = 0; i < cluster_indices.size(); i++){
-        const pcl::PointIndices& inliers = cluster_indices[i];
-        bool contact_with_plane = false;
-        for(int j : inliers.indices){
-          const auto& pt = all_cloud->at(j);
-          float d = Eigen::Vector4f(pt.x,pt.y,pt.z,1.).dot(plane);
-          if( std::abs(d) < 0.1){
-            contact_with_plane = true;
-            break;
-          }
-        }
-        if(!contact_with_plane)
-          continue;
-        pcl::ExtractIndices<pcl::PointXYZ> extract;
-        extract.setInputCloud(all_cloud);
-        pcl::PointIndices::Ptr ptr(new pcl::PointIndices);
-        ptr->indices = inliers.indices;
-        extract.setIndices(ptr);
-        extract.setNegative(false);
-        extract.filter(*all_cloud);
-        break;
-      }
-    }
+    const float euclidean_tolerance = 0.05;
+    EuclideanCluster<pcl::PointXYZ>(euclidean_tolerance, all_cloud);
 
     // Orientation from vertices
     // vertices : uv of o, y
@@ -317,7 +321,6 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
   }
   return output;
 }
-#endif
 
 bool SameSign(const float& v1, const float& v2){
   if(v1 > 0.)
@@ -812,6 +815,9 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
 #endif
   }
 
+  const float euclidean_tolerance = leaf_xy;
+  EuclideanCluster<pcl::PointXYZRGB>(euclidean_tolerance, cloud);
+
   const int n_points = cloud->size();
   py::array_t<float> xyzrgb(6*n_points);
   py::array_t<int32_t> ins_points(n_points);
@@ -946,7 +952,6 @@ py::array_t<float> PyGetDiscontinuousDepthEdge(py::array_t<float> inputdepth,
   return output;
 }
 
-#ifndef WITHOUT_OBB
 py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
                        py::array_t<int32_t> marker,
                        py::list py_label2vertices,
@@ -1007,7 +1012,6 @@ py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
   }
   return list;
 }
-#endif
 
 
 PYBIND11_MODULE(unet_ext, m) {
@@ -1027,7 +1031,6 @@ PYBIND11_MODULE(unet_ext, m) {
   m.def("UnprojectPointscloud", &PyUnprojectPointscloud, "Get rgbxyz and xyzi points cloud",
         py::arg("rgb"), py::arg("depth"), py::arg("labels"), py::arg("K"), py::arg("D"), py::arg("leaf_xy"), py::arg("leaf_z"));
 
-#ifndef WITHOUT_OBB
   m.def("ComputeOBB", &PyComputeOBB, "Compute OBB from given marker and depth map",
         py::arg("front_marker"),
         py::arg("marker"),
@@ -1037,5 +1040,4 @@ PYBIND11_MODULE(unet_ext, m) {
         py::arg("nv_map"),
         py::arg("max_depth")
         );
-#endif
 }
