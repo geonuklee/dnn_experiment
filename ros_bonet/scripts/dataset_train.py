@@ -123,7 +123,7 @@ def evaluation(net, test_dataset, configs, min_iou=.5):
                 for i_g, ins_g in enumerate(ins_gt_tp):
                     u = ins_g | ins_p
                     i = ins_g & ins_p
-                    iou_tp = float(np.sum(i)) / (np.sum(u) + 1e-8)
+                    iou_tp = float(np.sum(i)) / max(np.sum(u), 1e-8)
                     if iou_tp > iou_max:
                         iou_max = iou_tp
                 if iou_max >= min_iou:
@@ -139,25 +139,34 @@ def evaluation(net, test_dataset, configs, min_iou=.5):
         TP = TP_FP_Total[sem_id]['TP']
         FP = TP_FP_Total[sem_id]['FP']
         Total = TP_FP_Total[sem_id]['Total']
-        pre = float(TP) / (TP + FP + 1e-8)
-        rec = float(TP) / (Total + 1e-8)
+        pre = float(TP) / max(TP + FP, 1e-8)
+        rec = float(TP) / max(Total, 1e-8)
         if Total > 0:
             pre_all.append(pre)
             rec_all.append(rec)
     return pre_all, rec_all
 
-def train(net, train_dataset, valid_dataset, test_dataset, configs):
+def train(net, train_dataset, valid_dataset, train_dataset2, configs):
     # TODO 인식률 올라가는거 확인한다음에 graph 저장 추가
     n_ep = 10000
-    valid_aps = []
-    test_aps = []
-    iters = []
+    #valid_aps = []
+    #test_aps = []
+    #iters = []
     niter = 0
     fig = plt.figure('train for %s'%train_dataset.name.split('/')[0], figsize=(4,3), dpi=100)
     net.saver.save(net.sess, save_path=net.train_mod_dir + 'model.cptk')
     net.saver.restore(net.sess,net.train_mod_dir+'model.cptk')
     l_min = 0.00001
+    pick = {'train_ap':[], 'train_ar':[],
+            'valid_ap':[], 'valid_ar':[],
+            'iter':[] ,
+            'ep':[] }
+
+    n_converge = 0
+    break_condition = False
     for ep in range(0, n_ep,1):
+        if break_condition:
+            break
         # TODO 이거 너무 낮은거 아니야?..
         l_rate = max(0.0005/(2**(ep//20)), l_min)
         train_dataset.shuffle_train_files(ep)
@@ -166,36 +175,59 @@ def train(net, train_dataset, valid_dataset, test_dataset, configs):
             bat_pc, _, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask = train_dataset.load_train_next_batch()
             target = [net.optim, net.psemce_loss, net.bbvert_loss, net.bbvert_loss_l2, net.bbvert_loss_ce, net.bbvert_loss_iou,net.bbscore_loss, net.pmask_loss]
             feed_dict = {net.X_pc:bat_pc[:, :, 0:9], net.Y_bbvert:bat_bbvert, net.Y_pmask:bat_pmask, net.Y_psem:bat_psem_onehot, net.lr:l_rate, net.is_train:True}
-
             try:
                 _, ls_psemce, ls_bbvert_all, ls_bbvert_l2, ls_bbvert_ce, ls_bbvert_iou, ls_bbscore, ls_pmask \
                         = net.sess.run(target, feed_dict=feed_dict)
-                #assert(i%15!=0)
             except:
-                net.saver.restore(net.sess,net.train_mod_dir+'model.cptk')
-                l_min /= 2.
-                import pdb; pdb.set_trace()
-                continue
+                break
             niter += 1
-
             net.saver.save(net.sess, save_path=net.train_mod_dir+'model.cptk')
             if i%20 == 0:
                 min_iou = .7
+                pick['min_iou'] = min_iou
                 valid_dataset.shuffle_train_files(ep)
-                test_dataset.shuffle_train_files(ep)
-                pred, recall = evaluation(net, test_dataset, configs, min_iou)
-                test_aps.append(pred[0])
+                train_dataset2.shuffle_train_files(ep)
+                pred, recall = evaluation(net, train_dataset2, configs, min_iou)
+                pick['train_ap'].append(pred[0])
+                pick['train_ar'].append(recall[0])
 
                 pred, recall = evaluation(net, valid_dataset, configs, min_iou)
-                iters.append(niter)
-                valid_aps.append(pred[0])
+                pick['valid_ap'].append(pred[0])
+                pick['valid_ar'].append(recall[0])
+                pick['iter'].append(niter)
+                pick['ep'].append(ep+1)
 
-                print("for ep %d/%d, batch %d/%d, l_rate=%.2e" % (ep, n_ep, i, total_train_batch_num,l_rate) )
+                fn = "bonet_train_log_%s.pick"%(train_dataset.name.split('/')[0])
+                with open(fn, 'wb') as f:
+                    pickle.dump(pick, f, protocol=2)
+                ###### saving model
+                net.saver.save(net.sess, save_path=net.train_mod_dir + 'model' + str(niter).zfill(3) + '.cptk')
+
+                print(n_converge,
+                      len(pick['valid_ap']),
+                      pick['valid_ap'][-1],
+                      pick['valid_ar'][-1],
+                      pick['train_ap'][-1],
+                      pick['train_ar'][-1] )
+
+                if pick['valid_ap'][-1] > .9 and\
+                   pick['valid_ar'][-1] > .9 and\
+                   pick['train_ap'][-1] > .9 and\
+                   pick['train_ar'][-1] > .9:
+                   n_converge += 1
+                else:
+                   n_converge = 0
+
+                if n_converge >= 5:
+                    break_condition = True
+                    break
+
+                #print("for ep %d/%d, batch %d/%d, l_rate=%.2e" % (ep, n_ep, i, total_train_batch_num,l_rate) )
                 fig.clf()
                 plt.xticks(fontsize=7)
                 plt.yticks(fontsize=7)
-                plt.plot(iters,valid_aps, 'b-', label='valid set' )
-                plt.plot(iters,test_aps, 'g-', label='train set' )
+                plt.plot(pick['iter'],pick['valid_ap'], 'b-', label='valid set' )
+                plt.plot(pick['iter'],pick['train_ap'], 'g-', label='train set' )
                 plt.legend(fontsize=7,loc='lower right')
                 plt.ylim(-.1, 1.1)
                 fig.axes[0].set_xlabel('iter', fontsize=7)
@@ -203,9 +235,6 @@ def train(net, train_dataset, valid_dataset, test_dataset, configs):
                 fig.canvas.draw()
                 plt.show(block=False)
                 plt.savefig(net.train_mod_dir+'train_pred.png')
-
-                ###### saving model
-                net.saver.save(net.sess, save_path=net.train_mod_dir + 'model' + str(niter).zfill(3) + '.cptk')
 
 
 

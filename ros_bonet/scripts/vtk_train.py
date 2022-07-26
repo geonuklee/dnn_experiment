@@ -40,7 +40,7 @@ if __name__=='__main__':
     pkg_dir = str('/').join(script_fn.split('/')[:-2])
     train_dataset = Data_VtkDataset(args.dataset_name+'/train', batch_size=4)
     valid_dataset = Data_VtkDataset(args.dataset_name+'/test', batch_size=1)
-    test_dataaset = Data_VtkDataset(args.dataset_name+'/train', batch_size=1)
+    train_dataset2 = Data_VtkDataset(args.dataset_name+'/train', batch_size=1)
     log_name = 'log-'+args.dataset_name
 
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -52,6 +52,6 @@ if __name__=='__main__':
     shutil.copyfile(osp.join(pkg_dir, 'scripts','dataset_train.py'), osp.join(log_name,'dataset_train.py') )
     shutil.copyfile(args.dataset_name+'/gen_vtkscene.py', osp.join(log_name,'gen_vtkscene.py') )
     net.build_graph()
-    train(net, train_dataset, valid_dataset, test_dataaset, configs)
+    train(net, train_dataset, valid_dataset, train_dataset2, configs)
 
 

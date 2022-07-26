@@ -19,6 +19,7 @@ from os import path as osp
 from os import makedirs
 import shutil
 import argparse
+import pickle
 
 def resize(rgb, depth, gt_marker, edge, K):
     osize = (depth.shape[1], depth.shape[0])
@@ -136,9 +137,12 @@ def Train(dataset_name='vtk_dataset_nooffset'):
     segment2d = Segment2DEdgeBased('cam0')
 
     optimizer = model.CreateOptimizer()
-    n_epoch = 30
+    n_epoch = 100
     bound_width = 20
+    n_converge = 0
+    break_condition = False
 
+    log_pick = {'valid_ap':[], 'valid_ar':[], 'train_ap':[], 'train_ar':[], 'iter':[], 'ep':[] }
     for model.epoch in range(model.epoch+1, n_epoch):  # loop over the dataset multiple times
         model.train()
         trainset = Data_VtkDataset(dataset_name+'/train', batch_size=1)
@@ -173,6 +177,7 @@ def Train(dataset_name='vtk_dataset_nooffset'):
             for k, v in data.items():
                 del v
             del data
+            model.niter += 1
             print("niter %d, frame %d/%d"%(model.niter, i, trainset.scene_num), end='\r')
             optimizer.zero_grad()
             loss.backward()
@@ -180,31 +185,43 @@ def Train(dataset_name='vtk_dataset_nooffset'):
 
         with torch.no_grad():
             model.eval()
+            trainset2 = Data_VtkDataset(dataset_name+'/train', batch_size=1)
             validset = Data_VtkDataset(dataset_name+'/test', batch_size=1)
-            TP, FP, Total = 0, 0, 0
-            for i in range(validset.scene_num):
-                bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask, pick \
-                        = validset.load_next_scene()
-                rgb, depth, gt_marker, outline, K = pick['rgb'], pick['depth'], pick['mask'], pick['edge'], pick['K']
-                rgb, depth, gt_marker, outline, K = resize(rgb, depth, gt_marker, outline, K)
-                D = pick['D']
-                assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2InterInput' yet.
-                input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1])
-                input_x = torch.Tensor(input_x).unsqueeze(0)
-                y1, y2, pred = model(input_x)
-                del y1, y2, input_x
-                pred = pred.to('cpu')
-                pred = model.spliter.restore(pred)
-                outline = model.spliter.pred2mask(pred)
-                del pred
-                marker = segment2d.Process(rgb, depth, outline, convex_edge, float(K[0,0]), float(K[1,1]) )
-                _TP, _FP, _Total = EvaluateAPof2D(marker, gt_marker, min_iou=.7)
-                TP += _TP
-                FP += _FP
-                Total += _Total
-            pre = float(TP) / max(TP + FP, 1e-8)
-            rec = float(TP) / max(Total, 1e-8)
-            print('Epoch %d/%d : prediction/recall = %f, %f' % (model.epoch+1, n_epoch, pre, rec) )
+            for name, dataset in {'train':trainset2, 'valid':validset}.items():
+                TP, FP, Total = 0, 0, 0
+                for i in range(dataset.scene_num):
+                    bat_pc, bat_sem_gt, bat_ins_gt, bat_psem_onehot, bat_bbvert, bat_pmask, pick \
+                            = dataset.load_next_scene()
+                    rgb, depth, gt_marker, outline, K = pick['rgb'], pick['depth'], pick['mask'], pick['edge'], pick['K']
+                    rgb, depth, gt_marker, outline, K = resize(rgb, depth, gt_marker, outline, K)
+                    D = pick['D']
+                    assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2InterInput' yet.
+                    input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1])
+                    input_x = torch.Tensor(input_x).unsqueeze(0)
+                    y1, y2, pred = model(input_x)
+                    del y1, y2, input_x
+                    pred = pred.to('cpu')
+                    pred = model.spliter.restore(pred)
+                    outline = model.spliter.pred2mask(pred)
+                    del pred
+                    marker = segment2d.Process(rgb, depth, outline, convex_edge, float(K[0,0]), float(K[1,1]) )
+                    min_iou = .7
+                    _TP, _FP, _Total = EvaluateAPof2D(marker, gt_marker, min_iou)
+                    TP += _TP
+                    FP += _FP
+                    Total += _Total
+                pre = float(TP) / max(TP + FP, 1e-8)
+                rec = float(TP) / max(Total, 1e-8)
+                if name=='valid':
+                    print('Epoch %d/%d : prediction/recall = %f,%f : n_converge=%d' % (model.epoch+1, n_epoch, pre, rec, n_converge) )
+                log_pick['min_iou'] = min_iou
+                log_pick['%s_ap'%name].append(pre)
+                log_pick['%s_ar'%name].append(rec)
+
+            log_pick['iter'].append(model.niter)
+            log_pick['ep'].append(model.epoch+1)
+            with open('unet_train_log_%s.pick'%dataset_name,'wb') as f:
+                pickle.dump(log_pick, f, protocol=2)
             states = {
                 'model_name' : model.__class__.__name__,
                 'model_state_dict': model.state_dict(),
@@ -216,6 +233,19 @@ def Train(dataset_name='vtk_dataset_nooffset'):
                 torch.save(states, checkpoint_fn)
             del states
 
+            if log_pick['valid_ap'][-1] > .9 and\
+               log_pick['valid_ar'][-1] > .9 and\
+               log_pick['train_ap'][-1] > .9 and\
+               log_pick['train_ar'][-1] > .9:
+               n_converge += 1
+            else:
+               n_converge = 0
+
+            if n_converge >= 5:
+                break_condition = True
+                break
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('type',
@@ -223,6 +253,10 @@ if __name__ == '__main__':
                     choices=['t', 'e'])
     args = parser.parse_args()
     if args.type == 't':
-        Train()
+        #Train(dataset_name='vtk_dataset_separated')
+        #Train(dataset_name='vtk_dataset_nooffset')
+        Train(dataset_name='vtk_2mm')
     else:
         Evaluate(dataset_name='vtk_dataset_separated')
+        #Evaluate(dataset_name='vtk_dataset_nooffset')
+        #Evaluate(dataset_name='vtk_2mm')
