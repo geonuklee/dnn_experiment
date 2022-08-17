@@ -230,7 +230,10 @@ class Evaluator:
         # 1) Put Text, IoU>.7 / UnderSeg / Over seg for each instance
         # 2) Put Text, TP, FP, FN For each scene
         '''
-        cvgt = cv2.imread(self.scene_evals.values()[0].pick['cvgt_fn'])
+        fn=self.scene_evals.values()[0].pick['cvgt_fn']
+        cvgt = cv2.imread(fn)
+        if cvgt is None:
+            import pdb; pdb.set_trace()
         fontsize=10
         dpi = 100
         height, width = cvgt.shape[:2]

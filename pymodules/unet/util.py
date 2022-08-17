@@ -239,20 +239,25 @@ def GetNormalizedDepth(depth):
     depth = cv2.normalize(depth, 0, 255, cv2.NORM_MINMAX)
     return depth.astype(np.uint8)
 
-def remove_small_instance(marker, min_width=20):
-    retval, marker, stats, centroids = cv2.connectedComponentsWithStats( (marker>0).astype(np.uint8) )
-    outlier = set()
+def remove_small_instance(marker0, min_width=20):
+    retval, marker, stats, centroids = cv2.connectedComponentsWithStats( (marker0>0).astype(np.uint8) )
+    outliers = set()
     for i in range(stats.shape[0]):
         if i == 0:
             continue # bg
         l,t,w,h,s = stats[i,:]
         if w < min_width:
-            outlier.add(i)
+            outliers.add(i)
         elif h < min_width:
-            outlier.add(i)
-    for i in outlier:
-        marker[marker==i] = 0
-    return marker, outlier
+            outliers.add(i)
+    output = marker0.copy()
+    output_outlier = set()
+    for outlier in outliers:
+        outlier0 = np.unique(marker0[marker==outlier])
+        for o0 in outlier0:
+            output_outlier.add(o0)
+            output[output==o0] = 0
+    return output, output_outlier
 
 
 if __name__ == '__main__':

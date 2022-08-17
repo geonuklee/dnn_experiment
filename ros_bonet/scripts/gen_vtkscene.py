@@ -40,7 +40,7 @@ import shutil
 import pickle
 
 from unet_ext import FindEdge, UnprojectPointscloud
-from unet.util import colors, AddEdgeNoise, GetColoredLabel, GetNormalizedDepth, remove_small_instance
+from unet.util import colors, AddEdgeNoise, GetColoredLabel, remove_small_instance
 
 class RBoxSource:
     def __init__(self, w, h, d, edge_round):
@@ -65,8 +65,7 @@ class RBoxSource:
         self.hull_filter.AddRecursiveSpherePlanes(5);
 
         reader = vtk.vtkPNGReader()
-        reader.SetFileName("/home/geo/Documents/texture.png")
-
+        reader.SetFileName("/home/geo/Documents/texture0.png")
         self.texture = vtk.vtkTexture()
         self.texture.InterpolateOn()
         self.texture.SetInputConnection(reader.GetOutputPort())
@@ -135,6 +134,8 @@ class RBoxSource:
             n[max_axis] = 1.
             for j, pt in enumerate(xyz_points):
                 delta = pt - cp
+                delta[0] /= 1.1*w
+                delta[1] /= 1.1*h
                 uv = np.delete(delta, max_axis) + np.array((0.5,0.5))
                 vtk_id = id_lists[j]
                 tcoords.SetTuple(vtk_id, uv.tolist())
@@ -144,7 +145,8 @@ class RBoxSource:
 
     def CreateTexturedActor(self):
         actor = vtk.vtkActor()
-        #actor.SetTexture(self.texture)
+        # On/Off texture
+        actor.SetTexture(self.texture)
         return actor
 
 
@@ -152,9 +154,19 @@ class RBoxSource:
 class Scene:
     def __init__(self):
         self.ren = vtk.vtkRenderer()
+        self.ren2 = vtk.vtkRenderer()
+        self.ren2.SetActiveCamera(self.ren.GetActiveCamera())
+        self.bg = vtk.vtkNamedColors().GetColor3d("Maroon")
+        self.ren.SetBackground(self.bg)
         self.renwin = vtk.vtkRenderWindow()
         self.renwin.AddRenderer(self.ren)
         self.renwin.SetSize(1280, 960)
+        #self.renwin.SetSize(640, 480)
+
+        self.renwin2 = vtk.vtkRenderWindow()
+        self.renwin2.AddRenderer(self.ren2)
+        self.renwin2.SetSize(self.renwin.GetSize())
+
         #self.renwin.SetSize(640, 480)
         self.iren = vtk.vtkRenderWindowInteractor()
         self.iren.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
@@ -197,6 +209,7 @@ class Scene:
         return np.asarray(depth)
 
     def GetRgb(self):
+        self.renwin.Render()
         #for i, actor in enumerate(self.box_actors):
         #    actor.GetProperty().LightingOff()
         vtk_win_im = vtk.vtkWindowToImageFilter()
@@ -210,19 +223,27 @@ class Scene:
         rgb = np.flipud(rgb)  # flipping along the first axis (y)
         return np.asarray(rgb)
 
-    def GetMask(self):
+    def GetMask(self,verbose=False):
+        self.renwin2.Render()
         for target in ['vis','mask']:
-            for i, actor in enumerate(self.box_actors):
+            actors = self.ren2.GetActors()
+            actors.InitTraversal()
+            N = actors.GetNumberOfItems()
+            if verbose:
+                print(N)
+            for i in range(N):
+                actor = actors.GetNextProp()
+                ins_id = self.ren2actor_to_id[actor]
                 if target == 'vis':
-                    color = [c/255. for c in colors[i%len(colors)]]
+                    color = [c/255. for c in colors[ins_id%len(colors)]]
                 else:
-                    color = [float(2*i+1)/255.,0,0]
+                    color = [float(ins_id)/255.,0,0]
                 actor.GetProperty().SetColor(color)
                 actor.GetProperty().LightingOff()
                 actor.SetTexture(None)
 
             vtk_win_im = vtk.vtkWindowToImageFilter()
-            vtk_win_im.SetInput(self.renwin)
+            vtk_win_im.SetInput(self.renwin2)
             vtk_win_im.Update()
             vtk_image = vtk_win_im.GetOutput()
             width, height, _ = vtk_image.GetDimensions()
@@ -251,7 +272,7 @@ class Scene:
         makedirs(dataset_path)
         shutil.copyfile(__file__, osp.join(dataset_path,'gen_vtkscene.py') )
 
-        usages = [('train',50), ('test',10)]
+        usages = [('train',200), ('test',20)]
         for usage,n_image in usages:
             usage_path = osp.join(dataset_path, usage)
             makedirs(usage_path)
@@ -261,45 +282,45 @@ class Scene:
             img_idx = 0
             while img_idx < n_image:
                 print("%d/%d"%(img_idx,n_image) )
-                if hasattr(self, 'box_actors'):
-                    for actor in self.box_actors:
-                        self.ren.RemoveActor(actor)
-                self.box_actors = []
+                for ren in [self.ren, self.ren2]:
+                    actors = ren.GetActors()
+                    actors.InitTraversal()
+                    for i in range(actors.GetNumberOfItems()):
+                        actor = actors.GetNextProp()
+                        ren.RemoveActor(actor)
                 self.MakeSeparatedBoxes()
                 self.ren.ResetCameraClippingRange()
-                self.renwin.Render()
+                self.ren2.ResetCameraClippingRange()
+
+                vis, mask = self.GetMask()
+                edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
+                #print('id_to_ren2actors.keys()=',self.id_to_ren2actors.keys())
+                #print('unique(mask)=',np.unique(mask))
+                #print('outliker=',outliers)
+                mask[edge>0] = 0
+                _, outliers = remove_small_instance(mask, min_width=100)
+                for outlier_id in outliers:
+                    #if not outlier_id in self.id_to_ren2actors:
+                    #    continue
+                    ren2actor = self.id_to_ren2actors[outlier_id]
+                    ren_actor = self.ren2_to_ren_actors[ren2actor]
+                    self.ren.RemoveActor(ren_actor)
+                    self.ren2.RemoveActor(ren2actor)
+
                 rgb = self.GetRgb()
                 vis, mask = self.GetMask()
                 edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
                 mask[edge>0] = 0
-                mask, _ = remove_small_instance(mask, min_width=100)
+
                 if mask.max() < 3:
                     continue
                 # TODO Check
-                rgb[np.logical_and(mask==0, edge==0),:] = 0.
 
                 org_depth = self.GetDepth()
-                #org_depth[ np.sum(vis,axis=2) == 0] = 0.
-                #depth = org_depth.copy()
 
                 # Depth noise
                 depth = org_depth + np.random.normal(0,.001,org_depth.size).reshape(org_depth.shape).astype(org_depth.dtype)
-                #depth = org_depth.copy()
-                depth[org_depth==0] = 0.
-                depth[np.logical_and(mask==0, edge==0)] = 0.
 
-                dst_label = np.zeros((org_depth.shape[0], org_depth.shape[1],3), np.uint8)
-                dst_label[org_depth>0,2] = 255
-                #dst_label[edge>0,:] = 255
-
-                minirgb  = cv2.resize(rgb, (200,200) )
-                minirgb = cv2.cvtColor(minirgb,cv2.COLOR_RGB2BGR)
-                dst = np.zeros((dst_label.shape[0],
-                                dst_label.shape[1]+minirgb.shape[1],3), np.uint8)
-                for i in range(3):
-                    dst[minirgb.shape[0]:,dst_label.shape[1]:,i] = 100
-                dst[:,:dst_label.shape[1],:] = dst_label
-                dst[:minirgb.shape[0],dst_label.shape[1]:,:] = minirgb
                 K, D = self.GetIntrinsic()
                 K = K.astype(np.float32)
                 D = D.astype(np.float32)
@@ -309,18 +330,22 @@ class Scene:
                 #box_face = np.logical_and(edge==0, mask >0)
                 #box_face = box_face.astype(np.uint8)
                 #retval, labels = cv2.connectedComponents(box_face)
-                dist, labels = cv2.distanceTransformWithLabels( (mask==0).astype(np.uint8),
-                        distanceType=cv2.DIST_L2, maskSize=5)
-                mask[dist > 7.] = 0
-                depth[dist > 7.] = 0
-                rgb[dist > 7.,:] = 0
+                #dist, labels = cv2.distanceTransformWithLabels( (mask==0).astype(np.uint8),
+                #        distanceType=cv2.DIST_L2, maskSize=5)
+                #mask[dist > 7.] = 0
+                depth[mask==0] = 0.
+                #rgb[dist > 7.,:] = 0
 
                 # I have no idea reason for need this. but without it, cpp receive wrong rgb.
                 bgr = cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR)
                 cv2.imshow("mask",   GetColoredLabel(mask) )
-                cv2.imshow("labels", GetColoredLabel(labels) )
                 cv2.imshow("bgr",    bgr)
                 cv2.imshow("depth", (depth>0).astype(np.uint8)*255 )
+
+                #lights = self.ren.GetLights()
+                #lights.InitTraversal()
+                #for i in range(lights.GetNumberOfItems()):
+                #    light = lights.GetNextItem()
                 if cv2.waitKey(1) == ord('q'):
                     exit(1)
 
@@ -328,7 +353,7 @@ class Scene:
                 cv2.imwrite(osp.join(vis_path,'%04d_markers.png'%img_idx), GetColoredLabel(mask) )
 
                 rgb = cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB)
-                xyzrgb, ins_points = UnprojectPointscloud(rgb, depth, labels,
+                xyzrgb, ins_points = UnprojectPointscloud(rgb, depth, mask,
                         K, D, 0.02, 0.01)
                 #print('unique ins = ', np.unique(ins_points) )
                 # TODO "edges", "markers"
@@ -352,11 +377,11 @@ class Scene:
         w = np.random.uniform(.5, 1.5)
         h = np.random.uniform(.5, 1.5)
         d= .2
-        dx, dy = 0.05 , 0.05
-        #dx, dy = 0. , 0.
+        #dx, dy = 0.05 , 0.05
+        dx, dy = 0. , 0.
         #z = 3. # np.random.uniform(2.,6.)
         z = np.random.uniform(2., 4.)
-        edge_round = .02
+        edge_round = .002
         margin = 0.01*edge_round
         cx = 0.5*nc*w #+ np.random.uniform(-0.5,0.5)
         cy = 0.5*nr*h #+ np.random.uniform(-0.5,0.5)
@@ -366,17 +391,27 @@ class Scene:
         rbox_source = RBoxSource(w+margin,h+margin, d, edge_round)
         box_mapper = vtk.vtkPolyDataMapper()
         box_mapper.SetInputConnection(rbox_source.GetOutputPort())
+        self.ren2_to_ren_actors = {}
+        self.id_to_ren2actors = {}
+        self.ren2actor_to_id = {}
+        i = 1
         for r in range(nr):
             y = (h + dy )* float(r) - cy
             for c in range(nc):
-                x = (w + dx) * float(c) - cx
-                actor = rbox_source.CreateTexturedActor()
-                actor.SetMapper(box_mapper)
-                actor.SetPosition(x, y, z)
-                #actor.SetScale(w,h,d)
-                actor.Modified()
-                self.ren.AddActor(actor)
-                self.box_actors.append(actor)
+                for ren in [self.ren, self.ren2]:
+                    x = (w + dx) * float(c) - cx
+                    actor = rbox_source.CreateTexturedActor()
+                    actor.SetMapper(box_mapper)
+                    actor.SetPosition(x, y, z)
+                    actor.Modified()
+                    ren.AddActor(actor)
+                    if ren == self.ren:
+                        actor0 = actor
+                    else:
+                        self.id_to_ren2actors[i] = actor
+                        self.ren2actor_to_id[actor] = i
+                        self.ren2_to_ren_actors[actor] = actor0
+                        i += 1
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
