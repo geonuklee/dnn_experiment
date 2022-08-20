@@ -815,8 +815,8 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
 #endif
   }
 
-  const float euclidean_tolerance = leaf_xy;
-  EuclideanCluster<pcl::PointXYZRGB>(euclidean_tolerance, cloud);
+  //const float euclidean_tolerance = 10. * leaf_xy;
+  //EuclideanCluster<pcl::PointXYZRGB>(euclidean_tolerance, cloud);
 
   const int n_points = cloud->size();
   py::array_t<float> xyzrgb(6*n_points);

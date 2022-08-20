@@ -179,6 +179,8 @@ def train(net, train_dataset, valid_dataset, train_dataset2, configs):
                 _, ls_psemce, ls_bbvert_all, ls_bbvert_l2, ls_bbvert_ce, ls_bbvert_iou, ls_bbscore, ls_pmask \
                         = net.sess.run(target, feed_dict=feed_dict)
             except:
+                print("Except")
+                import pdb; pdb.set_trace()
                 break
             niter += 1
             net.saver.save(net.sess, save_path=net.train_mod_dir+'model.cptk')

@@ -267,7 +267,8 @@ class Data_ObbDataset:
         if ret is None:
             return None
         pick, pc_xyzrgb, sem_labels, ins_labels = ret
-        if (pc_xyzrgb[:,2]==0.).any():
+        if (pc_xyzrgb[:,2]<1e-5).any():
+            print("Unexpected small depth")
             import pdb; pdb.set_trace()
 
         ### center xy within the block

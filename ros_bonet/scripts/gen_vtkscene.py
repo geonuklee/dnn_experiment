@@ -308,19 +308,32 @@ class Scene:
                     self.ren2.RemoveActor(ren2actor)
 
                 rgb = self.GetRgb()
-                vis, mask = self.GetMask()
+                vis, mask0 = self.GetMask()
+                mask = np.zeros_like(mask0)
+                zeron_in_mask0 = 0 in mask0
+                for ins1, ins0 in enumerate(np.unique(mask0)):
+                    if zeron_in_mask0:
+                        mask[mask0==ins0] = ins1
+                    else:
+                        mask[mask0==ins0] = ins1+1
+
                 edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
                 mask[edge>0] = 0
 
                 if mask.max() < 3:
                     continue
-                # TODO Check
+
+                black = np.logical_and(rgb[:,:,0]==0,rgb[:,:,1]==0,rgb[:,:,2]==0)
+                if np.any(black):
+                    print("Unexpected render failure")
+                    continue
 
                 org_depth = self.GetDepth()
 
                 # Depth noise
                 depth = org_depth + np.random.normal(0,.001,org_depth.size).reshape(org_depth.shape).astype(org_depth.dtype)
-
+                depth[org_depth==0] = 0.
+                #depth[np.logical_and(mask==0, edge==0)] = 0.
                 K, D = self.GetIntrinsic()
                 K = K.astype(np.float32)
                 D = D.astype(np.float32)
@@ -333,10 +346,8 @@ class Scene:
                 #dist, labels = cv2.distanceTransformWithLabels( (mask==0).astype(np.uint8),
                 #        distanceType=cv2.DIST_L2, maskSize=5)
                 #mask[dist > 7.] = 0
-                depth[mask==0] = 0.
-                #rgb[dist > 7.,:] = 0
+                depth[mask==0] = 0
 
-                # I have no idea reason for need this. but without it, cpp receive wrong rgb.
                 bgr = cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR)
                 cv2.imshow("mask",   GetColoredLabel(mask) )
                 cv2.imshow("bgr",    bgr)
@@ -353,9 +364,13 @@ class Scene:
                 cv2.imwrite(osp.join(vis_path,'%04d_markers.png'%img_idx), GetColoredLabel(mask) )
 
                 rgb = cv2.cvtColor(bgr,cv2.COLOR_BGR2RGB)
-                xyzrgb, ins_points = UnprojectPointscloud(rgb, depth, mask,
-                        K, D, 0.02, 0.01)
-                #print('unique ins = ', np.unique(ins_points) )
+                xyzrgb, ins_points0 = UnprojectPointscloud(rgb, depth, mask,
+			        K, D, 0.02, 0.01)
+                # Remove instance points which are reprojected on background due to numerical error of undistortion.
+                xyzrgb = xyzrgb[ins_points0>0]
+                ins_points = ins_points0[ins_points0>0]
+                #print('unique ins = ', np.unique(mask), np.unique(ins_points) )
+                #import pdb; pdb.set_trace()
                 # TODO "edges", "markers"
                 pick = { 'xyzrgb':xyzrgb, 'ins_points':ins_points,
                         'rgb':rgb, 'depth':depth,
