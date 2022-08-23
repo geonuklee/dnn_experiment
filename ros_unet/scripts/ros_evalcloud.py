@@ -9,7 +9,6 @@ from unetsegment import Segment2DEdgeBased
 from unet.segment_dataset import ObbDataset
 from unet.util import *
 from bonet_dataset.dataset import Data_VtkDataset, Data_Configs
-from unet_ext import UnprojectPointscloud
 
 import torch
 from unet.iternet import *
@@ -21,36 +20,52 @@ import shutil
 import argparse
 import pickle
 
+threshold_curvature = 10.
+
 def resize(rgb, depth, gt_marker, edge, K):
     osize = (depth.shape[1], depth.shape[0])
     dsize = (640,480)
     sK = K.copy()
     for i in range(2):
-        sK[i,:] *= dsize[i] / osize[i]
+        sK[i,:] *= float(dsize[i]) / float(osize[i])
     srgb       = cv2.resize(rgb, dsize, interpolation=cv2.INTER_NEAREST)
     sdepth     = cv2.resize(depth, dsize, interpolation=cv2.INTER_NEAREST)
     sgt_marker = cv2.resize(gt_marker, dsize, interpolation=cv2.INTER_NEAREST)
     sedge = cv2.resize(edge, dsize, interpolation=cv2.INTER_NEAREST)
     return srgb, sdepth, sgt_marker, sedge, sK
 
-def EvaluateAPof2D(pred_marker, gt_marker, min_iou):
-    #_, gt_small   = remove_small_instance(gt_marker)
-    #_, pred_small = remove_small_instance(pred_marker)
+def EvaluateAPof2D(depth, outline, pred_marker, gt_marker, min_iou):
+    bg_markers = pred_marker.copy()
+    uniq_marker, counts = np.unique(bg_markers[depth<.001],return_counts=True)
+    if counts.size > 0:
+        bg = uniq_marker[np.argmax(counts)]
+        pred_marker[pred_marker==bg] = -1
+    pred_marker[pred_marker==0] = -1
+    pred_marker[depth < .001] = -1
+    #_, outliers = remove_small_instance(pred_marker,20)
+    #pred_marker[pred_marker==outliers] = -1
+    min_counts = 50
 
-    ins_pred_all = pred_marker.reshape((-1,))
-    ins_gt_all = gt_marker.reshape((-1,))
-    ins_pred_all -= 1
-    ins_gt_all -= 1
+    gt_marker[gt_marker==0] = -1
+
+    ins_pred_all = pred_marker.reshape((-1,)).copy()
+    ins_gt_all = gt_marker.reshape((-1,)).copy()
+
     ins_gt_tp = []
-    ins_idx, cnts = np.unique(ins_gt_all, return_counts=True)
-    for ins_id, cn in zip(ins_idx, cnts):
+    ins_gt_idx, cnts = np.unique(ins_gt_all, return_counts=True)
+    for ins_id, cn in zip(ins_gt_idx, cnts):
         if ins_id <= -1: continue
+        #if cn < min_counts: # glitch
+        #    continue
         tmp = (ins_gt_all == ins_id)
         ins_gt_tp.append(tmp)
+
     ins_pred_tp = []
-    ins_idx, cnts = np.unique(ins_pred_all, return_counts=True)
-    for ins_id, cn in zip(ins_idx, cnts):
+    ins_pred_idx, cnts = np.unique(ins_pred_all, return_counts=True)
+    for ins_id, cn in zip(ins_pred_idx, cnts):
         if ins_id <= -1: continue
+        if cn < min_counts: # glitch which is supposed to be filtered by OBB process
+            continue
         tmp = (ins_pred_all == ins_id)
         ins_pred_tp.append(tmp)
 
@@ -96,25 +111,30 @@ def Evaluate(dataset_name='vtk_dataset_nooffset'):
         rgb, depth, gt_marker, outline, K = resize(rgb, depth, gt_marker, outline, K)
         D = pick['D']
         assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2InterInput' yet.
-        input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1])
+        input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1],threshold_curvature)
         input_x = torch.Tensor(input_x).unsqueeze(0)
         y1, y2, pred = model(input_x)
         del y1, y2, input_x
         pred = pred.to('cpu')
         pred = model.spliter.restore(pred)
-        outline = model.spliter.pred2mask(pred)
+        pred_outline = model.spliter.pred2mask(pred)
         del pred
-        marker = segment2d.Process(rgb, depth, outline, convex_edge, float(K[0,0]), float(K[1,1]) )
-        _TP, _FP, _Total = EvaluateAPof2D(marker, gt_marker, min_iou=.7)
+        marker = segment2d.Process(rgb, depth, pred_outline, convex_edge, float(K[0,0]), float(K[1,1]) )
+        _TP, _FP, _Total = EvaluateAPof2D(depth, pred_outline, marker, gt_marker, min_iou=.7)
         TP += _TP
         FP += _FP
         Total += _Total
-        print('%d/%d' % (i+1, dataset.scene_num) , end='\r')
+        print('%d/%d - TP %d, FP %d, Total %d' % (i+1, dataset.scene_num, _TP, _FP, _Total) , end='\r')
         cv2.imshow("rgb", rgb)
         cv2.imshow("gt",   GetColoredLabel(gt_marker+1))
-        cv2.imshow("outline", outline*255)
-        cv2.imshow("pred", GetColoredLabel(marker))
-        c = cv2.waitKey(1)
+        cv2.imshow("pred", GetColoredLabel(marker+1))
+        cv2.imshow("gt_outline", outline*255)
+        cv2.imshow("pred_outline", pred_outline*255)
+        cv2.imshow("pred_outline0", 255*(outline0>0).astype(np.uint8) )
+        if _TP < _Total or _FP > 0:
+            c = cv2.waitKey(1)
+        else:
+            c = cv2.waitKey(1)
         if ord('q') == c:
             break
     pre = float(TP) / max(TP + FP,1e-8)
@@ -153,7 +173,14 @@ def Train(dataset_name='vtk_dataset_nooffset'):
             rgb, depth, gt_marker, outline, K = resize(rgb, depth, gt_marker, outline, K)
             D = pick['D']
             assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2InterInput' yet.
-            input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1])
+            input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1],threshold_curvature=.1)
+
+            #if i==0:
+            #    print(pick['fn'])
+            #    cv2.imshow("gt_outline", 255*(outline>0).astype(np.uint8) )
+            #    cv2.imshow("pred_outline0", 255*(outline0>0).astype(np.uint8) )
+            #    cv2.waitKey(1)
+
             validmask = np.zeros_like(depth)
             validmask[bound_width:-bound_width,bound_width:-bound_width] = 1
             validmask = validmask > 0
@@ -196,24 +223,29 @@ def Train(dataset_name='vtk_dataset_nooffset'):
                     rgb, depth, gt_marker, outline, K = resize(rgb, depth, gt_marker, outline, K)
                     D = pick['D']
                     assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2InterInput' yet.
-                    input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1])
+                    input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1], threshold_curvature)
                     input_x = torch.Tensor(input_x).unsqueeze(0)
                     y1, y2, pred = model(input_x)
                     del y1, y2, input_x
                     pred = pred.to('cpu')
                     pred = model.spliter.restore(pred)
-                    outline = model.spliter.pred2mask(pred)
+                    pred_outline = model.spliter.pred2mask(pred)
                     del pred
-                    marker = segment2d.Process(rgb, depth, outline, convex_edge, float(K[0,0]), float(K[1,1]) )
-                    min_iou = .7
-                    _TP, _FP, _Total = EvaluateAPof2D(marker, gt_marker, min_iou)
+                    if i==0:
+                        cv2.imshow("gt_outline", 255*(outline>0).astype(np.uint8) )
+                        cv2.imshow("pred_outline0", 255*(outline0>0).astype(np.uint8) )
+                        cv2.imshow("pred_outline", 255*(pred_outline>0).astype(np.uint8) )
+                        cv2.waitKey(1)
+                    outline[depth<.001] = 1
+                    marker = segment2d.Process(rgb, depth, pred_outline, convex_edge, float(K[0,0]), float(K[1,1]) )
+                    _TP, _FP, _Total = EvaluateAPof2D(depth, outline, marker, gt_marker, min_iou)
                     TP += _TP
                     FP += _FP
                     Total += _Total
                 pre = float(TP) / max(TP + FP, 1e-8)
                 rec = float(TP) / max(Total, 1e-8)
                 if name=='valid':
-                    print('Epoch %d/%d : prediction/recall = %f,%f : n_converge=%d' % (model.epoch+1, n_epoch, pre, rec, n_converge) )
+                    print('Epoch %d/%d : precision/recall = %f,%f : n_converge=%d' % (model.epoch+1, n_epoch, pre, rec, n_converge) )
                 log_pick['min_iou'] = min_iou
                 log_pick['%s_ap'%name].append(pre)
                 log_pick['%s_ar'%name].append(rec)
@@ -255,8 +287,8 @@ if __name__ == '__main__':
     if args.type == 't':
         #Train(dataset_name='vtk_dataset_separated')
         #Train(dataset_name='vtk_dataset_nooffset')
-        Train(dataset_name='vtk_2mm')
+        Train(dataset_name='vtk_1cm')
     else:
-        Evaluate(dataset_name='vtk_dataset_separated')
+        #Evaluate(dataset_name='vtk_dataset_separated')
         #Evaluate(dataset_name='vtk_dataset_nooffset')
-        #Evaluate(dataset_name='vtk_2mm')
+        Evaluate(dataset_name='vtk_1cm')

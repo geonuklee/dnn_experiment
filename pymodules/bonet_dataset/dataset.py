@@ -251,7 +251,10 @@ class Data_ObbDataset:
         if not hasattr(self, 'blocks') or self.frame_idx != frame_idx:
             fn_frame = osp.join(self.cache_dir, '%d.pick'% frame_idx)
             with open(fn_frame,'rb') as f_frame:
-                pick = pickle.load(f_frame)#, encoding='latin1')
+                if version_info.major == 3:
+                    pick = pickle.load(f_frame, encoding='latin1')
+                else:
+                    pick = pickle.load(f_frame)
             self.pick = pick
             self.blocks = pick['blocks']
             self.frame_idx = frame_idx

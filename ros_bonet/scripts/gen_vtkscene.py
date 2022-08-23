@@ -40,7 +40,17 @@ import shutil
 import pickle
 
 from unet_ext import FindEdge, UnprojectPointscloud
-from unet.util import colors, AddEdgeNoise, GetColoredLabel, remove_small_instance
+from unet.util import colors, AddEdgeNoise, GetColoredLabel, remove_small_instance, Convert2InterInput
+
+def resize(rgb, depth, K):
+    osize = (depth.shape[1], depth.shape[0])
+    dsize = (640,480)
+    sK = K.copy()
+    for i in range(2):
+        sK[i,:] *= float(dsize[i]) / float(osize[i])
+    sdepth     = cv2.resize(depth, dsize, interpolation=cv2.INTER_NEAREST)
+    srgb       = cv2.resize(rgb, dsize, interpolation=cv2.INTER_NEAREST)
+    return srgb, sdepth, sK
 
 class RBoxSource:
     def __init__(self, w, h, d, edge_round):
@@ -53,7 +63,7 @@ class RBoxSource:
         self.glyph_filter.SetInputData(polydata)
 
         self.sphere_source = vtk.vtkSphereSource()
-        resol = 100
+        resol = 30
         self.sphere_source.SetThetaResolution(resol)
         self.sphere_source.SetPhiResolution(resol)
 
@@ -89,9 +99,9 @@ class RBoxSource:
         #self.corners.SetPoint(6, -hw, -hw, -hw)
         #self.corners.SetPoint(7, hw, -hw, -hw)
         #self.sphere_source.SetRadius(r)
-        hw = w/2.-edge_round
-        hh = h/2.-edge_round
-        hd = d/2.-edge_round
+        hw = float(w)/2. - edge_round
+        hh = float(h)/2. - edge_round
+        hd = float(d)/2. - edge_round
         self.corners.SetPoint(0,  hw,  hh,  hd)
         self.corners.SetPoint(1, -hw,  hh,  hd)
         self.corners.SetPoint(2, -hw, -hh,  hd)
@@ -146,7 +156,7 @@ class RBoxSource:
     def CreateTexturedActor(self):
         actor = vtk.vtkActor()
         # On/Off texture
-        actor.SetTexture(self.texture)
+        #actor.SetTexture(self.texture)
         return actor
 
 
@@ -191,6 +201,8 @@ class Scene:
         return K, D
 
     def GetDepth(self):
+        #self.renwin.Modified()
+        self.renwin.Render()
         z_buffer = vtk.vtkFloatArray()
         width, height = self.renwin.GetSize()
         self.renwin.GetZbufferData( 0, 0, width - 1, height - 1, z_buffer)
@@ -206,9 +218,10 @@ class Scene:
         depth = numerator / denominator
         non_depth_data_value = 0. # np.nan
         depth[z_buffer_data_numpy == 1.0] = non_depth_data_value
-        return np.asarray(depth)
+        return np.asarray(depth).copy()
 
     def GetRgb(self):
+        #self.renwin.Modified()
         self.renwin.Render()
         #for i, actor in enumerate(self.box_actors):
         #    actor.GetProperty().LightingOff()
@@ -221,11 +234,12 @@ class Scene:
         components = vtk_array.GetNumberOfComponents()
         rgb = vtk_to_numpy(vtk_array).reshape(height, width, components)
         rgb = np.flipud(rgb)  # flipping along the first axis (y)
-        return np.asarray(rgb)
+        return np.asarray(rgb).copy()
 
     def GetMask(self,verbose=False):
-        self.renwin2.Render()
         for target in ['vis','mask']:
+            #self.renwin2.Modified()
+            self.renwin2.Render()
             actors = self.ren2.GetActors()
             actors.InitTraversal()
             N = actors.GetNumberOfItems()
@@ -252,9 +266,9 @@ class Scene:
             arr = vtk_to_numpy(vtk_array).reshape(height, width, components)
             arr = np.flipud(arr)  # flipping along the first axis (y)
             if target == 'vis':
-                vis = np.asarray(arr)
+                vis = np.asarray(arr).copy()
             else:
-                mask = np.asarray(arr)[:,:,0]
+                mask = np.asarray(arr)[:,:,0].astype(np.int32).copy()
         return vis, mask
 
     def OnPress(self, event):
@@ -310,48 +324,67 @@ class Scene:
                 rgb = self.GetRgb()
                 vis, mask0 = self.GetMask()
                 mask = np.zeros_like(mask0)
-                zeron_in_mask0 = 0 in mask0
+                zero_in_mask0 = 0 in mask0
                 for ins1, ins0 in enumerate(np.unique(mask0)):
-                    if zeron_in_mask0:
+                    if zero_in_mask0:
                         mask[mask0==ins0] = ins1
                     else:
                         mask[mask0==ins0] = ins1+1
 
+                bg = (np.array((self.bg[0],self.bg[1],self.bg[2])) *255.).astype(np.uint8)
+                nbg = np.logical_and(rgb[:,:,0]!=bg[0], np.logical_and(rgb[:,:,1]!=bg[1],rgb[:,:,2]!=bg[2]))
+                _, outliers = remove_small_instance(nbg, min_width=100)
+                if len(outliers) > 0:
+                    print("Wrong")
+                    cv2.imshow("nbg of wrong bg", bgr)
+                    cv2.waitKey()
+                    exit(-1)
+
                 edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
                 mask[edge>0] = 0
-
                 if mask.max() < 3:
                     continue
 
-                black = np.logical_and(rgb[:,:,0]==0,rgb[:,:,1]==0,rgb[:,:,2]==0)
-                if np.any(black):
-                    print("Unexpected render failure")
+                _,outlier = remove_small_instance(mask,100)
+                cv2.imshow("mask",   GetColoredLabel(mask) )
+                if len(outlier) > 0:
                     continue
+                    #cv2.waitKey()
+                    #import pdb; pdb.set_trace()
 
+                # TODO Filter glitch
+                all_ins = mask>0
+                invalid_ins = np.logical_and(mask>0, rgb[:,:,0] < 230)
+                if float(invalid_ins.sum()) > .2 * float(all_ins.sum()):
+                    print("Retry due to vtk render glitch")
+                    #cv2.imshow("mask>0", 255*(all_ins).astype(np.uint8) )
+                    #cv2.imshow("rgb", rgb)
+                    #cv2.imshow("glitch", 255*(invalid_ins).astype(np.uint8) )
+                    cv2.waitKey(1)
+                    #import pdb; pdb.set_trace()
+                    #exit(1)
+                    continue
+                
                 org_depth = self.GetDepth()
 
                 # Depth noise
                 depth = org_depth + np.random.normal(0,.001,org_depth.size).reshape(org_depth.shape).astype(org_depth.dtype)
-                depth[org_depth==0] = 0.
-                #depth[np.logical_and(mask==0, edge==0)] = 0.
+                depth[org_depth<.001] = 0.
+
                 K, D = self.GetIntrinsic()
                 K = K.astype(np.float32)
                 D = D.astype(np.float32)
                 width, height = self.renwin.GetSize()
                 info = {"K":K, "D":D, "width":width, "height":height}
 
-                #box_face = np.logical_and(edge==0, mask >0)
-                #box_face = box_face.astype(np.uint8)
-                #retval, labels = cv2.connectedComponents(box_face)
-                #dist, labels = cv2.distanceTransformWithLabels( (mask==0).astype(np.uint8),
-                #        distanceType=cv2.DIST_L2, maskSize=5)
-                #mask[dist > 7.] = 0
-                depth[mask==0] = 0
+                srgb, sdepth, sK = resize(rgb,depth,K)
+                input_x, grad, hessian, outline0, convex_edge \
+                        = Convert2InterInput(srgb, sdepth, sK[0,0], sK[1,1],threshold_curvature=5.)
 
                 bgr = cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR)
-                cv2.imshow("mask",   GetColoredLabel(mask) )
                 cv2.imshow("bgr",    bgr)
                 cv2.imshow("depth", (depth>0).astype(np.uint8)*255 )
+                cv2.imshow("outline0", (outline0>0).astype(np.uint8)*255 )
 
                 #lights = self.ren.GetLights()
                 #lights.InitTraversal()
@@ -375,6 +408,7 @@ class Scene:
                 pick = { 'xyzrgb':xyzrgb, 'ins_points':ins_points,
                         'rgb':rgb, 'depth':depth,
                         'edge':edge, 'mask':mask,
+                        'fn':'%04d_markers.png'%img_idx,
                         'K':K, 'newK':K, 'D':D}
 
                 fn = osp.join(usage_path, "%d.pick"%img_idx)
@@ -391,19 +425,18 @@ class Scene:
         camera.SetViewUp(0.,-1.,0.);
         w = np.random.uniform(.5, 1.5)
         h = np.random.uniform(.5, 1.5)
-        d= .2
+        d= .001
         #dx, dy = 0.05 , 0.05
         dx, dy = 0. , 0.
         #z = 3. # np.random.uniform(2.,6.)
-        z = np.random.uniform(2., 4.)
-        edge_round = .002
-        margin = 0.01*edge_round
+        z = np.random.uniform(2.5, 3.)
+        edge_round = .01
         cx = 0.5*nc*w #+ np.random.uniform(-0.5,0.5)
         cy = 0.5*nr*h #+ np.random.uniform(-0.5,0.5)
         camera.SetPosition(0,0,0.)
         camera.SetFocalPoint(0,0,z+1.)
         #camera.SetClippingRange(0.1, 99.)
-        rbox_source = RBoxSource(w+margin,h+margin, d, edge_round)
+        rbox_source = RBoxSource(w,h,d, edge_round)
         box_mapper = vtk.vtkPolyDataMapper()
         box_mapper.SetInputConnection(rbox_source.GetOutputPort())
         self.ren2_to_ren_actors = {}
@@ -421,6 +454,11 @@ class Scene:
                     actor.Modified()
                     ren.AddActor(actor)
                     if ren == self.ren:
+                        prop = actor.GetProperty()
+                        prop.SetAmbient(.3)
+                        prop.SetDiffuse(.5)
+                        prop.SetSpecular(1.)
+                        prop.SetSpecularPower(5.)
                         actor0 = actor
                     else:
                         self.id_to_ren2actors[i] = actor

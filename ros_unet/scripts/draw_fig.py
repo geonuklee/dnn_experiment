@@ -20,6 +20,7 @@ if __name__ == '__main__':
     with open(fn,'rb') as f:
         picks_bonet['3D-BoNet/separated instances'] = pickle.load(f, **arg)
 
+    # Trained by python3 scripts/ros_evalcloud.py t
     picks_iternet = {}
     fn = 'unet_train_log_vtk_dataset_nooffset.pick'
     with open(fn,'rb') as f:

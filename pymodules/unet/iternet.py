@@ -258,7 +258,7 @@ class IterNetInterface(nn.Module):
         return fn_loss+fnp_loss
 
     def CreateOptimizer(self):
-        return optim.SGD(self.iternet.parameters(), lr=0.03, momentum=0.9)
+        return optim.SGD(self.iternet.parameters(), lr=0.01, momentum=0.9)
 
 
 class WeightedIterNetInterface(IterNetInterface):
