@@ -153,12 +153,6 @@ class RBoxSource:
     def GetOutputPort(self):
         return self.texturemap.GetOutputPort()
 
-    def CreateTexturedActor(self):
-        actor = vtk.vtkActor()
-        # On/Off texture
-        #actor.SetTexture(self.texture)
-        return actor
-
 
 # https://stackoverflow.com/questions/17659362/get-depth-from-camera-for-each-pixel
 class Scene:
@@ -220,11 +214,42 @@ class Scene:
         depth[z_buffer_data_numpy == 1.0] = non_depth_data_value
         return np.asarray(depth).copy()
 
-    def GetRgb(self):
-        #self.renwin.Modified()
+    def GetRgb(self, mask):
+        self.renwin.Modified()
         self.renwin.Render()
-        #for i, actor in enumerate(self.box_actors):
-        #    actor.GetProperty().LightingOff()
+        vtk_win_im = vtk.vtkWindowToImageFilter()
+        vtk_win_im.SetInput(self.renwin)
+        vtk_win_im.Update()
+        vtk_image = vtk_win_im.GetOutput()
+        width, height, _ = vtk_image.GetDimensions()
+        vtk_array = vtk_image.GetPointData().GetScalars()
+        components = vtk_array.GetNumberOfComponents()
+        rgb = vtk_to_numpy(vtk_array).reshape(height, width, components)
+        rgb = np.flipud(rgb)  # flipping along the first axis (y)
+
+        all_ins = mask>0
+        invalid_ins = np.logical_and(mask>0, rgb[:,:,0] < 230)
+        if float(invalid_ins.sum()) > .2 * float(all_ins.sum()):
+            print("Glitch!")
+            #print("Retry due to vtk render glitch")
+            #cv2.imshow("mask>0", 255*(all_ins).astype(np.uint8) )
+            #cv2.imshow("rgb", rgb)
+            #cv2.imshow("glitch", 255*(invalid_ins).astype(np.uint8) )
+            #c = cv2.waitKey()
+            #if c == ord('q'):
+            #    exit(1)
+            #import pdb; pdb.set_trace()
+            return None
+
+        actors = self.ren.GetActors()
+        actors.InitTraversal()
+        N = actors.GetNumberOfItems()
+        for i in range(N):
+            actor = actors.GetNextProp()
+            # On/Off texture
+            actor.SetTexture(self.rbox_source.texture)
+            actor.Modified()
+
         vtk_win_im = vtk.vtkWindowToImageFilter()
         vtk_win_im.SetInput(self.renwin)
         vtk_win_im.Update()
@@ -280,7 +305,6 @@ class Scene:
         pkg_dir = str('/').join(script_fn.split('/')[:-2])
         dataset_path = osp.join(pkg_dir, dataset_name)
         verbose = True
-        # TODO 1)
         if osp.exists(dataset_path):
             shutil.rmtree(dataset_path)
         makedirs(dataset_path)
@@ -321,8 +345,11 @@ class Scene:
                     self.ren.RemoveActor(ren_actor)
                     self.ren2.RemoveActor(ren2actor)
 
-                rgb = self.GetRgb()
                 vis, mask0 = self.GetMask()
+                rgb = self.GetRgb(mask0)
+                if rgb is None: # remove glitch
+                    continue
+
                 mask = np.zeros_like(mask0)
                 zero_in_mask0 = 0 in mask0
                 for ins1, ins0 in enumerate(np.unique(mask0)):
@@ -336,9 +363,11 @@ class Scene:
                 _, outliers = remove_small_instance(nbg, min_width=100)
                 if len(outliers) > 0:
                     print("Wrong")
-                    cv2.imshow("nbg of wrong bg", bgr)
-                    cv2.waitKey()
-                    exit(-1)
+                    #cv2.imshow("nbg of wrong", nbg.astype(np.uint8)*255)
+                    #cv2.imshow("bgr of wrong", bgr)
+                    #cv2.waitKey()
+                    #exit(-1)
+                    continue
 
                 edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
                 mask[edge>0] = 0
@@ -352,19 +381,6 @@ class Scene:
                     #cv2.waitKey()
                     #import pdb; pdb.set_trace()
 
-                # TODO Filter glitch
-                all_ins = mask>0
-                invalid_ins = np.logical_and(mask>0, rgb[:,:,0] < 230)
-                if float(invalid_ins.sum()) > .2 * float(all_ins.sum()):
-                    print("Retry due to vtk render glitch")
-                    #cv2.imshow("mask>0", 255*(all_ins).astype(np.uint8) )
-                    #cv2.imshow("rgb", rgb)
-                    #cv2.imshow("glitch", 255*(invalid_ins).astype(np.uint8) )
-                    cv2.waitKey(1)
-                    #import pdb; pdb.set_trace()
-                    #exit(1)
-                    continue
-                
                 org_depth = self.GetDepth()
 
                 # Depth noise
@@ -426,8 +442,8 @@ class Scene:
         w = np.random.uniform(.5, 1.5)
         h = np.random.uniform(.5, 1.5)
         d= .001
-        #dx, dy = 0.05 , 0.05
-        dx, dy = 0. , 0.
+        dx, dy = 0.05 , 0.05
+        #dx, dy = 0. , 0.
         #z = 3. # np.random.uniform(2.,6.)
         z = np.random.uniform(2.5, 3.)
         edge_round = .01
@@ -436,9 +452,9 @@ class Scene:
         camera.SetPosition(0,0,0.)
         camera.SetFocalPoint(0,0,z+1.)
         #camera.SetClippingRange(0.1, 99.)
-        rbox_source = RBoxSource(w,h,d, edge_round)
+        self.rbox_source = RBoxSource(w,h,d, edge_round)
         box_mapper = vtk.vtkPolyDataMapper()
-        box_mapper.SetInputConnection(rbox_source.GetOutputPort())
+        box_mapper.SetInputConnection(self.rbox_source.GetOutputPort())
         self.ren2_to_ren_actors = {}
         self.id_to_ren2actors = {}
         self.ren2actor_to_id = {}
@@ -448,7 +464,7 @@ class Scene:
             for c in range(nc):
                 for ren in [self.ren, self.ren2]:
                     x = (w + dx) * float(c) - cx
-                    actor = rbox_source.CreateTexturedActor()
+                    actor = vtk.vtkActor()
                     actor.SetMapper(box_mapper)
                     actor.SetPosition(x, y, z)
                     actor.Modified()
