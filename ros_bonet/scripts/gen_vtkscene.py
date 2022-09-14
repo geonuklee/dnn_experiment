@@ -75,7 +75,8 @@ class RBoxSource:
         self.hull_filter.AddRecursiveSpherePlanes(5);
 
         reader = vtk.vtkPNGReader()
-        reader.SetFileName("/home/geo/Documents/texture0.png")
+        #reader.SetFileName("/home/geo/Documents/texture0.png")
+        reader.SetFileName("/home/geo/Documents/texture.png")
         self.texture = vtk.vtkTexture()
         self.texture.InterpolateOn()
         self.texture.SetInputConnection(reader.GetOutputPort())
@@ -442,10 +443,10 @@ class Scene:
         w = np.random.uniform(.5, 1.5)
         h = np.random.uniform(.5, 1.5)
         d= .001
-        dx, dy = 0.05 , 0.05
-        #dx, dy = 0. , 0.
-        #z = 3. # np.random.uniform(2.,6.)
-        z = np.random.uniform(2.5, 3.)
+        #dx, dy = 0.05 , 0.05
+        dx, dy = 0. , 0.
+        z = 3. # np.random.uniform(2.,6.)
+        #z = np.random.uniform(2.5, 3.)
         edge_round = .01
         cx = 0.5*nc*w #+ np.random.uniform(-0.5,0.5)
         cy = 0.5*nr*h #+ np.random.uniform(-0.5,0.5)

@@ -21,6 +21,7 @@ import argparse
 import pickle
 
 threshold_curvature = 10.
+min_iou = .7
 
 def resize(rgb, depth, gt_marker, edge, K):
     osize = (depth.shape[1], depth.shape[0])
@@ -120,7 +121,7 @@ def Evaluate(dataset_name='vtk_dataset_nooffset'):
         pred_outline = model.spliter.pred2mask(pred)
         del pred
         marker = segment2d.Process(rgb, depth, pred_outline, convex_edge, float(K[0,0]), float(K[1,1]) )
-        _TP, _FP, _Total = EvaluateAPof2D(depth, pred_outline, marker, gt_marker, min_iou=.7)
+        _TP, _FP, _Total = EvaluateAPof2D(depth, pred_outline, marker, gt_marker, min_iou)
         TP += _TP
         FP += _FP
         Total += _Total
@@ -143,7 +144,6 @@ def Evaluate(dataset_name='vtk_dataset_nooffset'):
     exit(1)
 
 def Train(dataset_name='vtk_dataset_nooffset'):
-    min_iou = .7
     input_ch = 6
     device = "cuda:0"
     model_name = 'BigIterNetInterface'
@@ -273,7 +273,7 @@ def Train(dataset_name='vtk_dataset_nooffset'):
             else:
                n_converge = 0
 
-            if n_converge >= 5:
+            if n_converge >= 4:
                 break_condition = True
                 break
 
@@ -283,12 +283,13 @@ if __name__ == '__main__':
     parser.add_argument('type',
                     default='t',
                     choices=['t', 'e'])
+
+    parser.add_argument('dataset_name', type=str, help='The name of output dataset')
+
     args = parser.parse_args()
     if args.type == 't':
         #Train(dataset_name='vtk_dataset_separated')
-        #Train(dataset_name='vtk_dataset_nooffset')
-        Train(dataset_name='vtk_1cm')
+        Train(args.dataset_name)
     else:
         #Evaluate(dataset_name='vtk_dataset_separated')
-        #Evaluate(dataset_name='vtk_dataset_nooffset')
-        Evaluate(dataset_name='vtk_1cm')
+        Evaluate(args.dataset_name)

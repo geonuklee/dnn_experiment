@@ -19,6 +19,8 @@ from bonet import BoNet
 import scipy.stats
 import matplotlib.pyplot as plt
 
+min_iou = .7
+
 def get_colors(pc_semins):
     ins_colors = Plot.random_colors(len(np.unique(pc_semins))+1, seed=2)
     semins_labels = np.unique(pc_semins)
@@ -185,7 +187,6 @@ def train(net, train_dataset, valid_dataset, train_dataset2, configs):
             niter += 1
             net.saver.save(net.sess, save_path=net.train_mod_dir+'model.cptk')
             if i%20 == 0:
-                min_iou = .7
                 pick['min_iou'] = min_iou
                 valid_dataset.shuffle_train_files(ep)
                 train_dataset2.shuffle_train_files(ep)

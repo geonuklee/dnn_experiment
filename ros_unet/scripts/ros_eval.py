@@ -190,7 +190,7 @@ def yaw_evaluation():
         arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
-        plt.savefig( osp.join(eval_dir, 'yaw_chart.png' ) )
+        plt.savefig( osp.join(eval_dir, 'yaw_chart.svg' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
@@ -205,7 +205,7 @@ def yaw_evaluation():
     DrawOverUnderHistogram(ax, num_bins, (0., 60.),
             arr_frames, all_profiles, 'degoblique_gt', '[deg]')
     ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.8), ncol=3,fontsize=7)
-    plt.savefig( osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+    plt.savefig( osp.join(eval_dir, '%s.svg'%osp.basename(eval_dir) ) )
     #plt.show(block=True)
     plt.close()
     return
@@ -226,7 +226,7 @@ def dist_evaluation():
         arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
-        plt.savefig( osp.join(eval_dir, 'dist_chart.png' ) )
+        plt.savefig( osp.join(eval_dir, 'dist_chart.svg' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
@@ -240,7 +240,7 @@ def dist_evaluation():
     DrawOverUnderHistogram(ax, num_bins, (1.0, 2.5),
                             arr_frames, all_profiles, 'z_gt', '[m]')
     ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.8), ncol=3,fontsize=7)
-    plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
+    plt.savefig(osp.join(eval_dir, '%s.svg'%osp.basename(eval_dir) ) )
     #plt.show(block=True)
     plt.close()
     return
@@ -249,7 +249,7 @@ def test_evaluation():
     pkg_dir = get_pkg_dir()
     eval_dir = osp.join(pkg_dir, 'eval_test0523')
     if not osp.exists(eval_dir):
-         makedirs(eval_dir)
+        makedirs(eval_dir)
     profile_fn = osp.join(eval_dir, 'profile.pick')
     if not osp.exists(profile_fn):
         usages = ['test0523']
@@ -261,14 +261,14 @@ def test_evaluation():
         arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
-        plt.savefig( osp.join(eval_dir, 'test_chart.png' ) )
+        plt.savefig( osp.join(eval_dir, 'test_chart.svg' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
     evaluator.Evaluate(arr_frames, all_profiles, is_final=False )
-    plt.savefig(osp.join(eval_dir, 'test_chart.png' ) )
+    plt.savefig(osp.join(eval_dir, 'test_chart.svg' ) )
     plt.close()
     return
 
@@ -288,20 +288,20 @@ def roll_evaluation():
         arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
-        plt.savefig( osp.join(eval_dir, 'roll_chart.png' ) )
+        plt.savefig( osp.join(eval_dir, 'roll_chart.svg' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
     evaluator.Evaluate(arr_frames, all_profiles, is_final=False )
-    plt.savefig( osp.join(eval_dir, 'roll_chart.png' ) )
+    plt.savefig( osp.join(eval_dir, 'roll_chart.svg' ) )
     plt.close()
     return
 
 if __name__=="__main__":
+    #test_evaluation()
     #yaw_evaluation()
     dist_evaluation()
     #roll_evaluation()
-    #test_evaluation()
     print("#######Evaluation is finished########")

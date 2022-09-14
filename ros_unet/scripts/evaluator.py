@@ -14,7 +14,7 @@ from Objectron import box, iou
 from scipy.spatial import KDTree
 from scipy.spatial.transform import Rotation as rotation_util
 
-from unet.gen_obblabeling import ParseGroundTruth
+from unet.gen_obblabeling import ParseGroundTruth, ParseMarker
 from os import path as osp
 
 import matplotlib.pyplot as plt
@@ -23,6 +23,9 @@ from tabulate import tabulate
 from unet.util import GetColoredLabel
 
 tp_iou = .5
+
+def get_pkg_dir():
+    return osp.abspath( osp.join(osp.dirname(__file__),'..') )
 
 def GetMarkerCenters(marker):
     centers = {}
@@ -156,6 +159,13 @@ def GetErrors(indices0, pairs0to1, pair_infos, min_iou):
                 break
     return trans_errors, deg_errors
 
+def DrawOutline(cvgt, rgb):
+    dst = rgb.copy()
+    outline, ext_marker, _,_ = ParseMarker(cvgt, rgb)
+    dst[outline,0] = 255
+    dst[outline,1:] = 0
+    return dst
+
 class Evaluator:
     def __init__(self):
         self.scene_evals = {}
@@ -231,6 +241,7 @@ class Evaluator:
         # 2) Put Text, TP, FP, FN For each scene
         '''
         fn=self.scene_evals.values()[0].pick['cvgt_fn']
+        fn = osp.join(get_pkg_dir(),fn)
         cvgt = cv2.imread(fn)
         if cvgt is None:
             import pdb; pdb.set_trace()
@@ -244,9 +255,10 @@ class Evaluator:
             fig.clf()
             K = scene_eval.pick['newK']
             bb_id = 20
-            cvgt = cv2.imread(scene_eval.pick['cvgt_fn'])
+            fn = osp.join(get_pkg_dir(),scene_eval.pick['cvgt_fn'])
+            cvgt = cv2.imread(fn)
             rgb = scene_eval.pick['rgb']
-            dst = cvgt.copy()
+            dst = DrawOutline(cvgt, rgb)
 
             col_labels = ['IoU 3d>%.1f'%tp_iou, 'over', 'under']
             colWidths = [0.3] * len(col_labels)
@@ -277,26 +289,32 @@ class Evaluator:
                             n_overseg += 1
                         if 'underseg' in state:
                             n_underseg += 1
-                row_labels.append('#%d'%gt_i)
+                row_labels.append('%d'%gt_i)
                 row = [ float(v)/float(n_frame)*100 for v in [n_tp, n_overseg, n_underseg] ]
-                row = ['%.1f'%v+' %' for v in row ] 
+                #row = ['%.1f'%v+' %' for v in row ] 
+                row = ['%.1f'%v for v in row ] 
                 table_vals.append( row )
 
                 pose_msg = Posetuple2Rosmsg(gt_obb['pose'])
                 xyz_c, _ = GetSurfCenterPoint0(pose_msg, gt_obb['scale'], daxis=2)
                 xyz_c /= xyz_c[2]
                 uvz = np.matmul(K, xyz_c)
-                
-                #text, font, font_scale, font_thickness = '#%d'%gt_i, cv2.FONT_HERSHEY_PLAIN, 1., 2
-                #text_size, _ = cv2.getTextSize(text, font, font_scale, font_thickness)
-                #text_w, text_h = text_size
-                #cv2.rectangle(dst, (uv[0], uv[1]-5-text_h), (uv[0] + text_w, uv[1] + text_h), (255,255,255), -1)
-                #cv2.putText(dst, text, uv, font, font_scale, (0,0,0), font_thickness)
+                uv = ( int(uvz[0]), int(uvz[1]) )
+                text, font, font_scale, font_thickness = '#%d'%gt_i, cv2.FONT_HERSHEY_PLAIN, 1., 1
+                text_size, _ = cv2.getTextSize(text, font, font_scale, font_thickness)
+                text_w, text_h = text_size
+                cv2.rectangle(dst, (uv[0], uv[1]-5-text_h), (uv[0] + text_w, uv[1] + text_h), (255,255,255), -1)
+                cv2.putText(dst, text, (uv[0],uv[1]), font, font_scale, (0,0,0), font_thickness)
                 ax.text(uvz[0]/width, 1.-uvz[1]/height, '#%d'%gt_i,
                         bbox=dict(fill=True, facecolor='white', alpha=.5, edgecolor='black', linewidth=0),
                         va='center', ha='center',
                         fontsize=fontsize)
-
+            fname = osp.join(screenshot_dir,'scene_%04d.png'%(scene_i+1))
+            cv2.imwrite(fname, dst)
+            fname = osp.join(screenshot_dir,'eval_%04d.txt'%(scene_i+1))
+            ar = np.hstack((np.array(row_labels).reshape(-1,1), np.array(table_vals)))
+            np.savetxt(fname, ar, fmt='%s', delimiter=',',
+                    header=','.join(['ID']+col_labels), comments='')
             ax = plt.subplot(gs[1])
             the_table = ax.table(cellText=table_vals,
                                  colWidths=colWidths,
@@ -310,7 +328,7 @@ class Evaluator:
             plt.axis('off')
             plt.axis('tight')
             plt.tight_layout(pad=0., w_pad=0, h_pad=0.)
-            plt.savefig( osp.join(screenshot_dir, 'scene%04d.png'%(scene_i+1) ) )
+            plt.savefig( osp.join(screenshot_dir, 'scenetable_%04d.svg'%(scene_i+1) ) )
             plt.show(block=False)
         return
 
@@ -962,9 +980,12 @@ def DrawOverUnderHistogram(ax, num_bins, min_max, arr_frames, all_profiles, prop
 
     x = np.arange(num_bins)
     ntry_hist[no_samples] = 1 # To prevent divide by zero
-    ax.bar(x-.2, width=.1, height=(over_hist/ntry_hist.astype(np.float))*100.,  alpha=.5, label='oversegment')
-    ax.bar(x-.1, width=.1, height=(under_hist/ntry_hist.astype(np.float))*100., alpha=.5, label='undersegment')
-    ax.bar(x, width=.1, height=(tp_hist/ntry_hist.astype(np.float))*100., alpha=.5, label='3D IoU>%.2f'%tp_iou)
+    if over_hist.max() > .1:
+        ax.bar(x-.2, width=.1, height=(over_hist/ntry_hist.astype(np.float))*100.,  alpha=.5, label='oversegment')
+    if under_hist.max() > .1:
+        ax.bar(x-.1, width=.1, height=(under_hist/ntry_hist.astype(np.float))*100., alpha=.5, label='undersegment')
+    if tp_hist.max() > .1:
+        ax.bar(x, width=.1, height=(tp_hist/ntry_hist.astype(np.float))*100., alpha=.5, label='3D IoU>%.2f'%tp_iou)
     #ax.bar(x+.1, width=.1, height=(other_hist/ntry_hist.astype(np.float))*100., alpha=.5, label='others')
 
     xlabels = []
