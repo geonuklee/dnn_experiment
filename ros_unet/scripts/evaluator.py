@@ -271,6 +271,7 @@ class Evaluator:
             plt.axis('equal')
             #plt.tight_layout(pad=0., w_pad=0, h_pad=0.)
 
+            overlay = dst.copy()
             for gt_i, (gt_id, gt_obb) in enumerate( scene_eval.gt_obbs.items() ):
                 gt_i += 1
                 n_tp, n_overseg, n_underseg = 0, 0, 0
@@ -299,16 +300,24 @@ class Evaluator:
                 xyz_c, _ = GetSurfCenterPoint0(pose_msg, gt_obb['scale'], daxis=2)
                 xyz_c /= xyz_c[2]
                 uvz = np.matmul(K, xyz_c)
-                uv = ( int(uvz[0]), int(uvz[1]) )
-                text, font, font_scale, font_thickness = '#%d'%gt_i, cv2.FONT_HERSHEY_PLAIN, 1., 1
+                text, font, font_scale, font_thickness = '#%d'%gt_i, cv2.FONT_HERSHEY_PLAIN, 2., 2
                 text_size, _ = cv2.getTextSize(text, font, font_scale, font_thickness)
                 text_w, text_h = text_size
-                cv2.rectangle(dst, (uv[0], uv[1]-5-text_h), (uv[0] + text_w, uv[1] + text_h), (255,255,255), -1)
-                cv2.putText(dst, text, (uv[0],uv[1]), font, font_scale, (0,0,0), font_thickness)
+                uvz[0] -= .5*text_w
+                uvz[1] += .5*text_h
+                uvz[0] = max(5,          min(uvz[0], width-text_w ) )
+                uvz[1] = max(text_h+10,  min(uvz[1], height-5) )
+                uv = ( int(uvz[0]), int(uvz[1]) )
+                if False: # Put Text
+                    cv2.rectangle(overlay, (uv[0], uv[1]-5-text_h), (uv[0] + text_w, uv[1] + text_h), (200,200,200), -1)
+                    cv2.putText(overlay, text, (uv[0],uv[1]), font, font_scale, (0,0,0), font_thickness)
+                    cv2.putText(dst, text, (uv[0],uv[1]), font, font_scale, (0,0,0), font_thickness)
                 ax.text(uvz[0]/width, 1.-uvz[1]/height, '#%d'%gt_i,
                         bbox=dict(fill=True, facecolor='white', alpha=.5, edgecolor='black', linewidth=0),
-                        va='center', ha='center',
+                        ha='left', va='bottom',
                         fontsize=fontsize)
+            alpha=.8
+            dst = cv2.addWeighted(overlay, alpha, dst, 1 - alpha, 0)
             fname = osp.join(screenshot_dir,'scene_%04d.png'%(scene_i+1))
             cv2.imwrite(fname, dst)
             fname = osp.join(screenshot_dir,'eval_%04d.txt'%(scene_i+1))

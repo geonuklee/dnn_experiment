@@ -191,6 +191,7 @@ def yaw_evaluation():
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
         plt.savefig( osp.join(eval_dir, 'yaw_chart.svg' ) )
+        plt.savefig( osp.join(eval_dir, 'yaw_chart.png' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
@@ -206,6 +207,7 @@ def yaw_evaluation():
             arr_frames, all_profiles, 'degoblique_gt', '[deg]')
     ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.8), ncol=3,fontsize=7)
     plt.savefig( osp.join(eval_dir, '%s.svg'%osp.basename(eval_dir) ) )
+    plt.savefig( osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
     #plt.show(block=True)
     plt.close()
     return
@@ -227,6 +229,7 @@ def dist_evaluation():
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
         plt.savefig( osp.join(eval_dir, 'dist_chart.svg' ) )
+        plt.savefig( osp.join(eval_dir, 'dist_chart.png' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
@@ -241,6 +244,7 @@ def dist_evaluation():
                             arr_frames, all_profiles, 'z_gt', '[m]')
     ax.legend(loc='upper center',bbox_to_anchor=(0.5, -0.8), ncol=3,fontsize=7)
     plt.savefig(osp.join(eval_dir, '%s.svg'%osp.basename(eval_dir) ) )
+    plt.savefig(osp.join(eval_dir, '%s.png'%osp.basename(eval_dir) ) )
     #plt.show(block=True)
     plt.close()
     return
@@ -262,6 +266,7 @@ def test_evaluation():
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
         plt.savefig( osp.join(eval_dir, 'test_chart.svg' ) )
+        plt.savefig( osp.join(eval_dir, 'test_chart.png' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
@@ -269,6 +274,7 @@ def test_evaluation():
         evaluator = Evaluator()
     evaluator.Evaluate(arr_frames, all_profiles, is_final=False )
     plt.savefig(osp.join(eval_dir, 'test_chart.svg' ) )
+    plt.savefig(osp.join(eval_dir, 'test_chart.png' ) )
     plt.close()
     return
 
@@ -289,6 +295,7 @@ def roll_evaluation():
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
         plt.savefig( osp.join(eval_dir, 'roll_chart.svg' ) )
+        plt.savefig( osp.join(eval_dir, 'roll_chart.png' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
@@ -296,12 +303,13 @@ def roll_evaluation():
         evaluator = Evaluator()
     evaluator.Evaluate(arr_frames, all_profiles, is_final=False )
     plt.savefig( osp.join(eval_dir, 'roll_chart.svg' ) )
+    plt.savefig( osp.join(eval_dir, 'roll_chart.png' ) )
     plt.close()
     return
 
 if __name__=="__main__":
-    #test_evaluation()
+    test_evaluation()
     #yaw_evaluation()
-    dist_evaluation()
+    #dist_evaluation()
     #roll_evaluation()
     print("#######Evaluation is finished########")

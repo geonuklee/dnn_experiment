@@ -98,7 +98,7 @@ def get_init_floormask(bridge, width, height, y0):
     mask = np.zeros((height,width),dtype=np.uint8)
     mask[-int(y0):,:] = 255
     init_floormask = bridge.cv2_to_imgmsg(mask, encoding="8UC1")
-    return init_floormask
+    return init_floormask, mask
 
 class Sub:
     def __init__(self, rgb, depth, info):
@@ -156,9 +156,14 @@ if __name__=="__main__":
         if sub.rgb is None or sub.depth is None or sub.info is None:
             continue
         fx, fy = rect_info_msgs[cam_id].K[0], rect_info_msgs[cam_id].K[4]
-        rect_rgb_msg, rect_depth_msg, rect_depth = rectify(sub.rgb, sub.depth, mx, my, bridge)
-
-        plane_w = (0.,0.,0.,1.)
+        rect_rgb_msg, rect_depth_msg, depth, rgb = rectify(sub.rgb, sub.depth, mx, my, bridge)
+        init_floormask, cv_mask = get_init_floormask(bridge,rgb.shape[1],rgb.shape[0], y0=50)
+        floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
+        plane_c  = floor_msg.plane
+        plane_w = convert_plane(Twc, plane_c) # empty plane = no floor filter.
+        #plane_w = (0.,0.,0.,1.)
+        #cv2.imshow("floor", cv_mask)
+        #cv2.waitKey(1)
 
         t0 = time.time()
         edge_resp = predict_edge(rect_rgb_msg, rect_depth_msg, fx, fy)
