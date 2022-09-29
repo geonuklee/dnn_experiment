@@ -261,6 +261,9 @@ def test_evaluation():
         for usage in usages:
             obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
             gt_files += glob2.glob(obbdatasetpath)
+        tmp = '/home/geo/catkin_ws/src/ros_unet/obb_dataset_test0523/'
+        gt_files = [tmp+'helios_scene2_2022-05-23-15-57-05_cam0.pick']
+        #import pdb; pdb.set_trace()
         evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
         arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
@@ -275,6 +278,7 @@ def test_evaluation():
     evaluator.Evaluate(arr_frames, all_profiles, is_final=False )
     plt.savefig(osp.join(eval_dir, 'test_chart.svg' ) )
     plt.savefig(osp.join(eval_dir, 'test_chart.png' ) )
+    #plt.show(block=True)
     plt.close()
     return
 

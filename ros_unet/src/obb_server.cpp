@@ -61,6 +61,7 @@ public:
     obb_estimator_[cam_id] = std::make_shared<ObbEstimator>(camera);
     segment2d_[cam_id] = std::make_shared<Segment2DEdgeBased>(cam_id);
     obb_process_visualizer_[cam_id] = std::make_shared<ObbProcessVisualizer>(cam_id, nh_);
+    pub_xyzrgb_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/xyzrgb",1);
     pub_clouds_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/clouds",1);
     pub_boundary_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/boundary",1);
     pub_vis_mask_[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/vis_mask",1);
@@ -98,7 +99,7 @@ public:
     //std::cout << "Compute OBB" << std::endl;
 
     std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr> segmented_clouds, boundary_clouds;
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb(new pcl::PointCloud<pcl::PointXYZRGB>());
 
     obb_estimator->GetSegmentedCloud(Tcw,
                                      rgb,
@@ -150,6 +151,14 @@ public:
       msg.image    = dst;
       pub_vis_mask_.at(cam_id).publish(msg.toImageMsg());
     }
+    //if(pub_xyzrgb_.at(cam_id).getNumSubscribers() > 0)
+    {
+      sensor_msgs::PointCloud2 msg;
+      pcl::toROSMsg(*xyzrgb, msg);
+      msg.header.frame_id = "robot";
+      pub_xyzrgb_.at(cam_id).publish(msg);
+    }
+
     if(pub_clouds_.at(cam_id).getNumSubscribers() > 0) {
       sensor_msgs::PointCloud2 msg;
       ColorizeSegmentation(segmented_clouds, msg);
@@ -208,9 +217,8 @@ private:
   std::map<std::string, std::shared_ptr<Segment2DEdgeBased> > segment2d_;
   std::map<std::string, std::shared_ptr<ObbEstimator> > obb_estimator_;
   std::map<std::string, std::shared_ptr<ObbProcessVisualizer> > obb_process_visualizer_;
-  std::map<std::string, ros::Publisher> pub_clouds_, pub_boundary_, pub_vis_mask_;
+  std::map<std::string, ros::Publisher> pub_xyzrgb_, pub_clouds_, pub_boundary_, pub_vis_mask_;
   std::map<std::string, ros::Publisher> pub_expanded_outline_;
-  ros::Publisher pub_xyzrgb; // TODO <<- 이건 각 카메라 별이 아니라, 전체 카메라 묶어서.
   cv::Mat mx_, my_;
 };
 
