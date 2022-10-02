@@ -111,23 +111,25 @@ class ObbDataset(Dataset):
 
         cvgt = cv2.imread( osp.join(self.pkg_dir,pick['cvgt_fn']) )
         # Remove bacgrkground from input
-        outline, marker, _, _ = ParseMarker(cvgt)
+        outline, convex_edges, marker, _, _ = ParseMarker(cvgt)
         rgb, depth = pick['rgb'], pick_frame['depth']
         outline = outline.astype(np.uint8)
+        convex_edges = convex_edges.astype(np.uint8)
 
         K = pick['newK'].copy()
         if self.augment:
             # Reesize image height to h0 * fx/fy, before rotaiton augment.
             dsize = (rgb.shape[1], int(rgb.shape[0]*K[0,0]/K[1,1]) )
             K[1,1] = K[0,0]
-            rgb,depth,outline = [cv2.resize(img, dsize, cv2.INTER_NEAREST) for img in [rgb,depth,outline] ]
+            rgb,depth,outline,convex_edges = [cv2.resize(img, dsize, cv2.INTER_NEAREST) for img in [rgb,depth,outline,convex_edges] ]
             marker = cv2.resize(marker.astype(np.float), dsize, cv2.INTER_NEAREST).astype(np.int32)
-            rgb,depth,outline,marker = [Tensor(img) for img in [rgb,depth,outline,marker] ]
-            rgb,outline,marker = [img.long() for img in [rgb,outline,marker] ]
-            outline,marker = [img.unsqueeze(-1) for img in [outline,marker]]
+            rgb,depth,outline,convex_edges,marker = [Tensor(img) for img in [rgb,depth,outline,convex_edges,marker] ]
+            rgb,outline,convex_edges,marker = [img.long() for img in [rgb,outline,convex_edges,marker] ]
+            outline,convex_edges,marker = [img.unsqueeze(-1) for img in [outline,convex_edges,marker]]
 
             rgb  = rgb.moveaxis(-1,0)
             outline = outline.moveaxis(-1,0)
+            convex_edges = convex_edges.moveaxis(-1,0)
             marker = marker.moveaxis(-1,0)
             depth = depth.unsqueeze(0) # b,c,h,w
 
@@ -140,14 +142,15 @@ class ObbDataset(Dataset):
             #angle = np.random.uniform(-30,30)
             angles = np.arange(-45.,45.,15.)
             angle = np.random.choice(angles,1)[0]
-            rgb,depth,outline,marker = [TF.rotate(img, angle) for img in [rgb,depth,outline,marker]]
+            rgb,depth,outline,convex_edges,marker = [TF.rotate(img, angle) for img in [rgb,depth,outline,convex_edges,marker]]
 
             rgb  = rgb.moveaxis(0,-1)
             depth = depth.squeeze(0) # b,c,h,w
-            rgb,depth,outline,marker = [img.numpy() for img in [rgb,depth,outline,marker] ]
-            rgb,outline,marker = [ img.astype(np.uint8) for img in [rgb,outline,marker] ]
+            rgb,depth,outline,convex_edges,marker = [img.numpy() for img in [rgb,depth,outline,convex_edges,marker] ]
+            rgb,outline,convex_edges,marker = [ img.astype(np.uint8) for img in [rgb,outline,convex_edges,marker] ]
         else:
             outline = outline.reshape((1,outline.shape[-2], outline.shape[-1]))
+            convex_edges = convex_edges.reshape((1,convex_edges.shape[-2], convex_edges.shape[-1]))
             marker  =  marker.reshape((1,outline.shape[-2], outline.shape[-1]))
 
         input_x = Convert2InterInput(rgb, depth, K[0,0], K[1,1])[0]
@@ -163,6 +166,7 @@ class ObbDataset(Dataset):
         validmask = validmask.reshape( (1,validmask.shape[0], validmask.shape[1]) )
 
         frame = {'rgb':rgb, 'depth':depth, 'idx':idx, 'input_x': input_x, 'outline':outline,
+                'convex_edges':convex_edges,
                 'outline_dist':outline_dist.reshape( (1,outline_dist.shape[0],outline_dist.shape[1]) ),
                 'K':K,
                 'validmask':validmask,'marker':cv_marker,

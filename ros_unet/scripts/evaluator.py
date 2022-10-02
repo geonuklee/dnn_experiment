@@ -161,7 +161,7 @@ def GetErrors(indices0, pairs0to1, pair_infos, min_iou):
 
 def DrawOutline(cvgt, rgb):
     dst = rgb.copy()
-    outline, ext_marker, _,_ = ParseMarker(cvgt, rgb)
+    outline, _, ext_marker, _,_ = ParseMarker(cvgt, rgb)
     dst[outline,0] = 255
     dst[outline,1:] = 0
     return dst

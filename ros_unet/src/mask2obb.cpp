@@ -70,6 +70,18 @@ cv::Point2f ObbEstimator::GetUV(int r, int c) const {
   return nuv;
 }
 
+void LimitUVRange(const int& rows, const int& cols, cv::Point2i& uv){
+  if(uv.x < 0)
+    uv.x = 0;
+  else if(uv.x > cols-1)
+    uv.x = cols-1;
+  if(uv.y < 0)
+    uv.y = 0;
+  else if(uv.y > rows-1)
+    uv.y = rows-1;
+  return;
+}
+
 void ColorizeSegmentation(const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& clouds,
                           sensor_msgs::PointCloud2& msg){
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr colorized_pointscloud(new pcl::PointCloud<pcl::PointXYZRGB>());
@@ -199,15 +211,16 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
     float gx = GetGx(r,c);
     float gy = GetGy(r,c);
     int du[2], dv[2];
+    const float offset = 1.;
     if(std::abs(gx) > std::abs(gy) ){
-      dv[0] = 2;
+      dv[0] = offset;
       dv[1] = -dv[0];
-      du[0] = du[1] = (gx > 0 ? 2 : -2);
+      du[0] = du[1] = (gx > 0 ? offset : -offset);
     }
     else{
-      du[0] = 2;
+      du[0] = offset;
       du[1] = -du[0];
-      dv[0] = dv[1] = (gy > 0 ? 2 : -2);
+      dv[0] = dv[1] = (gy > 0 ? offset : -offset);
     }
     Eigen::Vector3d X;{
       cv::Point2f nuv = this->GetUV(r,c);
@@ -227,8 +240,8 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
       float z = depth.at<float>(rdr,cdc);
       if(z < 0.000001)
         return false;
-      if(std::abs(X[2]-z) > 0.05)
-        return false;
+      //if(std::abs(X[2]-z) > 0.05)
+      //  return false;
       dX1 = Eigen::Vector3d(nuv.x*z, nuv.y*z,z) - X;
     }
     Eigen::Vector3d dX2;{
@@ -238,8 +251,8 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
       float z = depth.at<float>(rdr,cdc);
       if(z < 0.000001)
         return false;
-      if(std::abs(X[2]-z) > 0.05)
-        return false;
+      //if(std::abs(X[2]-z) > 0.05)
+      //  return false;
       dX2 = Eigen::Vector3d(nuv.x*z, nuv.y*z,z) - X;
     }
     Eigen::Vector3d n = dX1.cross(dX2);
@@ -257,10 +270,17 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
   // Unproject cloud, boundary
   const int boundary = 5;
   const int boundary2 = boundary*2;
+  const int frame_offset = 30;
   const float f_boundary = boundary;
   int max_idx = 0;
   for(int r = boundary; r < depth.rows-boundary; r++){
     for(int c = boundary; c < depth.cols-boundary; c++){
+      bool near_frame_boundary
+        = r < frame_offset ||
+        r > depth.rows-frame_offset ||
+        c < frame_offset ||
+        c > depth.cols-frame_offset;
+
       float z0 = depth.at<float>(r,c);
       if(z0 < 0.000001 || z0 > max_depth)
         continue;
@@ -274,10 +294,11 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
         pixel_distance = 999.;
       cv::Point2f nuv = GetUV(r,c);
       pcl::PointXYZLNormal xyznormal;
-      if(! GetXYZNormal(r,c, xyznormal) )
-        continue;
+      if(! GetXYZNormal(r,c, xyznormal) ){
+        //continue;
+      }
 
-      if(pixel_distance > f_boundary){
+      if(pixel_distance > f_boundary || near_frame_boundary){
         if(!clouds.count(idx)){
           pcl::PointCloud<pcl::PointXYZLNormal>::Ptr ptr_cloud(new pcl::PointCloud<pcl::PointXYZLNormal>());
           ptr_cloud->reserve(1000);
@@ -291,13 +312,16 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
         cv::Point2i inner_uv, far_inner_uv, outer_uv;{
           float gx = GetGx(r,c);
           float gy = GetGy(r,c);
-          float pixel_offset = 10.; // TODO compute from physical length.
+          float pixel_offset = 2.; // TODO compute from physical length.
           inner_uv.x = (float) c + pixel_offset * gx;
           inner_uv.y = (float) r + pixel_offset * gy;
           far_inner_uv.x = (float) c + 2. * pixel_offset * gx;
           far_inner_uv.y = (float) r + 2. * pixel_offset * gy;
           outer_uv.x = (float) c - pixel_offset * gx;
           outer_uv.y = (float) r - pixel_offset * gy;
+          LimitUVRange(depth.rows, depth.cols, far_inner_uv);
+          LimitUVRange(depth.rows, depth.cols, inner_uv);
+          LimitUVRange(depth.rows, depth.cols, outer_uv);
         }
 
         if(mask.at<int>( inner_uv.y, inner_uv.x ) == idx){
@@ -309,8 +333,10 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
 
           float da = (z0-inner_z);
           float db = (inner_z-far_inner_z);
-          bool continue_from_inside = true; //std::abs(da-db) < 0.05;
-          bool no_occlusion_from_outside = true;//z0 < outer_z + 0.01;
+          bool continue_from_inside = std::abs(da-db) < 0.05;
+          bool no_occlusion_from_outside = z0 < outer_z + 0.01;
+          //bool continue_from_inside = true;
+          //bool no_occlusion_from_outside = true; //z0 < outer_z + 0.01;
           if(continue_from_inside && no_occlusion_from_outside){
             if(!boundary_clouds.count(idx)){
               pcl::PointCloud<pcl::PointXYZLNormal>::Ptr ptr_cloud(new pcl::PointCloud<pcl::PointXYZLNormal>());
@@ -541,8 +567,6 @@ double GetError(const g2o::SE3Quat& T1w,
   double err_x = std::min( std::abs(x1[0]-min_x1[0]), std::abs(x1[0]-max_x1[0]) );
   double err_y = std::min( std::abs(x1[1]-min_x1[1]), std::abs(x1[1]-max_x1[1]) );
   double err = std::min(err_x, err_y);
-  if(err < 0.01)
-    err = 0.;
   return err;
 }
 
@@ -577,7 +601,7 @@ int GetBoxInlier(const g2o::SE3Quat& Twl, const Eigen::Vector3d& whd,
       // Consider poor depth resolution for skewed plane.
       double max_dist_err = (i==0) ? 0.01 : 0.02;
       double min_cos      = (i==0) ? 0.9 : 0.9;
-      double dist_err = std::abs( plane.dot(x1) ); 
+      double dist_err = std::abs( plane.dot(x1) );
       if(dist_err > max_dist_err) // TODO parameterize hard coded param
         continue;
       double cos = pt_norm.dot(plane.head<3>() );
@@ -753,6 +777,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
     Eigen::Vector4f plane;
     Eigen::Vector3f v0, n0;
     int n_front_inliers = 0;
+    pcl::PointIndices::Ptr plane_inliers(new pcl::PointIndices);
     {
       // Reserve the inliner points of champion as input of RANSAC plane detection.
       pcl::ExtractIndices<pcl::PointXYZLNormal> extract;
@@ -764,7 +789,6 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
 
       // Do RANSACT for plane detection.
       pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
-      pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
       pcl::SACSegmentation<pcl::PointXYZLNormal> seg;
       seg.setOptimizeCoefficients(true);
       seg.setModelType(pcl::SACMODEL_PLANE);
@@ -775,8 +799,8 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
 
       // The coefficients are consist with Hessian normal form : [normal_x normal_y normal_z d].
       // ref : https://pointclouds.org/documentation/group__sample__consensus.html
-      seg.segment(*inliers, *coefficients);
-      n_front_inliers = inliers->indices.size();
+      seg.segment(*plane_inliers, *coefficients);
+      n_front_inliers = plane_inliers->indices.size();
       if(n_front_inliers <param.min_points_of_cluster){
         ROS_INFO("Failed to compute plane for yolact instance %d", obj->instance_id);
         return false;
@@ -785,7 +809,10 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       for(int i =0; i <4; i++)
         plane[i] = coefficients->values.at(i);
 
-      assert( std::abs( plane.head<3>().norm()-1.) < 1e-5 );
+      if(std::abs( plane.head<3>().norm()-1.) > 1e-5){
+        ROS_ERROR("std::abs( plane.head<3>().norm()-1.) > 1e-5");
+        assert(false);
+      }
 
       // If normal vector is inverted, correct it.
       Eigen::Vector4f a(t_wc[0],t_wc[1],t_wc[2],1.);
@@ -905,27 +932,24 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       //Eigen::Vector3d min_x1(inf, inf, inf);
       Eigen::Vector3d max_x1(-inf, -inf, 0.);
 
-      // Use boundary+inner points for defining OBB size instead of cloud (points),
-      // I thought cloud (points) have no adventage for size accuracy,
-      // But actually it has for rotated boxes.
-      //for(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr pc_ptr : {boundary, surf_cloud} ) {
-      for(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr pc_ptr : {boundary} ) {
-        for(const pcl::PointXYZLNormal& pt : *pc_ptr) {
-          Eigen::Vector3d x1 = T1w * Cvt2EigenXYZ(pt);
-          // 표면의 points만 사용해서, 강인한 결과값 획득하기 위한 조건문.
-          if(x1[2] > - param.max_surface_error_){
-            for(size_t k=0; k<2; k++){
-              min_x1[k] = std::min<double>(min_x1[k], x1[k]);
-              max_x1[k] = std::max<double>(max_x1[k], x1[k]);
-            }
+      for(const pcl::PointXYZLNormal& pt : *boundary) {
+        Eigen::Vector3d x1 = T1w * Cvt2EigenXYZ(pt);
+        if(x1[2] > - param.max_surface_error_){
+          for(size_t k=0; k<2; k++){
+            min_x1[k] = std::min<double>(min_x1[k], x1[k]);
+            max_x1[k] = std::max<double>(max_x1[k], x1[k]);
           }
         }
       }
-
-      for(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr pc_ptr : {boundary, cloud} ){
-        for(const pcl::PointXYZLNormal& pt : *pc_ptr) {
-          Eigen::Vector3d x1 = T1w * Cvt2EigenXYZ(pt);
-          min_x1[2] = std::min<double>(min_x1[2], x1[2]);
+      // Too deal with end of image frame.
+      for(const int index : plane_inliers->indices){
+        const pcl::PointXYZLNormal& pt = cloud->at(index);
+        Eigen::Vector3d x1 = T1w * Cvt2EigenXYZ(pt);
+        if(x1[2] > - param.max_surface_error_){
+          for(size_t k=0; k<2; k++){
+            min_x1[k] = std::min<double>(min_x1[k], x1[k]);
+            max_x1[k] = std::max<double>(max_x1[k], x1[k]);
+          }
         }
       }
 
@@ -938,7 +962,6 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
           min_x1[2] = -min_depth;
       }
 
-
       // If points on front plane are too less considering size of it,
       //  exclude it from candidates because something is wrong.
       double area = (max_x1[0]-min_x1[0])*(max_x1[1]-min_x1[1]);
@@ -947,12 +970,9 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       if(ratio < param.min_visible_ratio_of_frontplane)
         continue;
 
-      const Eigen::Vector3d whd_candidate = max_x1-min_x1;
-      Eigen::Vector3d cp1 = 0.5*(max_x1+min_x1);
-
       // Get champoin of rotate caliper with minimum offset error(=cost).
       double offset_error = 0.;
-      for(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr pc_ptr : {boundary, cloud} ) {
+      for(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr pc_ptr : {boundary} ) {
         for(const pcl::PointXYZLNormal& pt : *pc_ptr) {
           offset_error += GetError(T1w,  Cvt2EigenXYZ(pt), min_x1, max_x1);
         }
@@ -961,8 +981,49 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       if(offset_error < optimal_offset_error ){
         no_solution=false;
         optimal_offset_error = offset_error;
-        whd = whd_candidate;
+        EigenVector<Eigen::Vector4d> side_planes;
+        side_planes.reserve(4);
+        Eigen::Matrix3d Rlw = Twl.inverse().rotation().matrix();
+        const Eigen::Vector3d cp = Twl.translation();
+        for(int i=0; i<2; i++){
+          for(int k = 0; k <2; k++){
+            Eigen::Vector3d nvec = Rlw.row(i);
+            if(k > 0)
+              nvec = -nvec;
+            Eigen::Vector3d x = cp + 0.5 * whd[i] * nvec;
+            Eigen::Vector4d plane;
+            plane.head<3>() = nvec;
+            plane[3] = - nvec.dot(x);
+            side_planes.push_back(plane);
+          }
+        }
+        const double max_dist_err = 0.01;
+        const double min_cos      = 0.9;
+        for(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr pc_ptr : {boundary, cloud} ){
+          for(const pcl::PointXYZLNormal& pt : *pc_ptr) {
+            Eigen::Vector4d xw(pt.x,pt.y,pt.z,1.);
+            Eigen::Vector3d pt_norm(pt.normal_x,pt.normal_y,pt.normal_z);
+            // TODO 커튼 무시하기..
+            bool on_side_plane = false;
+            for(const auto& plane : side_planes){
+              double dist_err = std::abs( plane.dot(xw) );
+              if(dist_err > max_dist_err)
+                continue;
+              double cos = pt_norm.dot(plane.head<3>() );
+              if(cos < min_cos)
+                continue;
+              on_side_plane = true;
+              break;
+            }
+            if(!on_side_plane)
+              continue;
+            Eigen::Vector3d x1 = T1w * Cvt2EigenXYZ(pt);
+            min_x1[2] = std::min<double>(min_x1[2], x1[2]);
+          }
+        }
 
+        Eigen::Vector3d cp1 = 0.5*(max_x1+min_x1);
+        whd = max_x1-min_x1;
         // The center point of {1} coordinate is positioned on center of OBB.
         T1l.setTranslation(cp1);
         Twl = T1w.inverse() * T1l;

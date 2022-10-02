@@ -20,18 +20,6 @@ import matplotlib.pyplot as plt
 from os import makedirs
 import shutil
 
-
-def compute_loss(target, y1, y2, y3, spliter, validmask, outline_dist):
-    fn_w, fp_w = get_w_from_pixel_distribution(target, lamb=5.)
-    #fn_w, fp_w = 20., .01
-    target = target.float()
-    loss1 = masked_loss(spliter, y1, target, validmask, outline_dist, fn_w, fp_w)
-    loss2 = masked_loss(spliter, y2, target, validmask, outline_dist, fn_w, fp_w)
-    loss3 = masked_loss(spliter, y3, target, validmask, outline_dist, fn_w, fp_w)
-    lambda1, lambda2, lambda3 = 1e-1, 2e-1, 3e-1
-    loss  = lambda1*loss1 + lambda2*loss2 + lambda3*loss3
-    return loss
-
 class TrainEvaluator:
     def __init__(self, valid_dataset, model):
         self.dataloader = DataLoader(valid_dataset, batch_size=1, shuffle=False)

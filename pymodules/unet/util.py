@@ -99,16 +99,24 @@ class SplitAdapter:
         assert(pred.shape[0]==1)
         pred = pred.squeeze(0).moveaxis(0,-1)
         mask = np.zeros((pred.shape[0],pred.shape[1]),np.uint8)
-
-        edge = (pred[:,:,-1] > .9).numpy()
-        mask[edge] = 1
+        if pred.shape[-1] == 1:
+            edge = (pred[:,:,-1] > .9).numpy()
+            mask[edge] = 1
+        else:
+            outline = (pred[:,:,0] > .9).numpy()
+            convex_edges = (pred[:,:,1] > .9).numpy()
+            mask[outline] = 1
+            mask[convex_edges] = 2
         return mask
 
     def pred2dst(self, pred, np_rgb):
         mask = self.pred2mask(pred)
         dst = (np_rgb/2).astype(np.uint8)
-        dst[mask>0,:2] = 0
-        dst[mask>0,2] = 255
+        dst[mask==1,:2] = 0
+        dst[mask==1,2] = 255
+        dst[mask==2,1:] = 0
+        dst[mask==2,0] = 255
+
         margin = int( (self.wh-self.step)/2 )
         h, w, _ = dst.shape
         for k, (r,c) in enumerate(self.rc_indices):

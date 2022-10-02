@@ -6,7 +6,7 @@
 <arg name="voxel_leaf" value="0.01" />
 <arg name="rviz_name" default="unet.rviz"/>
 
-<arg name="weight_file" value="$(find ros_unet)/weights_big/iternet_4000.pth"/>
+<arg name="weight_file" value="$(find ros_unet)/weights_big/iternet_9500.pth"/>
 <!--arg name="weight_file" value="$(find ros_unet)/iternet_0_backup.pth"/-->
 
 <node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">

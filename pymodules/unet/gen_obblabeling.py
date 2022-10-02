@@ -35,7 +35,7 @@ def ParseMarker(cv_gt, rgb=None):
     # Get Yellow edges
     reddots = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==0),cv_gt[:,:,2]==255)
     bluedots = la(la(cv_gt[:,:,0]==255,cv_gt[:,:,1]==0),cv_gt[:,:,2]==0)
-    yellowedges = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==255),cv_gt[:,:,2]==255)
+    convex_edges = la(la(cv_gt[:,:,0]==0,cv_gt[:,:,1]==255),cv_gt[:,:,2]==255) # yeollow edges
 
     outline = la(la(cv_gt[:,:,0]==255,cv_gt[:,:,1]==255),cv_gt[:,:,2]==255)
     for c in [reddots, bluedots]:
@@ -43,7 +43,7 @@ def ParseMarker(cv_gt, rgb=None):
 
     # outline에 red, green, blue dot 추가. 안그러면 component가 끊겨서..
     boundary = outline.copy()
-    for c in [yellowedges]:
+    for c in [convex_edges]:
         boundary = lo(boundary, c)
 
     dist = cv2.distanceTransform( (~boundary).astype(np.uint8),
@@ -124,14 +124,14 @@ def ParseMarker(cv_gt, rgb=None):
         if ord('q') == cv2.waitKey():
             exit(1)
     #return outline, marker, front_marker, planemarker2vertices
-    return outline, ext_marker, front_marker, planemarker2vertices
+    return outline, convex_edges, ext_marker, front_marker, planemarker2vertices
 
 def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
     # 1) watershed, 꼭지점 따기.
     # 2) OBB - Roll angle 따기.
     # 3) unet_ext : Unprojection,
     # 4) unet_ext : Euclidean Cluster+oBB?
-    outline, marker, front_marker, planemarker2vertices = ParseMarker(cv_gt, rgb)
+    outline, _, marker, front_marker, planemarker2vertices = ParseMarker(cv_gt, rgb)
 
     # mask2obb, GetUV와 같은 normalization map.
     nr, nc = marker.shape

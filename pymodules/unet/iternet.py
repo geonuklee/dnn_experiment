@@ -75,7 +75,7 @@ class IterNetModule(nn.Module):
         self.c4 = convUp(dim_in=256, dim_out= 64, kernel=3, stride=1, padding=1, bias=True)
         self.c5 = convUp(dim_in=128, dim_out= 32, kernel=3, stride=1, padding=1, bias=True)
         self.c6 = conv2L(dim_in= 64, dim_out= 32, kernel=3, stride=1, padding=1, bias=True)
-        self.co = conv1L(dim_in= 32, dim_out=  1, kernel=1, stride=1, padding=0, bias=True)
+        self.co = conv1L(dim_in= 32, dim_out=  2, kernel=1, stride=1, padding=0, bias=True)
         
     def forward(self, x0, x6, x9s=None):
         x9 = self.c0(x6)
@@ -115,7 +115,7 @@ class IterNetInit(nn.Module):
         self.block1_c7 = convUp(dim_in=256, dim_out= 64, kernel=3, stride=1, padding=1, bias=True)
         self.block1_c8 = convUp(dim_in=128, dim_out= 32, kernel=3, stride=1, padding=1, bias=True)
         self.block1_c9 = conv2L(dim_in= 64, dim_out= 32, kernel=3, stride=1, padding=1, bias=True)
-        self.block1_co = conv1L(dim_in= 32, dim_out=  1, kernel=1, stride=1, padding=0, bias=True)
+        self.block1_co = conv1L(dim_in= 32, dim_out=  2, kernel=1, stride=1, padding=0, bias=True)
         
     def forward(self, img):
         x1c = self.block1_c1(img)
@@ -224,7 +224,11 @@ class IterNetInterface(nn.Module):
         return y1,y2,y3
 
     def ComputeLoss(self, output, data):
-        target, validmask, outline_dist = data['outline'], data['validmask'], data['outline_dist']
+        outline, convex_edges, validmask, outline_dist \
+                = data['outline'], data['convex_edges'], data['validmask'], data['outline_dist']
+        validmask = torch.cat((validmask,validmask),dim=1)
+        #target = outline
+        target = torch.cat((outline,convex_edges),dim=1)
         y1,y2,y3=output
         target, validmask, outline_dist \
                 = [ self.spliter.put(x) for x in (target, validmask, outline_dist) ]
@@ -242,8 +246,8 @@ class IterNetInterface(nn.Module):
 
     def ComputeEachLoss(self, output, target, validmask, outline_dist, fn_w, fp_w):
         assert(output.shape[0] == target.shape[0])
-        assert(output.shape[1] == 1)
-        assert(target.shape[1] == 1)
+        assert(output.shape[1] == 2)
+        assert(target.shape[1] == 2)
         offset = int( (self.spliter.wh-self.spliter.step-2) / 2 )
         if output.device != torch.device('cpu'):
             target = target.to(output.device)
