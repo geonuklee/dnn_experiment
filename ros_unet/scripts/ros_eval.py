@@ -255,15 +255,13 @@ def test_evaluation():
     if not osp.exists(eval_dir):
         makedirs(eval_dir)
     profile_fn = osp.join(eval_dir, 'profile.pick')
+    usages = ['test0523']
+    gt_files = []
+    for usage in usages:
+        obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
+        gt_files += glob2.glob(obbdatasetpath)
+
     if not osp.exists(profile_fn):
-        usages = ['test0523']
-        gt_files = []
-        for usage in usages:
-            obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
-            gt_files += glob2.glob(obbdatasetpath)
-        #tmp = '/home/geo/catkin_ws/src/ros_unet/obb_dataset_test0523/'
-        #gt_files = [tmp+'helios_scene2_2022-05-23-15-57-05_cam0.pick']
-        #import pdb; pdb.set_trace()
         evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
         arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
@@ -275,7 +273,7 @@ def test_evaluation():
             pick = pickle.load(f)
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
-    evaluator.Evaluate(arr_frames, all_profiles, is_final=False )
+    evaluator.Evaluate(eval_dir, gt_files, arr_frames, all_profiles, is_final=False )
     plt.savefig(osp.join(eval_dir, 'test_chart.svg' ) )
     plt.savefig(osp.join(eval_dir, 'test_chart.png' ) )
     #plt.show(block=True)

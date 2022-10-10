@@ -19,6 +19,9 @@ from os import path as osp
 
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
+#from mpl_toolkits.mplot3d import axes3d, Axes3D 
+import glob2
+import re
 from tabulate import tabulate
 from unet.util import GetColoredLabel
 
@@ -46,6 +49,10 @@ def GetMarkerCenters(marker):
         #if ord('q') == cv2.waitKey():
         #    exit(1)
     return centers
+
+def VisualizeMarker(rgb, marker):
+    dst = rgb.copy()
+    pass
 
 def FitAxis(b0, b1):
     rwb0 = rotation_util.from_dcm(b0.rotation)
@@ -188,58 +195,36 @@ class Evaluator:
         self.frame_evals[base].append(frame_eval)
         return len(self.frame_evals[base])
 
-    def Evaluate(self, arr_frames=None, all_profiles=None, is_final=False):
+    def Evaluate(self, eval_dir, gt_files, arr_frames=None, all_profiles=None, is_final=False):
         self.n_evaluate += 1
         if all_profiles is None:
             arr_frames, all_profiles = self.GetTables()
 
-        #if not hasattr(self, 'fig'):
-        #    self.fig = plt.figure(1, figsize=(12, 12), dpi=100)
-        #else:
-        #    plt.clf()
-        #fig = self.fig
-        fig = plt.figure(1, figsize=(12, 12), dpi=100)
-        fig.clf()
+        tmp = {}
+        for fn in gt_files:
+            scene_base = osp.basename(fn).split('_cam0.pick')[0]
+            f = open(fn,'r')
+            tmp[scene_base] = pickle.load(f)
+            f.close()
+            # TODO load pickle?
+        gt_files = tmp
 
-        ax1 = fig.add_subplot(1, 3, 1)
-        ax1.title.set_text('F scores')
-        ax2 = fig.add_subplot(3, 1, 3)
-
-        DrawFScoreTable(ax1, ax2, arr_frames, all_profiles)
-
-        sub_rc = (3,3)
-        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 2)
-        DrawIouRecall(all_profiles,ax)
-
-        num_bins = 5
-        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 3)
-        ax.title.set_text('min(w,h)')
-        DrawOverUnderHistogram(ax, num_bins, (None,None), arr_frames, all_profiles, 'min_wh_gt', '[m]')
-
-        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 5)
-        ax.title.set_text('center depth')
-        DrawOverUnderHistogram(ax, num_bins, (0.5, None),
-                arr_frames, all_profiles, 'z_gt', '[m]')
-
-        ax = fig.add_subplot(sub_rc[0], sub_rc[1], 6)
-        ax.title.set_text('Oblique angle')
-        DrawOverUnderHistogram(ax, num_bins, (0., 50.),
-                arr_frames, all_profiles, 'degoblique_gt', '[deg]')
+        tmp, segments = {}, glob2.glob(osp.join(eval_dir,'screenshot','segment*.png'))
+        for fn in segments:
+            base = osp.basename(fn)
+            frame_id, scene_base = re.findall('segment_0*(\d+)_(.*).png',base)[0]
+            if not scene_base in tmp:
+                tmp[scene_base] = []
+            tmp[scene_base].append(fn)
+        segments = tmp
+        DrawApChart(gt_files, segments, arr_frames, all_profiles)
 
         if is_final:
             fig.suptitle('Evaluation', fontsize=16)
         plt.tight_layout(pad=3., w_pad=2., h_pad=3.0)
-        fig.canvas.draw()
-        #plt.show(block=is_final) # block if this is final call to check.
-        plt.show(False)
         return
 
     def DrawEachScene(self, screenshot_dir):
-        '''
-        # TODO
-        # 1) Put Text, IoU>.7 / UnderSeg / Over seg for each instance
-        # 2) Put Text, TP, FP, FN For each scene
-        '''
         fn=self.scene_evals.values()[0].pick['cvgt_fn']
         fn = osp.join(get_pkg_dir(),fn)
         cvgt = cv2.imread(fn)
@@ -943,6 +928,94 @@ def DrawFScoreTable(ax, ax2, arr_frames, all_profiles):
                          loc='upper right')
     the_table.auto_set_font_size(False)
     the_table.set_fontsize(7)
+    return
+
+def onclick(event):
+    global pick_id
+    pick_id = event.artist.myidx
+    return
+
+def DrawApChart(gt_files, segments, arr_frames, all_profiles):
+    global pick_id
+
+    pkg_dir = get_pkg_dir()
+    fig = plt.figure(figsize=(12, 6), dpi=100)
+    ax1 = fig.add_subplot(221)
+    ax2 = fig.add_subplot(222)
+    ax1.set_xlabel('Oblique [deg]')
+    ax1.set_ylabel('min(w,h) [m]')
+    ax2.axis('off')
+    ax2.axis('equal')
+
+    n_tp = {}
+    n_instance = {}
+    all_properties = {}
+
+    for key, properties in all_profiles['gt_properties'].items():
+        frame_id, gt_id = key
+        base = arr_frames['scene_basename'][frame_id]
+        all_properties[(base,gt_id)] = properties
+        state = all_profiles['gt_states'][key]
+        _, iou_val = all_profiles['gt_max_iou3d'][key]
+        #_,iou_val = all_profiles['gt_max_iou2d'][key]
+        if not (base,gt_id) in n_instance:
+            n_instance[(base,gt_id)] = 0
+            n_tp[(base,gt_id)] = 0
+        n_instance[(base,gt_id)] += 1
+        if len(state)==0:
+            if iou_val > tp_iou:
+                n_tp[(base,gt_id)] +=1
+            continue
+        if 'overseg' in state:
+            pass
+        if 'underseg' in state:
+            pass
+
+    keys, datas = [], np.zeros((len(all_properties), 3))
+    for i, (key,properties) in enumerate( all_properties.items() ):
+        keys.append(key)
+        degoblique_gt, min_wh_gt, z_gt =\
+                properties['degoblique_gt'], properties['min_wh_gt'], properties['z_gt']
+        datas[i,0] = degoblique_gt
+        datas[i,1] = min_wh_gt
+        ap = float(n_tp[key]) / float(n_instance[key])
+        datas[i,2] = ap
+        if ap > .7:
+            marker = 'o'
+        elif ap > .3:
+            marker = '^'
+        else:
+            marker = 'x'
+        artist = ax1.scatter(degoblique_gt,min_wh_gt, marker=marker, picker=True, pickradius=5)
+        artist.myidx = i
+        fig.canvas.mpl_connect('pick_event', onclick)
+
+    pick_id = None
+    while True:
+        if plt.waitforbuttonpress():
+            break
+        if pick_id is None:
+            continue
+        frame_id, gt_obj_id = keys[pick_id]
+        pick = gt_files[frame_id]
+        rgb, gt_marker = pick['rgb'], pick['marker']
+
+        cvgt_fn = osp.join(pkg_dir,pick['cvgt_fn'])
+        cvgt = cv2.imread(cvgt_fn)
+        dst = DrawOutline(cvgt, rgb)
+        height, width = cvgt.shape[:2]
+        mask = rgb.copy()
+        mask[gt_marker!=gt_obj_id,:] = 0
+        alpha=.8
+        dst = cv2.addWeighted(mask, alpha, dst, 1 - alpha, 0)
+
+        ax2.imshow(cv2.cvtColor(dst, cv2.COLOR_BGR2RGB), extent = [0,1,0,1],
+                aspect=float(height)/float(width) )
+        #cv2.imshow('dst',dst)
+        #cv2.waitKey(1)
+        #import pdb; pdb.set_trace()
+        pick_id = None
+
     return
 
 def DrawOverUnderHistogram(ax, num_bins, min_max, arr_frames, all_profiles, prop_name, xlabel):
