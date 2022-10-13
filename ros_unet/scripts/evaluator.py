@@ -24,13 +24,20 @@ import glob2
 import re
 from tabulate import tabulate
 from unet.util import GetColoredLabel
+from unet_ext import GetNeighbors as _GetNeighbors
 
 tp_iou = .5
 
 def get_pkg_dir():
     return osp.abspath( osp.join(osp.dirname(__file__),'..') )
 
-def GetMarkerCenters(marker):
+def GetMarkerCenters(given_marker):
+    marker = given_marker.copy()
+    marker[:,0] = 0
+    marker[:,-1] = 0
+    marker[0,:] = 0
+    marker[-1,:] = 0
+
     centers = {}
     for marker_id in np.unique(marker):
         if marker_id == 0:
@@ -42,12 +49,10 @@ def GetMarkerCenters(marker):
         loc = np.unravel_index( np.argmax(dist_part,axis=None), marker.shape)
         centers[marker_id] = (loc[1],loc[0])
 
-        #dst = part.astype(np.uint8)*255
-        #cv2.putText(dst, "%d" % marker_id, (loc[1],loc[0]), cv2.FONT_HERSHEY_SIMPLEX, 1., (0), 2)
-        #cv2.imshow("dst", dst)
-        #cv2.imshow("dist", 2*dist_part.astype(np.uint8) )
-        #if ord('q') == cv2.waitKey():
-        #    exit(1)
+    #dst = GetColoredLabel(marker)
+    #for marker_id, cp in centers.items():
+    #    cv2.putText(dst, "%d" % marker_id, (cp[0],cp[1]), cv2.FONT_HERSHEY_SIMPLEX, 1., (0), 2)
+
     return centers
 
 def VisualizeMarker(rgb, marker):
@@ -619,7 +624,6 @@ class FrameEval:
                     (10,10,10), 1)
         #cv2.imshow("dst", dst)
         #cv2.waitKey()
-        #exit(1)
         return dst
 
     def GetMatches(self, obj_array1):
@@ -935,17 +939,51 @@ def onclick(event):
     pick_id = event.artist.myidx
     return
 
+def onpress(event):
+    global keyevent
+    if event.name == 'key_press_event':
+        keyevent = event
+    return
+
+def GetNeighbors(marker):
+    radius = 5
+    neighbors = _GetNeighbors(marker, radius=5)
+    if False: # verbose
+        print(neighbors)
+        centers = GetMarkerCenters(marker)
+        dst = GetColoredLabel(marker)
+        for marker_id, cp in centers.items():
+            for nid in neighbors[marker_id]:
+                ncp = centers[nid]
+                cv2.line(dst, (cp[0],cp[1]), (ncp[0],ncp[1]), (255,255,255), 2)
+        for marker_id, cp in centers.items():
+            text, font, font_scale, font_thickness \
+                    = "%d" % marker_id, cv2.FONT_HERSHEY_SIMPLEX, 1., 2
+            text_size, _ = cv2.getTextSize(text, font, font_scale, font_thickness)
+            ox, oy = text_size[0]/2., text_size[1]/2.
+            cp = (int(cp[0]-ox), int(cp[1]+oy))
+            cv2.rectangle(dst,(cp[0],cp[1]-text_size[1]), (cp[0]+text_size[0],cp[1]), (200,200,200), -1)
+            cv2.putText(dst, text, (cp[0],cp[1]), font, font_scale, (0), font_thickness)
+        cv2.imshow("dst", dst)
+        c = cv2.waitKey(0)
+    return neighbors
+
 def DrawApChart(gt_files, segments, arr_frames, all_profiles):
     global pick_id
+    global keyevent
 
     pkg_dir = get_pkg_dir()
-    fig = plt.figure(figsize=(12, 6), dpi=100)
+    fig = plt.figure(figsize=(8, 8), dpi=100)
+    fig.canvas.mpl_connect('key_press_event', onpress)
     ax1 = fig.add_subplot(221)
     ax2 = fig.add_subplot(222)
+    ax3 = fig.add_subplot(212)
     ax1.set_xlabel('Oblique [deg]')
-    ax1.set_ylabel('min(w,h) [m]')
+    ax1.set_ylabel('maximum distance [pixel]')
     ax2.axis('off')
     ax2.axis('equal')
+    ax3.axis('off')
+    ax3.axis('equal')
 
     n_tp = {}
     n_instance = {}
@@ -956,8 +994,8 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
         base = arr_frames['scene_basename'][frame_id]
         all_properties[(base,gt_id)] = properties
         state = all_profiles['gt_states'][key]
-        _, iou_val = all_profiles['gt_max_iou3d'][key]
-        #_,iou_val = all_profiles['gt_max_iou2d'][key]
+        #_, iou_val = all_profiles['gt_max_iou3d'][key]
+        _,iou_val = all_profiles['gt_max_iou2d'][key]
         if not (base,gt_id) in n_instance:
             n_instance[(base,gt_id)] = 0
             n_tp[(base,gt_id)] = 0
@@ -971,13 +1009,31 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
         if 'underseg' in state:
             pass
 
+    max_distances = {}
+    for base, pick in gt_files.items():
+        # TODO ParseMarker
+        cvgt_fn = osp.join(pkg_dir,pick['cvgt_fn'])
+        cvgt = cv2.imread(cvgt_fn)
+        outline, convex_edges, marker, front_marker, planemarker2vertices \
+            = ParseMarker(cvgt, rgb=pick['rgb'])
+
+        neighbors = GetNeighbors(marker)
+
+        dist_map = cv2.distanceTransform( (~outline).astype(np.uint8),
+                distanceType=cv2.DIST_L2, maskSize=5)
+        for obb in pick['obbs']:
+            instance_id = obb['id']
+            max_dist = dist_map[front_marker==instance_id].max()
+            max_distances[(base,instance_id)] = max_dist
+
     keys, datas = [], np.zeros((len(all_properties), 3))
     for i, (key,properties) in enumerate( all_properties.items() ):
         keys.append(key)
         degoblique_gt, min_wh_gt, z_gt =\
                 properties['degoblique_gt'], properties['min_wh_gt'], properties['z_gt']
+        max_dist = max_distances[key]
         datas[i,0] = degoblique_gt
-        datas[i,1] = min_wh_gt
+        datas[i,1] = max_dist
         ap = float(n_tp[key]) / float(n_instance[key])
         datas[i,2] = ap
         if ap > .7:
@@ -986,18 +1042,23 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
             marker = '^'
         else:
             marker = 'x'
-        artist = ax1.scatter(degoblique_gt,min_wh_gt, marker=marker, picker=True, pickradius=5)
+        artist = ax1.scatter(datas[i,0], datas[i,1], marker=marker, picker=True, pickradius=5)
         artist.myidx = i
         fig.canvas.mpl_connect('pick_event', onclick)
+    ax1.set_xlim(0, 50)
+    ax1.set_ylim(0, 100)
 
     pick_id = None
     while True:
-        if plt.waitforbuttonpress():
-            break
+        presskey = plt.waitforbuttonpress(.1)
+        if presskey is not None:
+            if keyevent.key == 'q':
+                #import pdb; pdb.set_trace()
+                exit(1)
         if pick_id is None:
             continue
-        frame_id, gt_obj_id = keys[pick_id]
-        pick = gt_files[frame_id]
+        scene_id, gt_obj_id = keys[pick_id]
+        pick = gt_files[scene_id]
         rgb, gt_marker = pick['rgb'], pick['marker']
 
         cvgt_fn = osp.join(pkg_dir,pick['cvgt_fn'])
@@ -1011,10 +1072,42 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
 
         ax2.imshow(cv2.cvtColor(dst, cv2.COLOR_BGR2RGB), extent = [0,1,0,1],
                 aspect=float(height)/float(width) )
-        #cv2.imshow('dst',dst)
-        #cv2.waitKey(1)
-        #import pdb; pdb.set_trace()
+
         pick_id = None
+        keyevent, curr_frame = None, -1
+        while True:
+            if pick_id is not None:
+                break
+            presskey = plt.waitforbuttonpress(.1)
+            if presskey is None: # No interaction
+                pass
+            elif presskey:
+                n = len(segments[scene_id])
+                if keyevent is not None:
+                    if keyevent.key == 'n':
+                        curr_frame = (curr_frame+1)%n
+                    elif keyevent.key == 'p':
+                        curr_frame = (curr_frame+n-1)%n
+                    elif keyevent.key == 'q':
+                        #import pdb; pdb.set_trace()
+                        exit(1)
+                    else:
+                        keyevent = None
+                        continue
+                    keyevent = None
+                else:
+                    keyevent = None
+                    continue
+            else: # mouse click
+                keyevent = None
+                break
+            if curr_frame < 0:
+                curr_frame = 0
+            #print('curr_frame = ',curr_frame)
+            fn = segments[scene_id][curr_frame]
+            dst = cv2.imread(fn)
+            ax3.imshow(cv2.cvtColor(dst, cv2.COLOR_BGR2RGB), extent = [0,1,0,1],
+                    aspect=float(height)/float(width) )
 
     return
 

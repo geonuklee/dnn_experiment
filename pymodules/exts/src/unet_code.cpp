@@ -472,6 +472,44 @@ int GetFilteredDepth(const float* depth,
   return 0;
 }
 
+std::set<std::pair<int,int> > GetNeighbors(const int32_t* marker, const std::vector<long int>& shape, int radius){
+  const int rows = (int)shape.at(0);
+  const int cols = (int)shape.at(1);
+  const int bg = 0;
+
+  std::set<std::pair<int,int> > contacts;
+
+  for (int r0=0; r0<rows; r0++) {
+    for (int c0=0; c0<cols; c0++) {
+      const int32_t& i0 = marker[r0*cols+c0];
+      if(i0 == bg)
+        continue;
+
+      for (int dr=-radius; dr<=radius; dr++) {
+        const int r = r0 + dr;
+        if( r < 0 || r >= rows)
+          continue;
+        for (int dc=-radius; dc<=radius; dc++) {
+          const int c = c0 + dc;
+          if( c < 0 || c >= cols)
+            continue;
+          const int32_t& i1 = marker[r*cols+c];
+          if(i1 == bg)
+            continue;
+          if(i0 == i1)
+            continue;
+            // TODO
+          std::pair<int,int> contact(std::min(i0,i1), std::max(i0,i1) );
+          contacts.insert(contact);
+        }
+      }
+    }
+  }
+  //for(const auto& contact : contacts)
+  //  std::cout << contact.first << ", " << contact.second << std::endl;
+  return contacts;
+}
+
 int FindEdge(const unsigned char *arr_in, const std::vector<long int>& shape,
              unsigned char *arr_out) {
   const int rows = (int)shape.at(0);
@@ -952,6 +990,27 @@ py::array_t<float> PyGetDiscontinuousDepthEdge(py::array_t<float> inputdepth,
   return output;
 }
 
+py::dict PyGetNeighbors(py::array_t<int32_t> marker, int radius) {
+  py::dict output;
+  py::buffer_info buf_marker = marker.request();
+  const int32_t* ptr_marker = (const int32_t*) buf_marker.ptr;
+  std::set<std::pair<int,int> > contacts = GetNeighbors(ptr_marker, buf_marker.shape, radius);
+  for(const auto& contact : contacts){
+    py::object i0 = py::cast<int>((int)contact.first);
+    py::object i1 = py::cast<int>((int)contact.second);
+
+    if(! output.contains(i0) )
+      output[i0] = py::list();
+    py::cast<py::list>( output[i0] ).append(i1);
+
+    if(! output.contains(i1) )
+      output[i1] = py::list();
+    py::cast<py::list>( output[i1] ).append(i0);
+
+  }
+  return output;
+}
+
 py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
                        py::array_t<int32_t> marker,
                        py::list py_label2vertices,
@@ -1015,6 +1074,8 @@ py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
 
 
 PYBIND11_MODULE(unet_ext, m) {
+  m.def("GetNeighbors", &PyGetNeighbors, "Get neighbors of each instance in a given marker.",
+        py::arg("marker"), py::arg("radius") );
   m.def("GetFilteredDepth", &PyGetFilteredDepth, "Get filtered depth.",
         py::arg("input_mask"), py::arg("dd_edge"),
         py::arg("sample_width") );
