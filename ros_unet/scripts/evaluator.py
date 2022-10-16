@@ -998,8 +998,8 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(222)
     ax3 = fig.add_subplot(224)
-    ax1.set_xlabel('Oblique [deg]')
-    ax1.set_ylabel('maximum distance [pixel]')
+    ax1.set_xlabel('min oblique error among neighbors [deg]')
+    ax1.set_ylabel('maximum width among neighbors [pixel]')
     ax2.axis('off')
     ax2.axis('equal')
     ax3.axis('off')
@@ -1049,6 +1049,8 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
             loc = np.unravel_index( np.argmax(dist_part,axis=None), marker.shape)
             centers[marker_id] = (loc[1],loc[0])
             max_distances[(base,marker_id)] = dist_part.max()
+            whd = obb['scale']
+            #max_distances[(base,marker_id)] = min(whd[0],whd[1])
             obbs[marker_id] = obb
         
         neighbors = GetNeighbors(marker, centers)
