@@ -74,7 +74,7 @@ def ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scen_eval):
 if __name__=="__main__":
     script_fn = osp.abspath(__file__)
     pkg_dir = str('/').join(script_fn.split('/')[:-2])
-    usage='test'
+    usage='test0523'
     dataset_name = 'obb_dataset_%s'%usage
     #output_path = osp.join(pkg_dir, name)
     obbdatasetpath = osp.join(pkg_dir,dataset_name)
@@ -146,8 +146,10 @@ if __name__=="__main__":
             if osp.exists(label_fn):
                 cv_gt = cv2.imread(label_fn)
                 backup = cv_gt.copy()
-                pick['obbs'], init_floormask, pick['marker'] = ParseGroundTruth(cv_gt, cv_rect_rgb,
-                        cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
+                pick['obbs'], init_floormask, pick['marker'],\
+                        pick['front_marker'], pick['convex_edges'], pick['outline']\
+                        = ParseGroundTruth(cv_gt, cv_rect_rgb,
+                                cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
                 if init_floormask is None:
                     plane_c = (0., 0., 0., 99.)
                 else:
@@ -174,8 +176,10 @@ if __name__=="__main__":
 
             # Make OBB for it
             cv2.destroyAllWindows()
-            pick['obbs'], init_floormask, pick['marker'] = ParseGroundTruth(cv_gt, cv_rect_rgb,
-                    cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
+            pick['obbs'], init_floormask, pick['marker'],\
+                    pick['front_marker'], pick['convex_edges'], pick['outline']\
+                    = ParseGroundTruth(cv_gt, cv_rect_rgb,
+                            cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
             if init_floormask is None:
                 plane_c = (0., 0., 0., 99.)
             else:

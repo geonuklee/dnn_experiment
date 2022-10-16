@@ -96,12 +96,12 @@ def GetCorrespondenceMarker():
     correspondence.color.r = 1.
     return correspondence
 
-def GetInfoMarker(obj, precision, recall, loss, index):
+def GetInfoMarker(obj, precision, recall, iou_val, index):
     info = Marker()
     info.text = "type=%d"%obj.type
     info.text = "pr=%.2f"%precision
     info.text += "\nre=%.2f"%recall
-    info.text += "\nIoU=%.2f"%loss.iou()
+    info.text += "\nIoU=%.2f"%iou_val
     info.header.frame_id = "robot"
     info.type = Marker.TEXT_VIEW_FACING
     info.scale.z = 0.02
@@ -222,9 +222,9 @@ class Evaluator:
                 tmp[scene_base] = []
             tmp[scene_base].append(fn)
         segments = tmp
-        DrawApChart(gt_files, segments, arr_frames, all_profiles)
 
         if is_final:
+            DrawApChart(gt_files, segments, arr_frames, all_profiles)
             fig.suptitle('Evaluation', fontsize=16)
         plt.tight_layout(pad=3., w_pad=2., h_pad=3.0)
         return
@@ -678,15 +678,20 @@ class FrameEval:
             # TODO compute daxis
             b0 = GetDepthOptimizedBox(b0, b1, daxis)
             loss = iou.IoU(b0, b1)
-            vol_intersection = loss.intersection()
+            try:
+                vol_intersection = loss.intersection()
+                iou_val = loss.iou()
+            except:
+                vol_intersection = 0.
+                iou_val = 0.
 
             precision = vol_intersection /b1.volume
             recall = vol_intersection / b0.volume
 
-            if loss.iou() > gt_max_iou3d[gt_id][1]:
+            if iou_val > gt_max_iou3d[gt_id][1]:
                 gt_max_iou3d[gt_id] = (pred_id, loss.iou() )
 
-            pair_info['iou3d'] = loss.iou()
+            pair_info['iou3d'] = iou_val
             pair_info['precision'] = precision
             pair_info['recall'] = recall
             pair_info['b0'] = b0
@@ -697,7 +702,7 @@ class FrameEval:
             pair_info['deg_err'] = deg_err
             pair_info['max_wh_err'] = max_wh_err
 
-            info = GetInfoMarker(obj1, precision, recall, loss, len(infos.markers) )
+            info = GetInfoMarker(obj1, precision, recall, iou_val, len(infos.markers) )
             infos.markers.append(info)
 
             ogt_marker = GetBoxMarker(b0, info.id)
@@ -945,12 +950,11 @@ def onpress(event):
         keyevent = event
     return
 
-def GetNeighbors(marker):
+def GetNeighbors(marker, centers):
     radius = 5
     neighbors = _GetNeighbors(marker, radius=5)
     if False: # verbose
         print(neighbors)
-        centers = GetMarkerCenters(marker)
         dst = GetColoredLabel(marker)
         for marker_id, cp in centers.items():
             for nid in neighbors[marker_id]:
@@ -968,16 +972,32 @@ def GetNeighbors(marker):
         c = cv2.waitKey(0)
     return neighbors
 
+def GetObliqueError(obb0, obb1):
+    x,y,z, qw, qx, qy, qz = obb0['pose_wb']
+    rot0 = rotation_util.from_quat([qx, qy, qz, qw])
+    x,y,z, qw, qx, qy, qz = obb1['pose_wb']
+    rot1 = rotation_util.from_quat([qx, qy, qz, qw])
+    R0 = rot0.as_dcm()
+    R1 = rot1.as_dcm()
+    min_deg_err = 99999.
+    #if obb0['id']==7 and obb1['id']==13:
+    #    import pdb; pdb.set_trace()
+    for i in range(3):
+        dotprod = np.abs(np.dot(R0[:,0], R1[:,i]))
+        deg_err = np.rad2deg( np.arccos(dotprod) )
+        min_deg_err = min(deg_err, min_deg_err)
+    return min_deg_err
+
 def DrawApChart(gt_files, segments, arr_frames, all_profiles):
     global pick_id
     global keyevent
 
     pkg_dir = get_pkg_dir()
-    fig = plt.figure(figsize=(8, 8), dpi=100)
+    fig = plt.figure(figsize=(16, 16), dpi=100)
     fig.canvas.mpl_connect('key_press_event', onpress)
-    ax1 = fig.add_subplot(221)
+    ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(222)
-    ax3 = fig.add_subplot(212)
+    ax3 = fig.add_subplot(224)
     ax1.set_xlabel('Oblique [deg]')
     ax1.set_ylabel('maximum distance [pixel]')
     ax2.axis('off')
@@ -1010,34 +1030,60 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
             pass
 
     max_distances = {}
+    distances_among_group = {}
+    relative_obliqueness = {}
     for base, pick in gt_files.items():
-        # TODO ParseMarker
-        cvgt_fn = osp.join(pkg_dir,pick['cvgt_fn'])
-        cvgt = cv2.imread(cvgt_fn)
-        outline, convex_edges, marker, front_marker, planemarker2vertices \
-            = ParseMarker(cvgt, rgb=pick['rgb'])
-
-        neighbors = GetNeighbors(marker)
-
-        dist_map = cv2.distanceTransform( (~outline).astype(np.uint8),
-                distanceType=cv2.DIST_L2, maskSize=5)
+        outline, marker, front_marker, convex_edges\
+                = pick['outline'], pick['marker'], pick['front_marker'], pick['convex_edges']
+        #edges = np.logical_or(outline, convex_edges)
+        #edges[:,0] = edges[:,-1] = edges[0,:] = edges[-1,:] = True
+        #cv2.imshow("edges", 255*all_edges.astype(np.uint8))
+        #cv2.waitKey()
+        obbs, centers = {}, {}
         for obb in pick['obbs']:
-            instance_id = obb['id']
-            max_dist = dist_map[front_marker==instance_id].max()
-            max_distances[(base,instance_id)] = max_dist
+            marker_id = obb['id']
+            part = front_marker==marker_id
+            part[:,0] = part[:,-1] = part[0,:] = part[-1,:] = False
+            dist_part = cv2.distanceTransform( part.astype(np.uint8),
+                distanceType=cv2.DIST_L2, maskSize=5)
+            loc = np.unravel_index( np.argmax(dist_part,axis=None), marker.shape)
+            centers[marker_id] = (loc[1],loc[0])
+            max_distances[(base,marker_id)] = dist_part.max()
+            obbs[marker_id] = obb
+        
+        neighbors = GetNeighbors(marker, centers)
+        for id0, obb0 in obbs.items():
+            min_d = max_distances[(base,id0)]
+            for id1 in neighbors[id0]:
+                if max_distances[(base,id1)] < min_d:
+                    min_d = max_distances[(base,id1)]
+            distances_among_group[(base,id0)] = min_d
+            min_oblique = 9999999.
+            for id1 in neighbors[id0]:
+                obb1 = obbs[id1]
+                err = GetObliqueError(obb0, obb1)
+                if err < min_oblique:
+                    min_oblique = err
+            relative_obliqueness[(base,id0)] = min_oblique
 
     keys, datas = [], np.zeros((len(all_properties), 3))
     for i, (key,properties) in enumerate( all_properties.items() ):
         keys.append(key)
         degoblique_gt, min_wh_gt, z_gt =\
                 properties['degoblique_gt'], properties['min_wh_gt'], properties['z_gt']
-        max_dist = max_distances[key]
-        datas[i,0] = degoblique_gt
+        if degoblique_gt > 30.:
+            continue
+        if z_gt > 3.:
+            continue
+        #max_dist = max_distances[key]
+        max_dist = distances_among_group[key]
+        max_oblique = relative_obliqueness[key]
+        datas[i,0] = max_oblique 
         datas[i,1] = max_dist
         ap = float(n_tp[key]) / float(n_instance[key])
         datas[i,2] = ap
         if ap > .7:
-            marker = 'o'
+            marker = '.'
         elif ap > .3:
             marker = '^'
         else:
@@ -1045,13 +1091,14 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
         artist = ax1.scatter(datas[i,0], datas[i,1], marker=marker, picker=True, pickradius=5)
         artist.myidx = i
         fig.canvas.mpl_connect('pick_event', onclick)
-    ax1.set_xlim(0, 50)
-    ax1.set_ylim(0, 100)
+    #ax1.set_xlim(0, 50)
+    #ax1.set_ylim(0, 100)
 
     pick_id = None
     while True:
+        keyevent, curr_frame = None, -1
         presskey = plt.waitforbuttonpress(.1)
-        if presskey is not None:
+        if keyevent is not None:
             if keyevent.key == 'q':
                 #import pdb; pdb.set_trace()
                 exit(1)
@@ -1074,7 +1121,6 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
                 aspect=float(height)/float(width) )
 
         pick_id = None
-        keyevent, curr_frame = None, -1
         while True:
             if pick_id is not None:
                 break

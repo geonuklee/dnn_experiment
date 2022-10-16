@@ -42,7 +42,7 @@ def get_camid(fn):
     groups = re.findall("(.*)_(cam0|cam1)", base)[0]
     return groups[1]
 
-def perform_test(gt_files, screenshot_dir):
+def perform_test(eval_dir, gt_files, screenshot_dir):
     if osp.exists(screenshot_dir):
         shutil.rmtree(screenshot_dir)
     makedirs(screenshot_dir)
@@ -166,7 +166,7 @@ def perform_test(gt_files, screenshot_dir):
                 break
         # Draw for after evaluating a rosbag file.
         if evaluator.n_frame > 0:
-            evaluator.Evaluate(is_final=False)
+            evaluator.Evaluate(eval_dir, gt_files, is_final=False)
             evaluator.DrawEachScene(screenshot_dir)
             print('Evaluate files.. %d/%d'%(i_file, len(gt_files)) )
     return evaluator
@@ -260,9 +260,11 @@ def test_evaluation():
     for usage in usages:
         obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
         gt_files += glob2.glob(obbdatasetpath)
+    # TODO QHull failure? evaluator.py, ln.682
+    #gt_files = ['/home/geo/catkin_ws/src/ros_unet/obb_dataset_test0523/helios_test_2022-05-23-15-52-03_cam0.pick']
 
     if not osp.exists(profile_fn):
-        evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
+        evaluator = perform_test(eval_dir, gt_files, osp.join(eval_dir, 'screenshot'))
         arr_frames, all_profiles = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
@@ -273,7 +275,7 @@ def test_evaluation():
             pick = pickle.load(f)
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
         evaluator = Evaluator()
-    evaluator.Evaluate(eval_dir, gt_files, arr_frames, all_profiles, is_final=False )
+    evaluator.Evaluate(eval_dir, gt_files, arr_frames, all_profiles, is_final=True )
     plt.savefig(osp.join(eval_dir, 'test_chart.svg' ) )
     plt.savefig(osp.join(eval_dir, 'test_chart.png' ) )
     #plt.show(block=True)

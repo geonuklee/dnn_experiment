@@ -176,24 +176,27 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       }
     }
   }
+
   // plane detection with frontpoints.
-  const float leaf_size = 0.01;
+  const float leaf_size = 0.005;
+  const float euclidean_tolerance = 0.01;
   for(auto it : frontpoints){
     pcl::PointCloud<pcl::PointXYZ>::Ptr front_cloud = it.second;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr all_cloud= allpoints.at(it.first);
     {
       pcl::VoxelGrid<pcl::PointXYZ> sor;
       sor.setInputCloud(front_cloud);
       sor.setLeafSize(leaf_size,leaf_size,leaf_size);
       sor.filter(*front_cloud);
     }
-
-    pcl::PointCloud<pcl::PointXYZ>::Ptr all_cloud= allpoints.at(it.first);
     {
       pcl::VoxelGrid<pcl::PointXYZ> sor;
       sor.setInputCloud(all_cloud);
       sor.setLeafSize(leaf_size,leaf_size,leaf_size);
       sor.filter(*all_cloud);
     }
+    EuclideanCluster<pcl::PointXYZ>(euclidean_tolerance, front_cloud);
+    EuclideanCluster<pcl::PointXYZ>(euclidean_tolerance, all_cloud);
   }
 
   const float inf = 999999.;
@@ -209,7 +212,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
     //seg.setMethodType(pcl::SAC_LMEDS);
-    seg.setDistanceThreshold(0.01);
+    seg.setDistanceThreshold(0.005);
     seg.setInputCloud(front_cloud);
     // The coefficients are consist with Hessian normal form : [normal_x normal_y normal_z d].
     // ref : https://pointclouds.org/documentation/group__sample__consensus.html
@@ -233,8 +236,6 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
     }
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr all_cloud = allpoints.at(it.first);
-    const float euclidean_tolerance = 0.05;
-    EuclideanCluster<pcl::PointXYZ>(euclidean_tolerance, all_cloud);
 
     // Orientation from vertices
     // vertices : uv of o, y
@@ -291,7 +292,7 @@ std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
       min_x0[k] = std::min(min_x0[k], x0[k]);
     }
 
-    if(all_cloud->size() < front_cloud->size()+10 ){
+    if(max_x0[2]-min_x0[2] < .01 ){
       const double min_depth = 0.2;
       if(min_x0[0] > -min_depth)
         min_x0[0] = -min_depth;

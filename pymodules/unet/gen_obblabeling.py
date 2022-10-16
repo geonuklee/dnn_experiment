@@ -102,14 +102,20 @@ def ParseMarker(cv_gt, rgb=None):
         marker[marker0==idx] = pidx
         front_marker[plane_marker0==pidx] = pidx
 
-    dist, ext_marker = cv2.distanceTransformWithLabels( (marker==0).astype(np.uint8),
+    dist, tmp_ext_marker = cv2.distanceTransformWithLabels( (marker==0).astype(np.uint8),
             distanceType=cv2.DIST_L2, maskSize=5)
-    ext_marker[dist > 7.] = 0
+    tmp_ext_marker[dist > 7.] = 0
+
+    ext_marker = np.zeros_like(tmp_ext_marker)
+    for pidx, _, cp in planemarker2vertices:
+        tidx = tmp_ext_marker[cp[1],cp[0]]
+        idx = marker[cp[1],cp[0]]
+        ext_marker[tmp_ext_marker==tidx] = idx
     verbose=False
     if verbose:
         #cv2.imshow("outline", 255*outline.astype(np.uint8))
         #cv2.imshow("color_pm0", color_pm0)
-        #cv2.imshow("front_marker", GetColoredLabel(front_marker))
+        cv2.imshow("front_marker", GetColoredLabel(front_marker))
         cv2.imshow("marker", GetColoredLabel(marker))
         cv2.imshow("ext_marker", GetColoredLabel(ext_marker))
         dst = GetColoredLabel(marker)
@@ -131,7 +137,7 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
     # 2) OBB - Roll angle 따기.
     # 3) unet_ext : Unprojection,
     # 4) unet_ext : Euclidean Cluster+oBB?
-    outline, _, marker, front_marker, planemarker2vertices = ParseMarker(cv_gt, rgb)
+    outline, convex_edges, marker, front_marker, planemarker2vertices = ParseMarker(cv_gt, rgb)
 
     # mask2obb, GetUV와 같은 normalization map.
     nr, nc = marker.shape
@@ -157,7 +163,7 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
         obbs.append( {'id':idx, 'pose':pose, 'scale':scale } )
 
     init_floormask = GetInitFloorMask(cv_gt)
-    return obbs, init_floormask, marker
+    return obbs, init_floormask, marker, front_marker, convex_edges, outline
 
 def GetInitFloorMask(cv_gt):
     la = np.logical_and
