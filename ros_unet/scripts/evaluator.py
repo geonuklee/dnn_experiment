@@ -17,6 +17,7 @@ from scipy.spatial.transform import Rotation as rotation_util
 from unet.gen_obblabeling import ParseGroundTruth, ParseMarker
 from os import path as osp
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
 #from mpl_toolkits.mplot3d import axes3d, Axes3D 
@@ -996,6 +997,14 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
     fig = plt.figure(figsize=(16, 16), dpi=100)
     fig.canvas.mpl_connect('key_press_event', onpress)
     ax1 = fig.add_subplot(121)
+    cmap = plt.cm.get_cmap('jet')
+    norm = mpl.colors.Normalize(vmin=0.5, vmax=2.5)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = plt.colorbar(sm)
+    cbar.ax.set_ylabel('center depth [m]', rotation=90)
+
+
     ax2 = fig.add_subplot(222)
     ax3 = fig.add_subplot(224)
     ax1.set_xlabel('min oblique error among neighbors [deg]')
@@ -1090,7 +1099,9 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
             marker = '^'
         else:
             marker = 'x'
-        artist = ax1.scatter(datas[i,0], datas[i,1], marker=marker, picker=True, pickradius=5)
+        color = cmap(norm(z_gt))
+        artist = ax1.scatter(datas[i,0], datas[i,1], marker=marker, color = color,
+                picker=True, pickradius=5)
         artist.myidx = i
         fig.canvas.mpl_connect('pick_event', onclick)
     #ax1.set_xlim(0, 50)
