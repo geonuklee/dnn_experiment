@@ -216,16 +216,22 @@ class Evaluator:
         gt_files = tmp
 
         tmp, segments = {}, glob2.glob(osp.join(eval_dir,'screenshot','segment*.png'))
+        edges = {}
         for fn in segments:
             base = osp.basename(fn)
             frame_id, scene_base = re.findall('segment_0*(\d+)_(.*).png',base)[0]
             if not scene_base in tmp:
                 tmp[scene_base] = []
+                edges[scene_base] = []
             tmp[scene_base].append(fn)
+            frame_id=int(frame_id)
+            fn_edge = osp.join(eval_dir,'screenshot','edges_%04d_%s.png'%(frame_id,scene_base) )
+            assert(osp.exists(fn_edge))
+            edges[scene_base].append(fn_edge)
         segments = tmp
 
         if is_final:
-            DrawApChart(gt_files, segments, arr_frames, all_profiles)
+            DrawApChart(gt_files, segments, edges, arr_frames, all_profiles)
             fig.suptitle('Evaluation', fontsize=16)
         plt.tight_layout(pad=3., w_pad=2., h_pad=3.0)
         return
@@ -460,12 +466,8 @@ class FrameEval:
             self.pub_marker_optmized_gt = rospy.Publisher("~%s/optimized_gt"%cam_id, MarkerArray, queue_size=1)
             self.pub_marker_converted_pred = rospy.Publisher("~%s/marker_converted_pred"%cam_id, MarkerArray, queue_size=1)
 
-    def Evaluate2D(self, pred_marker):
+    def Evaluate2D(self, pred_marker, edge_resp):
         gt_marker = self.scene_eval.gt_marker
-        # TODO Move below expandd to  ...
-        #dist, gt_marker = cv2.distanceTransformWithLabels( (gt_marker==0).astype(np.uint8),
-        #        distanceType=cv2.DIST_L2, maskSize=5)
-        #gt_marker[dist > 7.] = 0
         gt_pred = np.stack((gt_marker, pred_marker), axis=2)
         # ref : https://stackoverflow.com/questions/24780697/numpy-unique-list-of-colors-in-the-image
         pair_marker, counts = np.unique(gt_pred.reshape(-1,2),axis=0, return_counts=True)
@@ -989,7 +991,7 @@ def GetObliqueError(obb0, obb1):
         min_deg_err = min(deg_err, min_deg_err)
     return min_deg_err
 
-def DrawApChart(gt_files, segments, arr_frames, all_profiles):
+def DrawApChart(gt_files, segments, edges, arr_frames, all_profiles):
     global pick_id
     global keyevent
 
@@ -998,21 +1000,21 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
     fig.canvas.mpl_connect('key_press_event', onpress)
     ax1 = fig.add_subplot(121)
     cmap = plt.cm.get_cmap('jet')
-    norm = mpl.colors.Normalize(vmin=0.5, vmax=2.5)
+    norm = mpl.colors.Normalize(vmin=0, vmax=3)
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = plt.colorbar(sm)
-    cbar.ax.set_ylabel('center depth [m]', rotation=90)
+    #cbar.ax.set_ylabel('center depth [m]', rotation=90)
 
 
-    ax2 = fig.add_subplot(222)
-    ax3 = fig.add_subplot(224)
+    ax2 = fig.add_subplot(243)
+    ax3 = fig.add_subplot(244)
+    ax4 = fig.add_subplot(247)
     ax1.set_xlabel('min oblique error among neighbors [deg]')
     ax1.set_ylabel('maximum width among neighbors [pixel]')
-    ax2.axis('off')
-    ax2.axis('equal')
-    ax3.axis('off')
-    ax3.axis('equal')
+    for ax in [ax2,ax3,ax4]:
+        ax.axis('off')
+        ax.axis('equal')
 
     n_tp = {}
     n_instance = {}
@@ -1082,10 +1084,14 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
         keys.append(key)
         degoblique_gt, min_wh_gt, z_gt =\
                 properties['degoblique_gt'], properties['min_wh_gt'], properties['z_gt']
+        failure_condition = 0
         if degoblique_gt > 30.:
-            continue
+            failure_condition += 1
         if z_gt > 3.:
-            continue
+            failure_condition += 1 
+        #if min_wh_gt < .2:
+        #    failure_condition += 1
+
         #max_dist = max_distances[key]
         max_dist = distances_among_group[key]
         max_oblique = relative_obliqueness[key]
@@ -1099,9 +1105,14 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
             marker = '^'
         else:
             marker = 'x'
-        color = cmap(norm(z_gt))
+        #color = cmap(norm(min_wh_gt))
+        color = cmap(norm(failure_condition))
+        #if failure_condition:
+        #    color = (1.,0.,0.,)
+        #else:
+        #    color = (0., 0., 1.)
         artist = ax1.scatter(datas[i,0], datas[i,1], marker=marker, color = color,
-                picker=True, pickradius=5)
+                picker=True, pickradius=10)
         artist.myidx = i
         fig.canvas.mpl_connect('pick_event', onclick)
     #ax1.set_xlim(0, 50)
@@ -1166,6 +1177,10 @@ def DrawApChart(gt_files, segments, arr_frames, all_profiles):
             fn = segments[scene_id][curr_frame]
             dst = cv2.imread(fn)
             ax3.imshow(cv2.cvtColor(dst, cv2.COLOR_BGR2RGB), extent = [0,1,0,1],
+                    aspect=float(height)/float(width) )
+            fn_edge = edges[scene_id][curr_frame]
+            dst_edge = cv2.imread(fn_edge)
+            ax4.imshow(cv2.cvtColor(dst_edge, cv2.COLOR_BGR2RGB), extent = [0,1,0,1],
                     aspect=float(height)/float(width) )
 
     return

@@ -146,19 +146,30 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
             marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32)\
                     .reshape(obb_resp.marker.height, obb_resp.marker.width)
             
-            dst2d = frame_eval.Evaluate2D(marker)
+            dst2d = frame_eval.Evaluate2D(marker, edge_resp)
             frame_eval.GetMatches(obb_resp.output)
             n = evaluator.PutFrame(pick['rosbag_fn'], frame_eval)
 
             fn_dst2d = osp.join(screenshot_dir, 'segment_%04d_%s.png'%(evaluator.n_frame, base_bag) )
             cv2.imwrite(fn_dst2d, dst2d)
+            edges = np.frombuffer(edge_resp.mask.data, dtype=np.uint8)\
+                    .reshape(edge_resp.mask.height, edge_resp.mask.width,-1)
+            rgb = np.frombuffer(rect_rgb_msg.data, dtype=np.uint8).reshape(rect_rgb_msg.height,rect_rgb_msg.width,-1)
+            outline = edges[:,:,0]
+            convex_edges = edges[:,:,1]
+            dst_edge = rgb.copy()
+            dst_edge[convex_edges>0,:]=0
+            dst_edge[convex_edges>0,1]=255
+            dst_edge[outline>0,:]=0
+            dst_edge[outline>0,0]=255
 
             rate.sleep()
             im_screenshot = pyautogui.screenshot()
             im_screenshot = cv2.cvtColor(np.array(im_screenshot), cv2.COLOR_RGB2BGR)
             im_screenshot = cv2.resize( im_screenshot,(1200,800) )
             fn_screenshot = osp.join(screenshot_dir, 'screen_%04d_%s.png'%(evaluator.n_frame, base_bag) )
-            cv2.imwrite(fn_screenshot, im_screenshot)
+            fn_edges = osp.join(screenshot_dir, 'edges_%04d_%s.png'%(evaluator.n_frame, base_bag) )
+            cv2.imwrite(fn_edges, dst_edge)
 
             print("scene %d/%d, frame %d... %s "% (i_file, len(gt_files), n, gt_fn) )
             #evaluator.Evaluate(is_final=False)
