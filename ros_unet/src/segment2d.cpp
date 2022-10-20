@@ -325,25 +325,22 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
 
     cv::distanceTransform(divided, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
   }
-
-  cv::Mat seed = cv::Mat::zeros(depth.rows, depth.cols, CV_32SC1);
+  cv::Mat seedmap = cv::Mat::zeros(depth.rows, depth.cols, CV_32SC1);
   cv::Mat seed_contours;
-  std::set<int> leaf_seeds;
+  std::set<int> leaf_nodes;
   int bg_idx = -1;
+  const int mode   = cv::RETR_TREE; // RETR_CCOMP -> RETR_EXTERNAL
+  const int method = cv::CHAIN_APPROX_SIMPLE;
+  double dth = depth.cols * 0.006;
+  int n = 100./dth; // max level should be limitted.
+  //int n = 1;
+  float min_width = 10.;
+  std::map<int,std::set<int> > seed_childs;
+  std::map<int,int> seed_parents;
+  std::map<int,cv::RotatedRect> seed_obbs;
+  std::map<int,float> seed_areas;
+  std::map<int,int> seed_levels;
   {
-    const int mode   = cv::RETR_TREE; // RETR_CCOMP -> RETR_EXTERNAL
-    const int method = cv::CHAIN_APPROX_SIMPLE;
-
-    double dth = depth.cols * 0.006;
-    int n = 100./dth; // max level should be limitted.
-    //int n = 1;
-    float min_width = 10.;
-
-    std::map<int,std::set<int> > seed_childs;
-    std::map<int,int> seed_parents;
-    std::map<int,cv::RotatedRect> seed_obbs;
-    std::map<int,int> seed_levels;
-
     int idx = 1;
     for(int lv = 0; lv < n; lv++){
       int th_distance = dth*(float)lv;
@@ -360,10 +357,9 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
         const cv::Vec4i& vec = hierarchy.at(j);
         if(vec[3] > -1)
           continue;
-
         const int& x = cnt.at(0).x;
         const int& y = cnt.at(0).y;
-        const int& exist_idx = seed.at<int>(y,x);
+        const int& exist_idx = seedmap.at<int>(y,x);
         const cv::RotatedRect ar = cv::minAreaRect(cnt);
         if(std::min(ar.size.width,ar.size.height) < min_width)
           continue;
@@ -372,93 +368,124 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
         seed_childs[exist_idx].insert(idx);
         seed_parents[idx] = exist_idx;
         seed_obbs[idx] = ar;
+        seed_areas[idx] = cv::contourArea(cnt);
         seed_levels[idx] = lv;
         std::vector<std::vector<cv::Point> > cnts = { cnt, };
-        cv::drawContours(seed, cnts, 0, idx,-1);
+        cv::drawContours(seedmap, cnts, 0, idx,-1);
         seed_childs[idx];
       }
       if(n_insertion < 1)
         break;
     }
-
-    seed_contours = seed.clone();
-    for(const auto& it : seed_childs){
-      const int& parent = it.first;
-      const std::set<int>& childs = it.second;
-      if(parent == 0){
-        for(const int& child : childs)
-          if(seed_childs.at(child).empty())
-            leaf_seeds.insert(child);
-      }
-      else if(childs.size() == 1){
-        int child = *childs.begin();
+  }
+  seed_contours = seedmap.clone();
+  for(const auto& it : seed_childs){
+    const int& parent = it.first;
+    const std::set<int>& childs = it.second;
+    if(parent == 0){
+      for(const int& child : childs)
         if(seed_childs.at(child).empty())
-          leaf_seeds.insert(child);
-      }
-      else if(childs.empty() )
-        leaf_seeds.insert(parent);
+          leaf_nodes.insert(child);
     }
-
-    std::map<int, int> convert_lists;
-    std::set<int> copied_leafs = leaf_seeds;
-
-    idx = -1;
-    for(const int& idx : copied_leafs){
-      int keyidx = idx;
-      int parent = -1;
-      std::set<int> non_sibiling;
-      while(true){
-        parent = seed_parents.at(keyidx);
-        const auto& siblings = seed_childs.at(parent);
-        if(parent == 0){
-          non_sibiling.insert(keyidx);
-          break;
+    //else if(childs.size() == 1){ // No sibling.
+    //  int single_child = *childs.begin();
+    //  // When parent has no sibling, the single child is the leaf.
+    //  if(seed_childs.at(single_child).empty())
+    //    leaf_nodes.insert(single_child);
+    //}
+    else if( childs.empty() )
+      leaf_nodes.insert(parent);
+  }
+  std::map<int, int> convert_lists;
+  std::set<int> poles = leaf_nodes;
+  // The below loop updates convert_lists
+  for(const int& idx : leaf_nodes){
+    if(convert_lists.count(idx))
+      continue;
+    std::set<int> contours_under_pole;
+    std::priority_queue<int> q1;
+    q1.push(idx);
+    while(!q1.empty()){
+      // Descent from pole to lower contour
+      const int keyidx = q1.top();
+      q1.pop();
+      int parent = seed_parents.at(keyidx);
+      std::set<int> siblings_of_key;
+      if(seed_childs.count(parent)){
+        siblings_of_key = seed_childs.at(parent);
+      }
+      contours_under_pole.insert(keyidx);
+      if(parent==0){
+        continue; // No q1.push(parent). Stop descendent.
+      }
+      else if(siblings_of_key.size() == 1){
+        // 자식노드 숫자 count해서 내려가기전,..
+        const cv::RotatedRect& keyidx_obb = seed_obbs.at(keyidx);
+        const cv::RotatedRect& parent_obb = seed_obbs.at(parent);
+        const int& lv = seed_levels.at(keyidx);
+        if(lv > 0 &&  std::min(keyidx_obb.size.width,keyidx_obb.size.height) > 50) {
+          const float expectation =(keyidx_obb.size.width+2.*dth)*(keyidx_obb.size.height+2.*dth);
+          const float parent_area = parent_obb.size.width*parent_obb.size.height;
+          const float err_ratio = std::abs(expectation-parent_area)/parent_area;
+          if(err_ratio > 0.5)
+            continue; // No q1.push(parent). Stop descendent.
         }
-        else if(siblings.size() == 1)
-        {
-          // 자식노드 숫자 count해서 내려가기전,..
-          const cv::RotatedRect& keyidx_obb = seed_obbs.at(keyidx);
-          const cv::RotatedRect& parent_obb = seed_obbs.at(parent);
-          const int& lv = seed_levels.at(keyidx);
-          if(lv > 0 &&  std::min(keyidx_obb.size.width,keyidx_obb.size.height) > 50) {
-            const float parent_area = parent_obb.size.width*parent_obb.size.height;
-            const float expectation =(keyidx_obb.size.width+2.*dth)*(keyidx_obb.size.height+2.*dth);
-            const float ratio = std::abs(expectation-parent_area)/parent_area;
-            if(ratio > 0.5){
-              non_sibiling.insert(keyidx);
-              break;
+        q1.push(parent); // Keep descent to a lower contour.
+      }
+      else if(siblings_of_key.size()==2) {
+        // TODO
+        float sum = 0;
+        for(const int& sibling : siblings_of_key)
+          sum += seed_areas.at(sibling);
+        float parent_area = seed_areas.at(parent);
+        const cv::RotatedRect& parent_obb = seed_obbs.at(parent);
+        const float ratio = (parent_obb.size.width-2.*dth)*(parent_obb.size.width-2.*dth)/
+          (parent_obb.size.width*parent_obb.size.width);
+        const float expected_area_sum = ratio*parent_area;
+        if(sum > .8*expected_area_sum)
+          continue; // No q1.push(parent). Stop descendent.
+        else{
+          q1.push(parent); // Keep descent to a lower contour.
+          // sibling > 1 이지만, 하나로 묶어야 하는 경우 <<<
+          for(const int& sibling : siblings_of_key){
+            if(sibling == keyidx)
+              continue;
+            // Get all upper contours of sibling.
+            std::queue<int> opened;
+            opened.push(sibling);
+            while(!opened.empty()){
+              int lkeyidx = opened.front();
+              opened.pop();
+              contours_under_pole.insert(lkeyidx);
+              for(const int& child : seed_childs.at(lkeyidx) )
+                opened.push(child);
             }
           }
-          non_sibiling.insert(keyidx);
         }
-        else{
-          non_sibiling.insert(keyidx);
-          break;
-        }
-        keyidx = parent;
       }
-      int root = *non_sibiling.begin(); // root = min(non_sibilig)
-      if(idx == root)
-        continue;
-      leaf_seeds.insert(root);
-      leaf_seeds.erase(idx);
-      for(const int& i : non_sibiling){
-        if(i != root)
-          convert_lists[i] = root;
-      }
-    } // compute leaf_seeds
-
-    if(!leaf_seeds.empty()) {
-      // Convert elements of seed from exist_idx to convert_lists
-      bg_idx = Convert(convert_lists, leaf_seeds,
-                       outline_edge, depthmask,
-                       seed);
     }
-    else
-      bg_idx = 2;
-  }
+    int pole = *contours_under_pole.begin(); // pole = min(non_sibilig)
+    if(idx == pole)
+      continue;
+    // replace current idx to its pole
+    poles.insert(pole);
+    poles.erase(idx);
+    for(const int& i : contours_under_pole){
+      if(i != pole)
+        convert_lists[i] = pole;
+    }
+  } // compute leaf_seeds
 
-  cv::Mat shape_marker = seed.clone();
+  if(!poles.empty()) {
+    // Convert elements of seed from exist_idx to convert_lists
+    bg_idx = Convert(convert_lists, leaf_nodes,
+                     outline_edge, depthmask,
+                     seedmap);
+  }
+  else
+    bg_idx = 2;
+
+  cv::Mat shape_marker = seedmap.clone();
   cv::watershed(rgb, shape_marker);
 
   {
@@ -486,7 +513,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   if(verbose){
     cv::Mat dst = Overlap(rgb, marker);
     cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
-    cv::imshow(name_+"seed", GetColoredLabel(seed) );
+    cv::imshow(name_+"seed", GetColoredLabel(seedmap) );
     cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
     cv::imshow(name_+"final_marker", GetColoredLabel(marker) );
     // cv::imshow(name_+"groove", 255*groove );
@@ -507,7 +534,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     cv::imwrite(name_+"dist.png", dist_transform);
     cv::imwrite(name_+"norm_dist.png", norm_dist);
     cv::imwrite(name_+"seed_contour.png", GetColoredLabel(seed_contours));
-    cv::imwrite(name_+"seed.png", GetColoredLabel(seed));
+    cv::imwrite(name_+"seed.png", GetColoredLabel(seedmap));
     cv::imwrite(name_+"marker.png", GetColoredLabel(marker));
   }
   return true;
