@@ -257,6 +257,48 @@ cv::Mat GetDepthMask(const cv::Mat depth) {
   return depthmask;
 }
 
+cv::Mat GetDiscontinuousDepthEdge(const cv::Mat& depth,
+                               float threshold_depth){
+  const int& rows = depth.rows;
+  const int& cols = depth.cols;
+  const int size = rows*cols;
+  const int hk = 1;
+  const std::vector<int> deltas = {-hk, hk};
+  cv::Mat output = cv::Mat::zeros(depth.rows, depth.cols, CV_8UC1);
+  for (int r0=hk; r0<rows-hk; r0++) {
+    for (int c0=hk; c0<cols-hk; c0++) {
+      const float& d_cp = depth.at<float>(r0,c0);
+      for(const int& r_delta : deltas){
+        const int r = r0 + r_delta;
+        if( output.at<unsigned char>(r0,c0) )
+          break;
+        for(const int& c_delta : deltas){
+          const int c = c0 + c_delta;
+          if( output.at<unsigned char>(r0,c0) )
+            break;
+          const float& d = depth.at<float>(r,c);
+          bool c1 = d < 0.001;
+          bool c2 = d_cp < 0.001;
+          bool c3 = std::abs(d-d_cp) > threshold_depth;
+          if(c1 || c2 || c3){
+            output.at<unsigned char>(r0,c0) = true;
+            break;
+          } // if abs(d-d_cp) > threshold
+        } // for c
+      } //for r
+    } // for c0
+  } // for r0
+  return output;
+}
+
+cv::Mat GetForegroundMask(const cv::Mat depth){
+  const float threshold_depth = .2;
+  cv::Mat dd_edge= GetDiscontinuousDepthEdge(depth, threshold_depth);
+  cv::imshow("dd_edge", dd_edge*255);
+  cv::waitKey(1);
+  return dd_edge;
+}
+
 cv::Mat GetValidMask(const cv::Mat depthmask) {
     const int mode   = cv::RETR_EXTERNAL; // RETR_CCOMP -> RETR_EXTERNAL
     const int method = cv::CHAIN_APPROX_SIMPLE;
@@ -301,6 +343,9 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   GetEdge(rgb, depth, validmask, outline_edge, convex_edge, surebox_mask, verbose);
   if(outline_edge.empty())
     return false;
+  const float threshold_depth = .2;
+  cv::Mat dd_edge= GetDiscontinuousDepthEdge(depth, threshold_depth);
+  cv::bitwise_or(outline_edge, dd_edge, outline_edge);
 
   if(!surebox_mask.empty()) { // pre-filtering for surebox
     cv::Mat sureground;
@@ -340,6 +385,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   std::map<int,cv::RotatedRect> seed_obbs;
   std::map<int,float> seed_areas;
   std::map<int,int> seed_levels;
+  std::map<int,int> seed_dists;
   {
     int idx = 1;
     for(int lv = 0; lv < n; lv++){
@@ -370,6 +416,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
         seed_obbs[idx] = ar;
         seed_areas[idx] = cv::contourArea(cnt);
         seed_levels[idx] = lv;
+        seed_dists[idx] = th_distance;
         std::vector<std::vector<cv::Point> > cnts = { cnt, };
         cv::drawContours(seedmap, cnts, 0, idx,-1);
         seed_childs[idx];
@@ -397,7 +444,8 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       leaf_nodes.insert(parent);
   }
   std::map<int, int> convert_lists;
-  std::set<int> poles = leaf_nodes;
+  // The pairs of highest and lowest contours for each instance.
+  std::map<int,int> lowest2highest;
   // The below loop updates convert_lists
   for(const int& idx : leaf_nodes){
     if(convert_lists.count(idx))
@@ -464,19 +512,19 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
         }
       }
     }
-    int pole = *contours_under_pole.begin(); // pole = min(non_sibilig)
-    if(idx == pole)
+    int lowest_contour = *contours_under_pole.begin(); // lowest boundary = max(contours_under_pole)
+    int highest_contour = *contours_under_pole.rbegin(); // pole = min(contours_under_pole)
+    if(idx == lowest_contour)
       continue;
     // replace current idx to its pole
-    poles.insert(pole);
-    poles.erase(idx);
+    lowest2highest[lowest_contour] = highest_contour;
     for(const int& i : contours_under_pole){
-      if(i != pole)
-        convert_lists[i] = pole;
+      if(i != lowest_contour)
+        convert_lists[i] = lowest_contour;
     }
   } // compute leaf_seeds
 
-  if(!poles.empty()) {
+  if(!lowest2highest.empty()) {
     // Convert elements of seed from exist_idx to convert_lists
     bg_idx = Convert(convert_lists, leaf_nodes,
                      outline_edge, depthmask,
@@ -485,9 +533,37 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   else
     bg_idx = 2;
 
+#if 1
+  {
+    cv::Mat positive_seedmap = seedmap>1;
+    cv::Mat seedmap_distransform, seedmap_distransform_markers;
+    cv::distanceTransform(~positive_seedmap, seedmap_distransform, seedmap_distransform_markers,
+                          cv::DIST_L2, cv::DIST_MASK_3);
+    std::map<int,int> newidx2previdx;
+    for(auto it : lowest2highest){
+      const int& lowest = it.first;
+      const int& highest= it.second;
+      cv::Point2i cp = seed_obbs.at(highest).center;
+      const int& newidx = seedmap_distransform_markers.at<int>(cp);
+      newidx2previdx[newidx] = lowest;
+    }
+    marker = cv::Mat::zeros(seedmap.rows,seedmap.cols,CV_32S);
+    for(int r=0; r<seedmap.rows; r++){
+      for(int c=0; c<seedmap.cols; c++){
+        const int& nidx = seedmap_distransform_markers.at<int>(r,c);
+        const int& lowest = newidx2previdx[nidx];
+        if(lowest==0)
+          continue;
+        const float range_limit = 10.+seed_dists.at(lowest); // Considering thickness of edge
+        if(seedmap_distransform.at<float>(r,c) < range_limit){
+          marker.at<int>(r,c) = lowest;
+        }
+      }
+    }
+  }
+#else
   cv::Mat shape_marker = seedmap.clone();
   cv::watershed(rgb, shape_marker);
-
   {
     cv::Mat marker2 = shape_marker.clone();
     for(int r = 0; r < marker2.rows; r++){
@@ -509,19 +585,22 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     }
     marker = marker2;
   }
+#endif
 
   if(verbose){
     cv::Mat dst = Overlap(rgb, marker);
+    cv::imshow(name_+"outline", outline_edge*255);
     cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
     cv::imshow(name_+"seed", GetColoredLabel(seedmap) );
-    cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
-    cv::imshow(name_+"final_marker", GetColoredLabel(marker) );
+    //cv::imshow(name_+"shape_marker", GetColoredLabel(shape_marker) );
+    cv::Mat dst_marker = GetColoredLabel(marker);
+    HighlightBoundary(marker,dst_marker);
+    cv::imshow(name_+"final_marker", dst_marker );
     // cv::imshow(name_+"groove", 255*groove );
     //cv::flip(dst,dst,0);
     //cv::flip(dst,dst,1);
     //cv::imshow(name_+"dst", dst);
-    cv::imshow(name_+"outline_edge", 255*outline_edge);
-    cv::waitKey(0);
+    cv::waitKey(1);
 
     cv::Mat norm_depth, norm_dist;
     cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);

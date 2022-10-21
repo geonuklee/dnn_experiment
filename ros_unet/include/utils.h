@@ -11,7 +11,8 @@ template <typename T>
 using EigenVector = std::vector<T, Eigen::aligned_allocator<T> >;
 extern std::vector<cv::Scalar> colors;
 
-cv::Mat GetColoredLabel(cv::Mat mask);
+cv::Mat GetColoredLabel(cv::Mat mask, bool put_text=false);
+void HighlightBoundary(const cv::Mat marker, cv::Mat& dst);
 cv::Mat Overlap(cv::Mat bg, cv::Mat mask);
 
 uint64_t GetMilliSec();

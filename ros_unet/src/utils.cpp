@@ -48,12 +48,13 @@ cv::Mat Overlap(cv::Mat bg, cv::Mat mask) {
     colored_mask = mask;
   else
     colored_mask = GetColoredLabel(mask);
+  HighlightBoundary(mask,colored_mask);
   cv::Mat dst;
   cv::addWeighted(bg, 0.5, colored_mask, 0.5, 0., dst);
   return dst;
 }
 
-cv::Mat GetColoredLabel(cv::Mat mask){
+cv::Mat GetColoredLabel(cv::Mat mask, bool put_text){
   cv::Mat dst = cv::Mat::zeros(mask.rows, mask.cols, CV_8UC3);
   std::map<int, cv::Point> annotated_lists;
 
@@ -143,15 +144,42 @@ cv::Mat GetColoredLabel(cv::Mat mask){
     }
   }
 
-  for(auto it : annotated_lists){
-    //cv::rectangle(dst, it.second+cv::Point(0,-10), it.second+cv::Point(20,0), CV_RGB(255,255,255), -1);
-    const auto& c0 = colors.at( it.first % colors.size() );
-    //const auto color = c0;
-    const auto color = (c0[0]+c0[1]+c0[2] > 255*2) ? CV_RGB(0,0,0) : CV_RGB(255,255,255);
-    //cv::putText(dst, std::to_string(it.first), it.second, cv::FONT_HERSHEY_SIMPLEX, 0.5, color);
+  if(put_text){
+    for(auto it : annotated_lists){
+      //cv::rectangle(dst, it.second+cv::Point(0,-10), it.second+cv::Point(20,0), CV_RGB(255,255,255), -1);
+      const auto& c0 = colors.at( it.first % colors.size() );
+      //const auto color = c0;
+      const auto color = (c0[0]+c0[1]+c0[2] > 255*2) ? CV_RGB(0,0,0) : CV_RGB(255,255,255);
+      cv::putText(dst, std::to_string(it.first), it.second, cv::FONT_HERSHEY_SIMPLEX, 0.5, color);
+    }
   }
-
   return dst;
+}
+
+void HighlightBoundary(const cv::Mat marker, cv::Mat& dst){
+  const int w = 1;
+  for(int r0 = 0; r0 < marker.rows; r0++){
+    for(int c0 = 0; c0 < marker.cols; c0++){
+      const int& i0 = marker.at<int>(r0,c0);
+      bool b = false;
+      for(int r1 = std::max(r0-w,0); r1 < std::min(r0+w,marker.rows); r1++){
+        for(int c1 = std::max(c0-w,0); c1 < std::min(c0+w,marker.cols); c1++){
+          const int& i1 = marker.at<int>(r1,c1);
+          b = i0 != i1;
+          if(b)
+            break;
+        }
+        if(b)
+          break;
+      }
+      if(!b)
+        continue;
+      dst.at<cv::Vec3b>(r0,c0)[0] = 255;
+      dst.at<cv::Vec3b>(r0,c0)[1] = 255;
+      dst.at<cv::Vec3b>(r0,c0)[2] = 255;
+    }
+  }
+  return;
 }
 
 
