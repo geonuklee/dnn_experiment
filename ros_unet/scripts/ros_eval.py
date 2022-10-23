@@ -146,7 +146,7 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
             marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32)\
                     .reshape(obb_resp.marker.height, obb_resp.marker.width)
             
-            dst2d = frame_eval.Evaluate2D(marker, edge_resp)
+            dst2d = frame_eval.Evaluate2D(marker)
             frame_eval.GetMatches(obb_resp.output)
             n = evaluator.PutFrame(pick['rosbag_fn'], frame_eval)
 
@@ -272,7 +272,7 @@ def test_evaluation():
         obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
         gt_files += glob2.glob(obbdatasetpath)
     # TODO QHull failure? evaluator.py, ln.682
-    #gt_files = ['/home/geo/catkin_ws/src/ros_unet/obb_dataset_test0523/helios_test_2022-05-23-15-52-03_cam0.pick']
+    #gt_files = ['/home/geo/catkin_ws/src/ros_unet/obb_dataset_test0523/helios_test_2022-05-23-15-50-11_cam0.pick']
 
     if not osp.exists(profile_fn):
         evaluator = perform_test(eval_dir, gt_files, osp.join(eval_dir, 'screenshot'))

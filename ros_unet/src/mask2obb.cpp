@@ -177,19 +177,8 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
   // Denote that each instance in mask must be detached.
   g2o::SE3Quat Twc = Tcw.inverse();
   cv::Mat dist_transform; {
-    const int margin = 5;
-    cv::Mat fg = cv::Mat::zeros(mask.rows, mask.cols, CV_8UC1);
-    for(int r =0; r<fg.rows;r++){
-      for(int c = 0; c<fg.cols;c++){
-        if(r < margin || r > mask.rows-margin || c < margin || c > mask.cols-margin)
-          continue;
-        if(mask.at<int>(r,c)>0
-            && depth.at<float>(r,c) > 0.001
-            && convex_edge.at<unsigned char>(r,c)==0)
-          fg.at<unsigned char>(r,c) = 255;
-      }
-    }
-    // cv::imshow("convex", 255*convex_edge);
+    cv::Mat boundarymap = GetBoundary(mask);
+    cv::Mat fg = (boundarymap==0);
     cv::distanceTransform(fg, dist_transform,cv::DIST_L2, cv::DIST_MASK_3);
   }
 
@@ -292,7 +281,6 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
       float pixel_distance = dist_transform.at<float>(r,c);
       if( r <  boundary2 || r > depth.rows-boundary2 || c < boundary2 || c > depth.cols-boundary2)
         pixel_distance = 999.;
-      cv::Point2f nuv = GetUV(r,c);
       pcl::PointXYZLNormal xyznormal;
       if(! GetXYZNormal(r,c, xyznormal) ){
         //continue;
@@ -744,10 +732,9 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       // If the offset between the normal vector and the depth direction is greater than the threshold,
       // exclude it from the candidate list.
       Eigen::Vector3f n0_candi = u0_candi.cross(v0_candi).normalized();
-      double cos_dir = std::abs( n0_candi.dot(depth_dir) );
-
-      if(cos_dir < param.min_cos_dir)
-        continue;
+      //double cos_dir = std::abs( n0_candi.dot(depth_dir) );
+      //if(cos_dir < param.min_cos_dir)
+      //  continue;
 
       // Count number of the inlier points which are close to plane.
       pcl::PointIndices::Ptr surface_candi(new pcl::PointIndices);
@@ -780,12 +767,14 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
     pcl::PointIndices::Ptr plane_inliers(new pcl::PointIndices);
     {
       // Reserve the inliner points of champion as input of RANSAC plane detection.
-      pcl::ExtractIndices<pcl::PointXYZLNormal> extract;
       pcl::PointCloud<pcl::PointXYZLNormal>::Ptr input_cloud(new pcl::PointCloud<pcl::PointXYZLNormal>() );
-      extract.setInputCloud(cloud);
-      extract.setIndices(surface);
-      extract.setNegative(false);
-      extract.filter(*input_cloud);
+      {
+        pcl::ExtractIndices<pcl::PointXYZLNormal> extract;
+        extract.setInputCloud(cloud);
+        extract.setIndices(surface);
+        extract.setNegative(false);
+        extract.filter(*input_cloud);
+      }
 
       // Do RANSACT for plane detection.
       pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
@@ -815,18 +804,40 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       }
 
       // If normal vector is inverted, correct it.
-      Eigen::Vector4f a(t_wc[0],t_wc[1],t_wc[2],1.);
-      if(plane.dot(a) < 0.)
-         plane = -plane;
-
+      if(surface->indices.size() > .1 * cloud->size()) {
+      //if(true){
+        // If enough points to measure direction is given.
+        pcl::PointCloud<pcl::PointXYZLNormal>::Ptr nonsurf_cloud(new pcl::PointCloud<pcl::PointXYZLNormal>() );
+        pcl::ExtractIndices<pcl::PointXYZLNormal> extract;
+        extract.setInputCloud(cloud);
+        extract.setIndices(surface);
+        extract.setNegative(true);
+        extract.filter(*nonsurf_cloud);
+        int n_positive = 0;
+        for(const auto& pcl_pt : *nonsurf_cloud){
+          Eigen::Vector4f pt(pcl_pt.x,pcl_pt.y,pcl_pt.z,1);
+          if( pt.dot(plane) > 0.01)
+            n_positive++;
+        }
+        int n_negative = nonsurf_cloud->size() - n_positive;
+        if(n_positive > n_negative)
+          plane = -plane;
+      }
+      else {
+        // If there are no enough points to measure direction
+        Eigen::Vector4f a(t_wc[0],t_wc[1],t_wc[2],1.);
+        if(plane.dot(a) < 0.)
+          plane = -plane;
+      }
       n0 = plane.head<3>();
     }
 
     // Exclude boundary points departed from plane.
-    *boundary =  *FilterEuclideanOnPlane(boundary, plane, param);
-    if(boundary->empty()){
-      return false;
-    }
+    // TODO 이거때문에 helios_test_2022-05-23-15-50-11.bag 에서 상자 사라지는 버그.
+    // *boundary =  *FilterEuclideanOnPlane(boundary, plane, param);
+    // if(boundary->empty()){
+    //   return false;
+    // }
 
     /*
     Calculate SE(3) transformation to {w}orld coordinate from {0} coordinate.
@@ -929,7 +940,6 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
 
       double inf = 999999.;
       Eigen::Vector3d min_x1(inf, inf, inf);
-      //Eigen::Vector3d min_x1(inf, inf, inf);
       Eigen::Vector3d max_x1(-inf, -inf, 0.);
 
       for(const pcl::PointXYZLNormal& pt : *boundary) {
@@ -1004,19 +1014,19 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
             Eigen::Vector4d xw(pt.x,pt.y,pt.z,1.);
             Eigen::Vector3d pt_norm(pt.normal_x,pt.normal_y,pt.normal_z);
             // TODO 커튼 무시하기..
-            bool on_side_plane = false;
-            for(const auto& plane : side_planes){
-              double dist_err = std::abs( plane.dot(xw) );
-              if(dist_err > max_dist_err)
-                continue;
-              double cos = pt_norm.dot(plane.head<3>() );
-              if(cos < min_cos)
-                continue;
-              on_side_plane = true;
-              break;
-            }
-            if(!on_side_plane)
-              continue;
+            // bool on_side_plane = false;
+            // for(const auto& plane : side_planes){
+            //   double dist_err = std::abs( plane.dot(xw) );
+            //   if(dist_err > max_dist_err)
+            //     continue;
+            //   double cos = pt_norm.dot(plane.head<3>() );
+            //   if(cos < min_cos)
+            //     continue;
+            //   on_side_plane = true;
+            //   break;
+            // }
+            // if(!on_side_plane)
+            //   continue;
             Eigen::Vector3d x1 = T1w * Cvt2EigenXYZ(pt);
             min_x1[2] = std::min<double>(min_x1[2], x1[2]);
           }
@@ -1035,6 +1045,8 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
       return false;
     }
 
+#if 1
+    // Fitting axis order similar to world coordinate
     const Eigen::Matrix<double,3,3> Rwl0 = Twl.rotation().toRotationMatrix();
     int c0, c1, c2;
     double val_max0 = 0.;
@@ -1080,6 +1092,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
     // Twl : {l} coordinate is the final local coordinate of OBB,
     // which has aligned axis on OBB and origin is positioned at center of OBB.
     Twl.setRotation(g2o::Quaternion(Rwl));
+#endif
 
     int n_inlier = GetBoxInlier(Twl, whd, cloud);
     int N = cloud->size();

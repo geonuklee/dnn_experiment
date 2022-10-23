@@ -512,26 +512,18 @@ std::set<std::pair<int,int> > GetNeighbors(const int32_t* marker, const std::vec
 }
 
 int FindEdge(const unsigned char *arr_in, const std::vector<long int>& shape,
+             const int w,
              unsigned char *arr_out) {
   const int rows = (int)shape.at(0);
   const int cols = (int)shape.at(1);
-  const int hw = 2;
 
   for (int r0=0; r0<rows; r0++) {
     for (int c0=0; c0<cols; c0++) {
       const unsigned char index0 = arr_in[r0*cols+c0];
-      //const unsigned char index0 = arr_in[c0*rows+r0];
       bool is_edge = false;
-      for (int dr=-hw; dr<=hw; dr++) {
-        const int r = r0 + dr;
-        if( r < 0 || r >= rows)
-          continue;
-        for (int dc=-hw; dc<=hw; dc++) {
-          const int c = c0 + dc;
-          if( c < 0 || c >= cols)
-            continue;
+      for(int r = std::max(r0-w,0); r < std::min(r0+w,rows); r++){
+        for(int c = std::max(c0-w,0); c < std::min(c0+w,cols); c++){
           const unsigned char index1 = arr_in[r*cols+c];
-          //const unsigned char index1 = arr_in[c*rows+r];
           if(index0!=index1){
             is_edge = true;
             break;
@@ -722,7 +714,7 @@ void GetHessian(const float* depth,
 }
 
 // ref) https://stackoverflow.com/questions/49582252/pybind-numpy-access-2d-nd-arrays
-py::array_t<unsigned char> PyFindEdge(py::array_t<unsigned char> inputmask) {
+py::array_t<unsigned char> PyFindEdge(py::array_t<unsigned char> inputmask, int w) {
   py::buffer_info buf_inputmask = inputmask.request();
 
   /*  allocate the buffer */
@@ -731,7 +723,7 @@ py::array_t<unsigned char> PyFindEdge(py::array_t<unsigned char> inputmask) {
 
   const unsigned char* ptr_inputmask = (const unsigned char*) buf_inputmask.ptr;
   unsigned char* ptr_output = (unsigned char*) buf_output.ptr;
-  FindEdge(ptr_inputmask, buf_inputmask.shape, ptr_output);
+  FindEdge(ptr_inputmask, buf_inputmask.shape, w, ptr_output);
 
   // reshape array to match input shape
   output.resize({buf_inputmask.shape[0], buf_inputmask.shape[1]});
@@ -1080,7 +1072,7 @@ PYBIND11_MODULE(unet_ext, m) {
   m.def("GetFilteredDepth", &PyGetFilteredDepth, "Get filtered depth.",
         py::arg("input_mask"), py::arg("dd_edge"),
         py::arg("sample_width") );
-  m.def("FindEdge", &PyFindEdge, "find edge", py::arg("input_mask") );
+  m.def("FindEdge", &PyFindEdge, "find edge", py::arg("input_mask"), py::arg("width") );
   m.def("GetDiscontinuousDepthEdge", &PyGetDiscontinuousDepthEdge,
         "Find edge of discontinuous depth",
         py::arg("input_depth"), py::arg("threshold_depth") );

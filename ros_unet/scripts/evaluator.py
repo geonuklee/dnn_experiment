@@ -26,6 +26,7 @@ import re
 from tabulate import tabulate
 from unet.util import GetColoredLabel
 from unet_ext import GetNeighbors as _GetNeighbors
+from unet_ext import FindEdge
 
 tp_iou = .5
 
@@ -466,7 +467,7 @@ class FrameEval:
             self.pub_marker_optmized_gt = rospy.Publisher("~%s/optimized_gt"%cam_id, MarkerArray, queue_size=1)
             self.pub_marker_converted_pred = rospy.Publisher("~%s/marker_converted_pred"%cam_id, MarkerArray, queue_size=1)
 
-    def Evaluate2D(self, pred_marker, edge_resp):
+    def Evaluate2D(self, pred_marker):
         gt_marker = self.scene_eval.gt_marker
         gt_pred = np.stack((gt_marker, pred_marker), axis=2)
         # ref : https://stackoverflow.com/questions/24780697/numpy-unique-list-of-colors-in-the-image
@@ -607,9 +608,8 @@ class FrameEval:
         gt_centers = GetMarkerCenters(gt_marker)
         pred_centers = GetMarkerCenters(pred_marker)
         dst = GetColoredLabel(gt_marker)
-        _,contours,_ = cv2.findContours( (pred_marker>0).astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        for i in range(len(contours) ):
-            cv2.drawContours(dst, contours, i, (255,255,255), 2)
+        boundary = FindEdge(pred_marker, 2)
+        dst[boundary>0,:] = 255
 
         for pred_id, pred_cp in pred_centers.items():
             if not pred_id in fp_list:
@@ -1080,7 +1080,10 @@ def DrawApChart(gt_files, segments, edges, arr_frames, all_profiles):
             relative_obliqueness[(base,id0)] = min_oblique
 
     keys, datas = [], np.zeros((len(all_properties), 3))
-    for i, (key,properties) in enumerate( all_properties.items() ):
+    i = 0
+    for (key,properties) in all_properties.items():
+        if not key[0] in gt_files.keys():
+            continue
         keys.append(key)
         degoblique_gt, min_wh_gt, z_gt =\
                 properties['degoblique_gt'], properties['min_wh_gt'], properties['z_gt']
@@ -1112,9 +1115,11 @@ def DrawApChart(gt_files, segments, edges, arr_frames, all_profiles):
         #else:
         #    color = (0., 0., 1.)
         artist = ax1.scatter(datas[i,0], datas[i,1], marker=marker, color = color,
-                picker=True, pickradius=10)
+                picker=True, pickradius=1)
         artist.myidx = i
         fig.canvas.mpl_connect('pick_event', onclick)
+        i+=1
+    datas = datas[:i,:]
     #ax1.set_xlim(0, 50)
     #ax1.set_ylim(0, 100)
 
@@ -1125,10 +1130,12 @@ def DrawApChart(gt_files, segments, edges, arr_frames, all_profiles):
         if keyevent is not None:
             if keyevent.key == 'q':
                 #import pdb; pdb.set_trace()
-                exit(1)
+                #exit(1)
+                pass
         if pick_id is None:
             continue
         scene_id, gt_obj_id = keys[pick_id]
+        print(scene_id, gt_obj_id)
         pick = gt_files[scene_id]
         rgb, gt_marker = pick['rgb'], pick['marker']
 

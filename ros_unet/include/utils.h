@@ -13,6 +13,7 @@ extern std::vector<cv::Scalar> colors;
 
 cv::Mat GetColoredLabel(cv::Mat mask, bool put_text=false);
 void HighlightBoundary(const cv::Mat marker, cv::Mat& dst);
+cv::Mat GetBoundary(const cv::Mat marker);
 cv::Mat Overlap(cv::Mat bg, cv::Mat mask);
 
 uint64_t GetMilliSec();

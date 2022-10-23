@@ -141,7 +141,7 @@ if __name__=="__main__":
     rect_info_msgs = {}
     remap_maps = {}
 
-    rate = rospy.Rate(hz=1)
+    rate = rospy.Rate(hz=30)
     while not rospy.is_shutdown():
         if sub.info is None:
             continue
