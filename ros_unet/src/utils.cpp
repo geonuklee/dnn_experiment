@@ -47,7 +47,7 @@ cv::Mat Overlap(cv::Mat bg, cv::Mat mask) {
   if(mask.channels() > 1)
     colored_mask = mask;
   else
-    colored_mask = GetColoredLabel(mask);
+    colored_mask = GetColoredLabel(mask,false);
   HighlightBoundary(mask,colored_mask);
   cv::Mat dst;
   cv::addWeighted(bg, 0.5, colored_mask, 0.5, 0., dst);
@@ -182,4 +182,28 @@ void HighlightBoundary(const cv::Mat marker, cv::Mat& dst){
   return;
 }
 
+cv::Mat GetBoundary(const cv::Mat marker){
+  cv::Mat boundarymap = cv::Mat::zeros(marker.rows,marker.cols, CV_8UC1);
+  const int w = 1;
+  for(int r0 = 0; r0 < marker.rows; r0++){
+    for(int c0 = 0; c0 < marker.cols; c0++){
+      const int& i0 = marker.at<int>(r0,c0);
+      bool b = false;
+      for(int r1 = std::max(r0-w,0); r1 < std::min(r0+w,marker.rows); r1++){
+        for(int c1 = std::max(c0-w,0); c1 < std::min(c0+w,marker.cols); c1++){
+          const int& i1 = marker.at<int>(r1,c1);
+          b = i0 != i1;
+          if(b)
+            break;
+        }
+        if(b)
+          break;
+      }
+      if(!b)
+        continue;
+      boundarymap.at<unsigned char>(r0,c0) = true;
+    }
+  }
+  return boundarymap;
+}
 

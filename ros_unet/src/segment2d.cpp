@@ -323,7 +323,8 @@ bool Segment2DEdgeBasedAbstract::Process(const cv::Mat rgb,
                                  bool verbose){
   if(vignett32S_.empty() ){
     cv::Mat src = 255*cv::Mat::ones(rgb.rows, rgb.cols, CV_8UC1);
-    cv::rectangle(src, cv::Point(0,0), cv::Point(rgb.cols,rgb.rows), 0, 50);
+    // TODO Better results with below?
+    //cv::rectangle(src, cv::Point(0,0), cv::Point(rgb.cols,rgb.rows), 0, 50);
     src.convertTo(vignett32S_, CV_32SC1);
     src.convertTo(vignett8U_, CV_8UC1);
   }
@@ -468,16 +469,16 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       }
       else if(siblings_of_key.size() == 1){
         // 자식노드 숫자 count해서 내려가기전,..
-        const cv::RotatedRect& keyidx_obb = seed_obbs.at(keyidx);
-        const cv::RotatedRect& parent_obb = seed_obbs.at(parent);
-        const int& lv = seed_levels.at(keyidx);
-        if(lv > 0 &&  std::min(keyidx_obb.size.width,keyidx_obb.size.height) > 50) {
-          const float expectation =(keyidx_obb.size.width+2.*dth)*(keyidx_obb.size.height+2.*dth);
-          const float parent_area = parent_obb.size.width*parent_obb.size.height;
-          const float err_ratio = std::abs(expectation-parent_area)/parent_area;
-          if(err_ratio > 0.5)
-            continue; // No q1.push(parent). Stop descendent.
-        }
+        //const cv::RotatedRect& keyidx_obb = seed_obbs.at(keyidx);
+        //const cv::RotatedRect& parent_obb = seed_obbs.at(parent);
+        //const int& lv = seed_levels.at(keyidx);
+        //if(lv > 0 &&  std::min(keyidx_obb.size.width,keyidx_obb.size.height) > 50) {
+        //  const float expectation =(keyidx_obb.size.width+2.*dth)*(keyidx_obb.size.height+2.*dth);
+        //  const float parent_area = parent_obb.size.width*parent_obb.size.height;
+        //  const float err_ratio = std::abs(expectation-parent_area)/parent_area;
+        //  if(err_ratio > 0.5)
+        //    continue; // No q1.push(parent). Stop descendent.
+        //}
         q1.push(parent); // Keep descent to a lower contour.
       }
       else if(siblings_of_key.size()==2) {
@@ -600,7 +601,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     //cv::flip(dst,dst,0);
     //cv::flip(dst,dst,1);
     //cv::imshow(name_+"dst", dst);
-    cv::waitKey(1);
+    cv::waitKey(0);
 
     cv::Mat norm_depth, norm_dist;
     cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
@@ -609,7 +610,6 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     cv::imwrite(name_+"depth.png", norm_depth);
     cv::imwrite(name_+"rgb.png", rgb);
     cv::imwrite(name_+"outline_edge.png", 255*outline_edge);
-    cv::imwrite(name_+"valid.png", 255*validmask);
     cv::imwrite(name_+"dist.png", dist_transform);
     cv::imwrite(name_+"norm_dist.png", norm_dist);
     cv::imwrite(name_+"seed_contour.png", GetColoredLabel(seed_contours));
