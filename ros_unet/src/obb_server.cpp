@@ -16,6 +16,7 @@
 #include "ros_unet/SetCamera.h"
 #include "ros_unet/ComputeObb.h"
 #include <ros/ros.h>
+#include <chrono>
 
 // #define EXP_OUTLINE
 
@@ -101,6 +102,8 @@ public:
     std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr> segmented_clouds, boundary_clouds;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb(new pcl::PointCloud<pcl::PointXYZRGB>());
 
+
+    auto t0 = std::chrono::steady_clock::now();
     obb_estimator->GetSegmentedCloud(Tcw,
                                      rgb,
                                      depth,
@@ -108,6 +111,9 @@ public:
                                      convex_edge,
                                      param_,
                                      segmented_clouds, boundary_clouds, xyzrgb);
+    auto t1 = std::chrono::steady_clock::now();
+    //std::cout << "elapsed time for segment2d = "
+    //  << std::chrono::duration_cast<std::chrono::milliseconds>(t1-t0).count() << "[ms]" << std::endl;
 
     obb_estimator->ComputeObbs(segmented_clouds,
                                boundary_clouds,

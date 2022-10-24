@@ -182,9 +182,8 @@ void HighlightBoundary(const cv::Mat marker, cv::Mat& dst){
   return;
 }
 
-cv::Mat GetBoundary(const cv::Mat marker){
+cv::Mat GetBoundary(const cv::Mat marker, int w){
   cv::Mat boundarymap = cv::Mat::zeros(marker.rows,marker.cols, CV_8UC1);
-  const int w = 1;
   for(int r0 = 0; r0 < marker.rows; r0++){
     for(int c0 = 0; c0 < marker.cols; c0++){
       const int& i0 = marker.at<int>(r0,c0);
