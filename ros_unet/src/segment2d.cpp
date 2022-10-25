@@ -277,6 +277,17 @@ cv::Mat GetDiscontinuousDepthEdge(const cv::Mat& depth,
           if( output.at<unsigned char>(r0,c0) )
             break;
           const float& d = depth.at<float>(r,c);
+#if 0
+          bool c1 = d < 0.001;
+          bool c2 = d_cp < 0.001;
+          if(c1 || c2)
+            continue;
+          bool c3 = std::abs(d-d_cp) > threshold_depth;
+          if(c3){
+            output.at<unsigned char>(r0,c0) = true;
+            break;
+          } // if abs(d-d_cp) > threshold
+#else
           bool c1 = d < 0.001;
           bool c2 = d_cp < 0.001;
           bool c3 = std::abs(d-d_cp) > threshold_depth;
@@ -284,6 +295,7 @@ cv::Mat GetDiscontinuousDepthEdge(const cv::Mat& depth,
             output.at<unsigned char>(r0,c0) = true;
             break;
           } // if abs(d-d_cp) > threshold
+#endif
         } // for c
       } //for r
     } // for c0
@@ -357,32 +369,30 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   GetEdge(rgb, depth, validmask, outline_edge, convex_edge, surebox_mask, verbose);
   if(outline_edge.empty())
     return false;
-  const float threshold_depth = .2;
-  cv::Mat dd_edge= GetDiscontinuousDepthEdge(depth, threshold_depth);
-  cv::bitwise_or(outline_edge, dd_edge, outline_edge);
 
+#if 0
   if(!surebox_mask.empty()) { // pre-filtering for surebox
     cv::Mat sureground;
     cv::bitwise_or(outline_edge > 0, surebox_mask > 0, sureground);
     cv::Mat element5(3, 3, CV_8U, cv::Scalar(1));
     cv::morphologyEx(sureground, sureground, cv::MORPH_CLOSE, element5);
-
     cv::bitwise_and(validmask, sureground,  validmask);
   }
 
   if(! vignett32S_.empty() )
     cv::bitwise_and(outline_edge, vignett8U_, outline_edge);
-
-
+#endif
   cv::Mat divided;
   cv::Mat dist_transform; {
+#if 1
+    cv::distanceTransform(outline_edge<1, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
+#else
     cv::bitwise_and(depthmask, ~outline_edge, divided);
     cv::bitwise_and(vignett8U_, divided, divided);
-
     if(divided.type()!=CV_8UC1)
       divided.convertTo(divided, CV_8UC1); // distanceTransform asks CV_8UC1 input.
-
     cv::distanceTransform(divided, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
+#endif
   }
   cv::Mat seedmap = cv::Mat::zeros(depth.rows, depth.cols, CV_32SC1);
   cv::Mat seed_contours;
@@ -637,15 +647,13 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       }
     }
   }
-
-
 #endif
   //std::cout << "marker = ";
   //PrintUnique(marker);
 
-  if(true){
+  if(verbose){
     cv::Mat dst = Overlap(rgb,marker0);
-    //cv::imshow(name_+"outline", outline_edge*255);
+    cv::imshow(name_+"outline", outline_edge*255);
     cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
     cv::imshow(name_+"seed", Overlap(rgb,seedmap) );
     cv::imshow(name_+"marker0", Overlap(rgb, marker0) );
@@ -657,7 +665,6 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     //cv::flip(dst,dst,0);
     //cv::flip(dst,dst,1);
     //cv::imshow(name_+"dst", dst);
-    cv::waitKey(1);
 
     cv::Mat norm_depth, norm_dist;
     cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
@@ -720,43 +727,38 @@ lap_depth_threshold_(lap_depth_threshold){
 
 }
 
-cv::Mat ExpandOutline(const cv::Mat depth, const cv::Mat outline, float fx, float fy) {
-  assert(false); // obb_server doesn't use.
-#if 0
-  // Doesn'work 
-    const float radius = 0.02; // exapnd range [meter]
-    const float f_radius = std::max(fx,fy) * radius;
-    cv::Mat expanded_outline = cv::Mat::zeros(depth.rows, depth.cols, CV_8UC1);
-    cv::Mat dist_transform;
-    cv::distanceTransform(~outline, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
-    //std::cout << "input outline shape = " << outline.rows << "," << outline.cols << std::endl;
-    for(int r = 0; r < depth.rows; r++){
-      for(int c = 0; c < depth.cols; c++){
-        const float& d = depth.at<float>(r,c);
-        if(d == 0)
-          continue;
-        float dr = f_radius/d;
-        //printf("f_radius, dr = %f, %f\n", f_radius, dr);
-        if( dist_transform.at<float>(r,c) < dr )
-          expanded_outline.at<unsigned char>(r,c) = 1;
-      }
-    }
-#else
-    cv::Mat dist_transform;
-    cv::distanceTransform(outline==0,  dist_transform, cv::DIST_L2, cv::DIST_MASK_5);
-    cv::Mat expanded_outline = cv::Mat::zeros(depth.rows, depth.cols, CV_8UC1);
-    for(int r = 0; r < depth.rows; r++){
-      for(int c = 0; c < depth.cols; c++){
-        const float& d = depth.at<float>(r,c);
-        if( dist_transform.at<float>(r,c) < 10. )
-          expanded_outline.at<unsigned char>(r,c) = 1;
-      }
-    }
-#endif
-    std::cout << "outline type = " << outline.type() << std::endl;
-    cv::imshow("expanded_outline", expanded_outline);
-    cv::waitKey(1);
-    return expanded_outline;
+cv::Mat FilterOutlineEdges(const cv::Mat outline, bool verbose) {
+  // TODO filter를 여기에 작성.
+  cv::Mat ones = cv::Mat::ones(5,5,outline.type());
+  cv::Mat expanded_outline;
+  cv::dilate(outline, expanded_outline, ones);
+
+  cv::Mat labels, stats, centroids;
+  cv::connectedComponentsWithStats(expanded_outline,labels,stats,centroids);
+  std::set<int> inliers;
+  for(int i = 0; i < stats.rows; i++){
+    // left,top,width,height,area
+    const int max_wh = std::max(stats.at<int>(i,2),stats.at<int>(i,3));
+    if(max_wh > 100)
+      inliers.insert(i);
   }
+
+  cv::Mat output = outline.clone();
+  for(int r = 0; r < output.rows; r++){
+    for(int c = 0; c < output.cols; c++){
+      unsigned char& i = output.at<unsigned char>(r,c);
+      if(i < 1)
+        continue;
+      const int& l = labels.at<int>(r,c);
+      i = inliers.count(l);
+    }
+  }
+
+  if(verbose){
+    cv::imshow("labels", GetColoredLabel(labels));
+    cv::imshow("filtered", output*255);
+  }
+  return output;
+}
 
 

@@ -159,9 +159,9 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
             convex_edges = edges[:,:,1]
             dst_edge = rgb.copy()
             dst_edge[convex_edges>0,:]=0
-            dst_edge[convex_edges>0,1]=255
+            dst_edge[convex_edges>0,0]=255
             dst_edge[outline>0,:]=0
-            dst_edge[outline>0,0]=255
+            dst_edge[outline>0,2]=255
 
             rate.sleep()
             im_screenshot = pyautogui.screenshot()

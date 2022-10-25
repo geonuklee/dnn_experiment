@@ -97,6 +97,7 @@ cv::Mat GetGroove(const cv::Mat marker,
                   const cv::Mat vignett,
                   int bg_idx);
 
-cv::Mat ExpandOutline(const cv::Mat depth, const cv::Mat outline, float fx, float fy);
+cv::Mat GetDiscontinuousDepthEdge(const cv::Mat& depth, float threshold_depth);
+cv::Mat FilterOutlineEdges(const cv::Mat outline, bool verbose);
 
 #endif

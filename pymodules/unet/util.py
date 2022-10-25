@@ -105,8 +105,8 @@ class SplitAdapter:
         else:
             outline = (pred[:,:,0] > .9).numpy()
             convex_edges = (pred[:,:,1] > .9).numpy()
-            mask[outline] = 1
             mask[convex_edges] = 2
+            mask[outline] = 1 # Overwrite outline edge on convex edge.
         return mask
 
     def pred2dst(self, pred, np_rgb):

@@ -18,7 +18,6 @@
 #include <ros/ros.h>
 #include <chrono>
 
-// #define EXP_OUTLINE
 
 class BoxDetector {
 public:
@@ -66,8 +65,7 @@ public:
     pub_clouds_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/clouds",1);
     pub_boundary_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/boundary",1);
     pub_vis_mask_[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/vis_mask",1);
-    pub_expanded_outline_[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/expanded_outline",1);
-    pub_vis_mask_[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/vis_mask",1);
+    pub_filteredoutline[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/vis_filteredoutline",1);
     return true;
   }
 
@@ -84,20 +82,25 @@ public:
 
     cv::Mat depth, rgb, convex_edge, outline_edge, surebox;
     GetCvMat(req, depth, rgb, convex_edge, outline_edge, surebox);
-#ifdef EXP_OUTLINE
-    // Useless if edge detector returns continous edges.
-    cv::Mat exp_outline = ExpandOutline(depth, outline_edge, req.fx, req.fy);
-    segment2d->SetEdge(exp_outline, convex_edge, surebox);
+    bool verbose = false;
+
+    const float threshold_depth = .2;
+    cv::Mat dd_edge= GetDiscontinuousDepthEdge(depth, threshold_depth);
+    cv::bitwise_or(outline_edge, dd_edge, outline_edge);
+    cv::Mat filtered_outline;
+#if 1
+    filtered_outline = FilterOutlineEdges(outline_edge, verbose);
+    segment2d->SetEdge(filtered_outline, convex_edge, surebox);
 #else
     segment2d->SetEdge(outline_edge, convex_edge, surebox);
 #endif
 
     cv::Mat instance_marker;
     std::map<int,int> ins2cls;
-    bool verbose = false;
     segment2d->Process(rgb, depth, instance_marker, convex_edge, ins2cls, verbose);
 
-    //std::cout << "Compute OBB" << std::endl;
+    if(verbose)
+      cv::waitKey(1);
 
     std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr> segmented_clouds, boundary_clouds;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb(new pcl::PointCloud<pcl::PointXYZRGB>());
@@ -131,24 +134,22 @@ public:
     obb_process_visualizer->Visualize();
 
     // TODO Future works : matching, publixh xyzrgb
-    if(pub_expanded_outline_.at(cam_id).getNumSubscribers() > 0) {
-      cv::Mat dst = rgb.clone();
-      for(int r=0; r<depth.rows; r++)
-        for(int c=0; c<depth.cols; c++)
-          if(outline_edge.at<unsigned char>(r,c)){
-            dst.at<cv::Vec3b>(r,c)[2]=255;
-            dst.at<cv::Vec3b>(r,c)[0]=dst.at<cv::Vec3b>(r,c)[1]=0;
-          }
-#ifdef EXP_OUTLINE
-          else if(exp_outline.at<unsigned char>(r,c)){
-            dst.at<cv::Vec3b>(r,c)[0]=255;
-            dst.at<cv::Vec3b>(r,c)[1]=dst.at<cv::Vec3b>(r,c)[2]=0;
-          }
-#endif
+    if(pub_filteredoutline.at(cam_id).getNumSubscribers() > 0 && !filtered_outline.empty() ){
       cv_bridge::CvImage msg;
+      cv::Mat dst = cv::Mat::zeros(rgb.rows,rgb.cols,CV_8UC3);
+      for(int r = 0; r < rgb.rows; r++){
+        for(int c = 0; c < rgb.cols; c++){
+          auto& pixel = dst.at<cv::Vec3b>(r,c);
+          if(filtered_outline.at<unsigned char>(r,c) > 0)
+            pixel[2] = 255;
+          else if(convex_edge.at<unsigned char>(r,c) > 0)
+            pixel[0] = 255;
+        }
+      }
+      cv::addWeighted(rgb, 0.5, dst, 0.5, 0., dst);
       msg.encoding = sensor_msgs::image_encodings::TYPE_8UC3;
       msg.image    = dst;
-      pub_expanded_outline_.at(cam_id).publish(msg.toImageMsg());
+      pub_filteredoutline.at(cam_id).publish(msg.toImageMsg());
     }
     if(pub_vis_mask_.at(cam_id).getNumSubscribers() > 0) {
       cv::Mat dst = Overlap(rgb, instance_marker);
@@ -223,8 +224,8 @@ private:
   std::map<std::string, std::shared_ptr<Segment2DEdgeBased> > segment2d_;
   std::map<std::string, std::shared_ptr<ObbEstimator> > obb_estimator_;
   std::map<std::string, std::shared_ptr<ObbProcessVisualizer> > obb_process_visualizer_;
-  std::map<std::string, ros::Publisher> pub_xyzrgb_, pub_clouds_, pub_boundary_, pub_vis_mask_;
-  std::map<std::string, ros::Publisher> pub_expanded_outline_;
+  std::map<std::string, ros::Publisher> pub_xyzrgb_, pub_clouds_, pub_boundary_, pub_vis_mask_,
+    pub_filteredoutline;
   cv::Mat mx_, my_;
 };
 
