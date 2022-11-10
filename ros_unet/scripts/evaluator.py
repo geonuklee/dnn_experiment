@@ -26,7 +26,7 @@ import re
 from tabulate import tabulate
 from unet.util import GetColoredLabel
 from unet_ext import GetNeighbors as _GetNeighbors
-from unet_ext import FindEdge
+from unet_ext import GetBoundary, EvaluateEdgeDetection
 
 tp_iou = .5
 
@@ -175,7 +175,7 @@ def GetErrors(indices0, pairs0to1, pair_infos, min_iou):
 
 def DrawOutline(cvgt, rgb):
     dst = rgb.copy()
-    outline, _, ext_marker, _,_ = ParseMarker(cvgt, rgb)
+    outline, _, ext_marker, _,_,_ = ParseMarker(cvgt, rgb)
     dst[outline,0] = 255
     dst[outline,1:] = 0
     return dst
@@ -205,7 +205,7 @@ class Evaluator:
     def Evaluate(self, eval_dir, gt_files, arr_frames=None, all_profiles=None, is_final=False):
         self.n_evaluate += 1
         if all_profiles is None:
-            arr_frames, all_profiles = self.GetTables()
+            arr_frames, all_profiles, all_boundary_stats, all_boundary_recall_seg = self.GetTables()
 
         tmp = {}
         for fn in gt_files:
@@ -362,7 +362,17 @@ class Evaluator:
         all_profiles['pred_max_iou2d'] = {}
         all_profiles['fp_list'] = {}
 
+        all_boundary_stats = None
+        all_boundary_recall_seg = None
         for i_frame, frame in enumerate(frame_evals):
+            boundary_stats=frame.profiles['boundary_stats']
+            boundary_recall_seg = frame.profiles['boundary_recall_seg']
+            if all_boundary_stats is None:
+                all_boundary_stats = boundary_stats
+                all_boundary_recall_seg = boundary_recall_seg
+            else:
+                all_boundary_stats = np.hstack((all_boundary_stats,boundary_stats))
+                all_boundary_recall_seg = np.hstack((all_boundary_recall_seg,boundary_recall_seg))
             all_profiles['fp_list'][i_frame] = frame.profiles['fp_list']
             for (gt_id,pred_id), info in frame.profiles['pairs'].items():
                 all_profiles['pairs'][(i_frame,gt_id,pred_id)] = info
@@ -376,7 +386,8 @@ class Evaluator:
                 all_profiles['gt_properties'][(i_frame,gt_id)] = v
             for pred_id, v in frame.profiles['pred_max_iou2d'].items():
                 all_profiles['pred_max_iou2d'][(i_frame,pred_id)] = v
-        return arr_frames, all_profiles
+
+        return arr_frames, all_profiles, all_boundary_stats, all_boundary_recall_seg
 
 class SceneEval:
     def __init__(self, pick, Twc, plane_c, max_z, cam_id):
@@ -467,7 +478,12 @@ class FrameEval:
             self.pub_marker_optmized_gt = rospy.Publisher("~%s/optimized_gt"%cam_id, MarkerArray, queue_size=1)
             self.pub_marker_converted_pred = rospy.Publisher("~%s/marker_converted_pred"%cam_id, MarkerArray, queue_size=1)
 
-    def Evaluate2D(self, pred_marker):
+    def Evaluate2D(self, edge_resp, obb_resp, depth):
+        pred_marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32)\
+                .reshape(obb_resp.marker.height, obb_resp.marker.width)
+        pred_filtered_outline = np.frombuffer(obb_resp.filtered_outline.data, dtype=np.uint8)\
+                .reshape(obb_resp.marker.height, obb_resp.marker.width)
+
         gt_marker = self.scene_eval.gt_marker
         gt_pred = np.stack((gt_marker, pred_marker), axis=2)
         # ref : https://stackoverflow.com/questions/24780697/numpy-unique-list-of-colors-in-the-image
@@ -515,6 +531,31 @@ class FrameEval:
             #print(tabulate(correspond, correspond.dtype.names) )
             #import pdb; pdb.set_trace()
             fp_list.add(pred_id)
+
+        # TODO Evaluate outline detection
+        # 두꺼운 gt_outline가지고 측정하느니 marker-GetBoundary 의 결과물로 측정하는게 났겠다.
+        pick = self.scene_eval.pick
+        #pick['convex_edge'], pick['front_marker'],
+        #pick['plane_marker'] pick['plane2marker'], pick['plane2coeff']
+        ''' TODO 
+            * [ ] surface marker? visualization 
+            * [ ] normal for each surface
+        '''
+        try:
+            boundary_stats, boundary_recall_seg = EvaluateEdgeDetection(gt_marker, pred_marker, pred_filtered_outline, depth, pick['plane_marker'], pick['plane2marker'], pick['plane2coeff'], pick['newK'] )
+        except:
+            import pdb; pdb.set_trace()
+        boundary_stats = np.array(boundary_stats,
+                [('detection',bool),('depth',float),('oblique',float),('planeoffset',float)])
+        boundary_recall_seg = np.array(boundary_recall_seg,
+                [('recall',float),('segment',bool), ('midx0',int), ('midx1',int)])
+        #fn = boundary_recall_seg[~boundary_recall_seg['segment']]
+        #print(np.vstack((fn['midx0'],fn['midx1'])).transpose())
+        #cv2.imshow('gt_marker', GetColoredLabel(gt_marker, True) )
+        #cv2.imshow('pred_marker', GetColoredLabel(pred_marker, True) )
+        #cv2.waitKey()
+        #import pdb; pdb.set_trace()
+        #exit(1)
 
         for gt_id, gt_area in gt_areas.items():
             if gt_id == 0:
@@ -601,14 +642,16 @@ class FrameEval:
         self.profiles = {'pairs':pairs, 'gt_states':gt_states,
                 'gt_properties':gt_properties,
                 'gt_max_iou2d':gt_max_iou2d, 'pred_max_iou2d':pred_max_iou2d,
-                'fp_list':fp_list
+                'fp_list':fp_list,
+                'boundary_stats':boundary_stats,
+                'boundary_recall_seg':boundary_recall_seg
                 }
 
         # Visualization
         gt_centers = GetMarkerCenters(gt_marker)
         pred_centers = GetMarkerCenters(pred_marker)
         dst = GetColoredLabel(gt_marker)
-        boundary = FindEdge(pred_marker, 2)
+        boundary = GetBoundary(pred_marker, 2)
         dst[boundary>0,:] = 255
 
         for pred_id, pred_cp in pred_centers.items():
@@ -1263,9 +1306,14 @@ def DrawOverUnderHistogram(ax, num_bins, min_max, arr_frames, all_profiles, prop
 
 if __name__ == '__main__':
     # For debug
-    f = open('/home/geo/catkin_ws/src/ros_unet/tmp.pick','rb')
+    f = open('/home/geo/catkin_ws/src/ros_unet/pick.pick','rb')
     pick = pickle.load(f)
     f.close()
-    evaluator = Evaluator()
-    evaluator.Evaluate(pick['arr_frames'], pick['arr'], is_final=True )
+    depth = np.load('depth.npy')
+    gt_marker = np.load('gt_marker.npy')
+    pred_marker = np.load('pred_marker.npy')
+    pred_filtered_outline = np.load('pred_filtered_outline.npy')
+    res = EvaluateEdgeDetection(gt_marker, pred_marker, pred_filtered_outline, depth, pick['plane_marker'], pick['plane2marker'], pick['plane2coeff'], pick['newK'] )
+    #evaluator = Evaluator()
+    #evaluator.Evaluate(pick['arr_frames'], pick['arr'], is_final=True )
 

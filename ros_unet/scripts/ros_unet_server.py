@@ -34,7 +34,11 @@ class Node:
         mask[depth < .001] = 1
         #mask_convex = np.stack((mask,convex_edge),axis=2)
         mask_convex = np.stack((mask==1,mask==2),axis=2).astype(mask.dtype)
-        output_msg = ros_numpy.msgify(Image, mask_convex, encoding='8UC2')
+        #output_msg = ros_numpy.msgify(Image, mask_convex, encoding='8UC2')
+        #import pdb; pdb.set_trace()
+        output_msg = ros_unet.srv.ComputeEdgeResponse()
+        output_msg.edge = ros_numpy.msgify(Image, mask_convex, encoding='8UC2')
+        output_msg.grad = ros_numpy.msgify(Image, grad, encoding='32FC2')
 
         if self.pub_th_edge.get_num_connections() > 0:
             dst1 = (rgb/2).astype(np.uint8)

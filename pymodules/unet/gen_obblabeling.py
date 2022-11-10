@@ -27,6 +27,37 @@ def get_topic(filename, topic):
 def get_base(fullfn):
     return osp.splitext(osp.basename(fullfn))[0]
 
+def get_ext_plane(front_marker, ext_marker, plane_marker0, ext_range = 10.):
+    # Skeletonize boundary
+    dist, ext_plane_marker0 = cv2.distanceTransformWithLabels( (plane_marker0==0).astype(np.uint8),
+            distanceType=cv2.DIST_L2, maskSize=5)
+    ext_plane_marker0[dist > ext_range] = 0
+    boundary = unet_ext.GetBoundary(ext_plane_marker0, 1)
+    ext_plane_marker0[boundary>0] = 0
+    ext_plane_marker0[:,0] = ext_plane_marker0[:,-1] \
+            = ext_plane_marker0[0,:] = ext_plane_marker0[-1,:] = 0
+
+    ext_plane_marker = np.zeros_like(ext_plane_marker0)
+    plane2marker = {}
+    plane2centers = {}
+    for idx1, idx0 in enumerate(np.unique(ext_plane_marker0)):
+        if idx0 == 0:
+            continue
+        part = ext_plane_marker0==idx0
+        dist_part = cv2.distanceTransform( part.astype(np.uint8),
+                distanceType=cv2.DIST_L2, maskSize=5)
+        loc = np.unravel_index( np.argmax(dist_part,axis=None), ext_marker.shape)
+        dist_max = dist_part[loc]
+        #if dist_max < 5.:
+        #    continue
+        midx = ext_marker[loc]
+        if midx == 0:
+            continue
+        ext_plane_marker[part] = idx1
+        plane2marker[idx1] = midx
+        plane2centers[idx1] = (loc[1],loc[0])
+    return ext_plane_marker, plane2marker, plane2centers
+
 def ParseMarker(cv_gt, rgb=None):
     la = np.logical_and
     lo = np.logical_or
@@ -102,21 +133,28 @@ def ParseMarker(cv_gt, rgb=None):
         marker[marker0==idx] = pidx
         front_marker[plane_marker0==pidx] = pidx
 
+    ext_range = 10.
     dist, tmp_ext_marker = cv2.distanceTransformWithLabels( (marker==0).astype(np.uint8),
             distanceType=cv2.DIST_L2, maskSize=5)
-    tmp_ext_marker[dist > 7.] = 0
-
+    tmp_ext_marker[dist > ext_range] = 0
     ext_marker = np.zeros_like(tmp_ext_marker)
     for pidx, _, cp in planemarker2vertices:
         tidx = tmp_ext_marker[cp[1],cp[0]]
         idx = marker[cp[1],cp[0]]
         ext_marker[tmp_ext_marker==tidx] = idx
+
+    ext_plane_marker, plane2marker, plane2centers \
+            = get_ext_plane(front_marker, ext_marker, plane_marker0, ext_range)
+
     verbose=False
     if verbose:
+        cv2.imshow("plane_marker0", GetColoredLabel(plane_marker0))
+        dst = GetColoredLabel(ext_plane_marker)
+        cv2.imshow("ext_plane", dst)
         #cv2.imshow("outline", 255*outline.astype(np.uint8))
         #cv2.imshow("color_pm0", color_pm0)
         cv2.imshow("front_marker", GetColoredLabel(front_marker))
-        cv2.imshow("marker", GetColoredLabel(marker))
+        #cv2.imshow("marker", GetColoredLabel(marker))
         cv2.imshow("ext_marker", GetColoredLabel(ext_marker))
         dst = GetColoredLabel(marker)
         for pidx, arr_oyz, cp in planemarker2vertices:
@@ -130,14 +168,18 @@ def ParseMarker(cv_gt, rgb=None):
         if ord('q') == cv2.waitKey():
             exit(1)
     #return outline, marker, front_marker, planemarker2vertices
-    return outline, convex_edges, ext_marker, front_marker, planemarker2vertices
+    return outline, convex_edges, ext_marker, front_marker,\
+           planemarker2vertices, (ext_plane_marker, plane2marker, plane2centers) 
 
 def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
     # 1) watershed, 꼭지점 따기.
     # 2) OBB - Roll angle 따기.
     # 3) unet_ext : Unprojection,
     # 4) unet_ext : Euclidean Cluster+oBB?
-    outline, convex_edges, marker, front_marker, planemarker2vertices = ParseMarker(cv_gt, rgb)
+    outline, convex_edges, marker, front_marker, planemarker2vertices, \
+            (plane_marker, plane2marker, plane2centers) = ParseMarker(cv_gt, rgb)
+    marker[depth < .001] = 0
+    plane_marker[depth < .001] = 0
 
     # mask2obb, GetUV와 같은 normalization map.
     nr, nc = marker.shape
@@ -155,15 +197,33 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
                 nu_map[r,c] = nuv[0,0,0]
                 nv_map[r,c] = nuv[0,0,1]
 
-    obb_tuples = unet_ext.ComputeOBB(front_marker, marker, planemarker2vertices, depth,
-            nu_map, nv_map, max_depth)
+    obb_tuples, plane2coeff = unet_ext.ComputeOBB(front_marker, marker, planemarker2vertices, depth, nu_map, nv_map, max_depth, plane_marker, plane2marker, plane2centers)
+    for pidx, normal in plane2coeff.items():
+        plane2coeff[pidx] = np.array(normal)
     obbs = []
     for idx, pose, scale in obb_tuples:
         #  pose = (x,y,z, qw,qx,qy,qz) for transform {camera} <- {box}
         obbs.append( {'id':idx, 'pose':pose, 'scale':scale } )
 
+    verbose = True
+    if verbose:
+        dst = GetColoredLabel(plane_marker)
+        for pidx, cp in plane2centers.items():
+            cv2.circle(dst, cp, 5, (255,255,255), -1)
+            cv2.putText(dst, '%d'%pidx, (cp[0]+2,cp[1]), cv2.FONT_HERSHEY_SIMPLEX, .5, (155,155,155), 1)
+            normal = plane2coeff[pidx]
+            print(pidx, normal)
+            if np.abs(normal[2]) < .8:
+                r = 20.
+                dx,dy = r*normal[0],r*normal[1]
+                dcp = (cp[0]+int(dx), cp[1]+int(dy))
+                cv2.line(dst, cp, dcp, (255,0,0), 2)
+        cv2.imshow("plane", dst)
+        #import pdb; pdb.set_trace()
+        #exit(1)
+
     init_floormask = GetInitFloorMask(cv_gt)
-    return obbs, init_floormask, marker, front_marker, convex_edges, outline
+    return obbs, init_floormask, marker, front_marker, convex_edges, outline, (plane_marker, plane2marker, plane2coeff)
 
 def GetInitFloorMask(cv_gt):
     la = np.logical_and

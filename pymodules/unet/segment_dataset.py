@@ -111,7 +111,7 @@ class ObbDataset(Dataset):
 
         cvgt = cv2.imread( osp.join(self.pkg_dir,pick['cvgt_fn']) )
         # Remove bacgrkground from input
-        outline, convex_edges, marker, _, _ = ParseMarker(cvgt)
+        outline, convex_edges, marker, _, _, _ = ParseMarker(cvgt)
         rgb, depth = pick['rgb'], pick_frame['depth']
         outline = outline.astype(np.uint8)
         convex_edges = convex_edges.astype(np.uint8)

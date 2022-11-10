@@ -136,24 +136,21 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
             t0 = time.time()
             edge_resp = predict_edge(rect_rgb_msg,rect_depth_msg, fx, fy)
             plane_w = convert_plane(Twc, plane_c) # empty plane = no floor filter.
-            obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
+            obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.edge,
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
             t1 = time.time()
             base_bag = osp.splitext(osp.basename(pick['rosbag_fn']))[0]
 
             frame_eval = FrameEval(scene_eval, cam_id, t1-t0, verbose=True)
 
-            marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32)\
-                    .reshape(obb_resp.marker.height, obb_resp.marker.width)
-            
-            dst2d = frame_eval.Evaluate2D(marker)
+            dst2d = frame_eval.Evaluate2D(edge_resp,obb_resp,rect_depth)
             frame_eval.GetMatches(obb_resp.output)
             n = evaluator.PutFrame(pick['rosbag_fn'], frame_eval)
 
             fn_dst2d = osp.join(screenshot_dir, 'segment_%04d_%s.png'%(evaluator.n_frame, base_bag) )
             cv2.imwrite(fn_dst2d, dst2d)
-            edges = np.frombuffer(edge_resp.mask.data, dtype=np.uint8)\
-                    .reshape(edge_resp.mask.height, edge_resp.mask.width,-1)
+            edges = np.frombuffer(edge_resp.edge.data, dtype=np.uint8)\
+                    .reshape(edge_resp.edge.height, edge_resp.edge.width,-1)
             rgb = np.frombuffer(rect_rgb_msg.data, dtype=np.uint8).reshape(rect_rgb_msg.height,rect_rgb_msg.width,-1)
             outline = edges[:,:,0]
             convex_edges = edges[:,:,1]
@@ -198,7 +195,7 @@ def yaw_evaluation():
             obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
             gt_files += glob2.glob(obbdatasetpath)
         evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
-        arr_frames, all_profiles = evaluator.GetTables()
+        arr_frames, all_profiles, all_boundary_stats, all_boundary_recall_seg = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
         plt.savefig( osp.join(eval_dir, 'yaw_chart.svg' ) )
@@ -236,7 +233,7 @@ def dist_evaluation():
             obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
             gt_files += glob2.glob(obbdatasetpath)
         evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
-        arr_frames, all_profiles = evaluator.GetTables()
+        arr_frames, all_profiles, all_boundary_stats, all_boundary_recall_seg = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
         plt.savefig( osp.join(eval_dir, 'dist_chart.svg' ) )
@@ -272,24 +269,93 @@ def test_evaluation():
         obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
         gt_files += glob2.glob(obbdatasetpath)
     # TODO QHull failure? evaluator.py, ln.682
-    #gt_files = ['/home/geo/catkin_ws/src/ros_unet/obb_dataset_test0523/helios_test_2022-05-23-15-50-11_cam0.pick']
+    #gt_files = [gt_files[0]]
+    #gt_files = ['/home/geo/catkin_ws/src/ros_unet/obb_dataset_test0523/helios_2022-05-06-20-11-00_cam0.pick']
 
     if not osp.exists(profile_fn):
         evaluator = perform_test(eval_dir, gt_files, osp.join(eval_dir, 'screenshot'))
-        arr_frames, all_profiles = evaluator.GetTables()
+        arr_frames, all_profiles, all_boundary_stats, all_boundary_recall_seg = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
-            pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
+            pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles,
+                'all_boundary_stats':all_boundary_stats, 'all_boundary_recall_seg':all_boundary_recall_seg}, f)
         plt.savefig( osp.join(eval_dir, 'test_chart.svg' ) )
         plt.savefig( osp.join(eval_dir, 'test_chart.png' ) )
     else:
         with open(profile_fn,'rb') as f:
             pick = pickle.load(f)
             arr_frames, all_profiles= pick['arr_frames'], pick['all_profiles']
+            all_boundary_stats = pick['all_boundary_stats']
+            all_boundary_recall_seg = pick['all_boundary_recall_seg']
         evaluator = Evaluator()
-    evaluator.Evaluate(eval_dir, gt_files, arr_frames, all_profiles, is_final=True )
-    plt.savefig(osp.join(eval_dir, 'test_chart.svg' ) )
-    plt.savefig(osp.join(eval_dir, 'test_chart.png' ) )
-    #plt.show(block=True)
+
+    fig = plt.figure(1, figsize=(10,5), dpi=100)
+    ax1 = fig.add_subplot(111)
+    num_bins = 10
+    min_max = (0., 1.)
+    recall = all_boundary_recall_seg['recall']
+    recall_hist, bound = np.histogram(recall,num_bins,min_max)
+    no_samples = recall_hist==0
+    recall_hist[no_samples] = 1 # To prevent divide by zero
+    recall_hist = recall_hist.astype(np.float)
+
+    trueseg = all_boundary_recall_seg['segment']
+    trueseg_hist, _ = np.histogram(recall[trueseg],num_bins,min_max)
+    trueseg_hist = 100.*trueseg_hist.astype(np.float)/recall_hist
+
+    underseg_hist, _ = np.histogram(recall[~trueseg],num_bins,min_max)
+    underseg_hist = 100.*underseg_hist.astype(np.float)/recall_hist
+
+    x = np.arange(num_bins)
+    ax1.bar(x, width=.9, height=trueseg_hist, alpha=.5, label='TP segment')
+    ax1.bar(x, width=.9, height=underseg_hist, bottom=trueseg_hist, alpha=.5, label='Under segment')
+
+    recall_hist[no_samples] = 0 # To show true number
+    xlabels = []
+    for i in range(num_bins):
+        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
+        msg += '\nn(edge)=%d'%recall_hist[i]
+        xlabels.append(msg)
+    ax1.set_ylabel('[%]',rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax1.xaxis.set_label_coords(1.05, -0.02)
+    ax1.set_xticks(x)
+    ax1.yaxis.set_label_coords(-0.08, 1.)
+    ax1.legend(loc='lower right', fontsize=7)
+
+    # TODO planeoffset - recall
+    fig = plt.figure(2, figsize=(10,5), dpi=100)
+    ax2 = fig.add_subplot(111)
+    num_bins = 20
+    planeoffset = all_boundary_stats['planeoffset']
+    min_max = (0., 0.01)
+    detection = all_boundary_stats['detection'] # boolean
+    planeoffset_hist, bound  = np.histogram(planeoffset[detection],num_bins,min_max)
+    planeoffset_nhist, _ = np.histogram(planeoffset[~detection],num_bins,min_max)
+
+    num_hist = planeoffset_hist + planeoffset_nhist
+    planeoffset_hist = 100.*planeoffset_hist.astype(np.float)/num_hist.astype(np.float)
+    planeoffset_nhist = 100.*planeoffset_nhist.astype(np.float)/num_hist.astype(np.float)
+    x = np.arange(num_bins)
+    ax2.bar(x, width=.9, height=planeoffset_hist, alpha=.5, label='TP')
+    ax2.bar(x, width=.9, height=planeoffset_nhist, bottom=planeoffset_hist, alpha=.5, label='FN')
+    xlabels = []
+    for i in range(num_bins):
+        msg = '%.2f\n~%2.2f'%(100.*bound[i],100.*bound[i+1])
+        #msg += '\nn=%d'%num_hist[i]
+        xlabels.append(msg)
+    ax2.set_xlabel('[cm]',rotation=0, fontsize=7, fontweight='bold')
+    ax2.set_ylabel('[%]',rotation=0, fontsize=7, fontweight='bold')
+    ax2.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax2.xaxis.set_label_coords(1.05, -0.02)
+    ax2.set_xticks(x)
+    ax2.yaxis.set_label_coords(-0.08, 1.)
+    ax2.legend(loc='lower right', fontsize=7)
+
+    plt.show(block=True)
+
+    #evaluator.Evaluate(eval_dir, gt_files, arr_frames, all_profiles, is_final=True )
+    #plt.savefig(osp.join(eval_dir, 'test_chart.svg' ) )
+    #plt.savefig(osp.join(eval_dir, 'test_chart.png' ) )
     plt.close()
     return
 
@@ -306,7 +372,7 @@ def roll_evaluation():
             obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
             gt_files += glob2.glob(obbdatasetpath)
         evaluator = perform_test(gt_files, osp.join(eval_dir, 'screenshot'))
-        arr_frames, all_profiles = evaluator.GetTables()
+        arr_frames, all_profiles, all_boundary_stats, all_boundary_recall_seg = evaluator.GetTables()
         with open(profile_fn,'wb') as f:
             pickle.dump({'arr_frames':arr_frames, 'all_profiles':all_profiles }, f)
         plt.savefig( osp.join(eval_dir, 'roll_chart.svg' ) )

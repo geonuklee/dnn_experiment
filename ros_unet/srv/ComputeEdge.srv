@@ -3,4 +3,5 @@ sensor_msgs/Image depth
 float32 fx
 float32 fy
 ---
-sensor_msgs/Image mask
+sensor_msgs/Image edge # Convex, concave edges
+sensor_msgs/Image grad # gx, gy

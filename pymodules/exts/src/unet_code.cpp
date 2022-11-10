@@ -1,7 +1,9 @@
 #include <iostream>
+#include <algorithm>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <eigen3/Eigen/Dense> // TODO find_package at exts/py(2|3)ext/CMakeLists.txt
+#include <eigen3/Eigen/Geometry>
 
 #include <opencv2/opencv.hpp>
 #include <memory.h>
@@ -43,21 +45,141 @@ std::vector<cv::Scalar> colors = {
   CV_RGB(0,100,100)
 };
 
-cv::Mat GetColoredLabel(cv::Mat marker){
-  cv::Mat dst = cv::Mat::zeros(marker.rows, marker.cols, CV_8UC3);
-  for(int r=0; r<marker.rows; r++){
-    for(int c=0; c<marker.cols; c++){
-      const int32_t& idx = marker.at<int32_t>(r,c);
-      if(idx == 0)
+template<typename T>
+cv::Mat PyArray2Cv(const py::array_t<T>& pyarray, int cv_type){
+  py::buffer_info buf = pyarray.request();
+  long rows = buf.shape[0];
+  long cols = buf.shape[1];
+  cv::Mat output(rows,cols,cv_type,(void*)buf.ptr);
+  return output;
+}
+
+template<typename T, int R, int C>
+Eigen::Matrix<T,R,C> PyArray2Eigen(const py::array_t<T>& pyarray){
+  py::buffer_info buf = pyarray.request();
+  Eigen::Matrix<T,R,C, Eigen::RowMajor> mat((T*)buf.ptr);
+  return mat;
+}
+
+template<typename T>
+py::array_t<T> Cv2PyArray(cv::Mat mat){
+  py::array_t<T> pyarray(mat.rows*mat.cols*mat.channels());
+  py::buffer_info buf = pyarray.request();
+  T* ptr = (T*) buf.ptr;
+  std::memcpy(ptr, mat.data, mat.rows*mat.cols*mat.channels()*sizeof(T));
+  if(mat.channels()==1)
+    pyarray.resize({mat.rows, mat.cols});
+  else
+    pyarray.resize({mat.rows, mat.cols, mat.channels() });
+  return pyarray;
+}
+
+cv::Mat GetBoundary(const cv::Mat marker, int w);
+cv::Mat GetColoredLabel(cv::Mat mask, bool put_text=false){
+  cv::Mat dst = cv::Mat::zeros(mask.rows, mask.cols, CV_8UC3);
+  std::map<int, cv::Point> annotated_lists;
+  //std::map<int, int> max_area;
+
+  cv::Mat connected_labels, stats, centroids;
+  cv::Mat binary = cv::Mat::zeros(mask.rows, mask.cols, CV_8UC1);
+  if(mask.type() == CV_8UC1){
+    for(size_t i = 0; i < mask.rows; i++){
+      for(size_t j = 0; j < mask.cols; j++){
+        int idx = mask.at<unsigned char>(i,j);
+        if(idx > 1)
+          binary.at<unsigned char>(i,j) = 1;
+      }
+    }
+  }
+  else if(mask.type() == CV_32SC1){
+    cv::Mat boundary = GetBoundary(mask,2);
+    for(int i = 0; i < mask.rows; i++)
+      for(int j = 0; j < mask.cols; j++)
+        binary.at<unsigned char>(i,j) = boundary.at<unsigned char>(i,j) <1;
+  }
+  else
+    throw "Unexpected type";
+  cv::connectedComponentsWithStats(binary, connected_labels, stats, centroids);
+
+  for(int i=1; i<stats.rows; i++) {
+    int x = centroids.at<double>(i, 0);
+    int y = centroids.at<double>(i, 1);
+    if(x < 0 or y < 0 or x >= mask.cols or y >= mask.cols)
+      continue;
+    const int& x0 = stats.at<int>(i,cv::CC_STAT_LEFT);
+    const int& x1 = x0+stats.at<int>(i,cv::CC_STAT_WIDTH);
+    const int& y0 = stats.at<int>(i,cv::CC_STAT_TOP);
+    const int& y1 = y0+stats.at<int>(i,cv::CC_STAT_HEIGHT);
+    const int& area = stats.at<int>(i,cv::CC_STAT_AREA);
+    int idx;
+    if(mask.type() == CV_8UC1)
+      idx = mask.at<unsigned char>(y,x);
+    else if(mask.type() == CV_32S) // TODO Unify type of marker map to CV_32S
+      idx = mask.at<int>(y,x);
+    //if(idx > 1 && area > max_area[idx] )
+    if(idx > 1){
+      cv::Point pt( (x0+x1)/2, (y0+y1)/2);
+      annotated_lists[idx] = pt;
+      //max_area[idx] = area;
+    }
+  }
+
+  for(size_t i = 0; i < mask.rows; i++){
+    for(size_t j = 0; j < mask.cols; j++){
+      int idx;
+      if(mask.type() == CV_8UC1)
+        idx = mask.at<unsigned char>(i,j);
+      else if(mask.type() == CV_32S) // TODO Unify type of marker map to CV_32S
+        idx = mask.at<int>(i,j);
+      else
+        throw "Unexpected type";
+      if(mask.type() == CV_8UC1 && idx == 0)
         continue;
-      const cv::Scalar& bgr = colors.at(idx % colors.size());
-      dst.at<cv::Vec3b>(r,c)[0] = bgr[0];
-      dst.at<cv::Vec3b>(r,c)[1] = bgr[1];
-      dst.at<cv::Vec3b>(r,c)[2] = bgr[2];
+      else if(mask.type() == CV_32S && idx < 0)
+        continue;
+
+      cv::Scalar bgr;
+      if( idx == 0)
+        bgr = CV_RGB(100,100,100);
+      else if (idx == 1)
+        bgr = CV_RGB(255,255,255);
+      else
+        bgr = colors.at( idx % colors.size() );
+
+      dst.at<cv::Vec3b>(i,j)[0] = bgr[0];
+      dst.at<cv::Vec3b>(i,j)[1] = bgr[1];
+      dst.at<cv::Vec3b>(i,j)[2] = bgr[2];
+
+      if(idx > 1 && !annotated_lists.count(idx) ){
+        bool overlaped=false;
+        cv::Point pt(j,i+10);
+        for(auto it : annotated_lists){
+          cv::Point e(pt - it.second);
+          if(std::abs(e.x)+std::abs(e.y) < 20){
+            overlaped = true;
+            break;
+          }
+        }
+        if(!overlaped)
+          annotated_lists[idx] = pt;
+      }
+    }
+  }
+
+  if(put_text){
+    for(auto it : annotated_lists){
+      //cv::rectangle(dst, it.second+cv::Point(0,-10), it.second+cv::Point(20,0), CV_RGB(255,255,255), -1);
+      const auto& c0 = colors.at( it.first % colors.size() );
+      //const auto color = c0;
+      //const auto color = (c0[0]+c0[1]+c0[2] > 255*2) ? CV_RGB(0,0,0) : CV_RGB(255,255,255);
+      const auto color = CV_RGB(255-c0[2],255-c0[1],255-c0[0]);
+      cv::putText(dst, std::to_string(it.first), it.second, cv::FONT_HERSHEY_SIMPLEX, 0.5, color);
     }
   }
   return dst;
 }
+
+
 
 template<typename PointT>
 void EuclideanCluster(const float euclidean_tolerance, boost::shared_ptr<pcl::PointCloud<PointT> > all_cloud){
@@ -105,27 +227,68 @@ void EuclideanCluster(const float euclidean_tolerance, boost::shared_ptr<pcl::Po
 template <typename K, typename T>
 using EigenMap = std::map<K, T, std::less<K>, Eigen::aligned_allocator<std::pair<const K, T> > >;
 
+template <typename T>
+using EigenVector = std::vector<T, Eigen::aligned_allocator<T> >;
+
 struct OBB{
   float Tcb_xyz_qwxyz_[7];
   float scale_[3];
 };
 
-std::map<int, OBB> ComputeOBB(const std::vector<long int>& shape,
-                              const int32_t* ptr_frontmarker,
-                              const int32_t* ptr_marker,
-                              const float* ptr_depth,
+EigenVector<Eigen::Vector4f> GetFrontSidePlanes(const OBB& obb){
+  const float* qt = obb.Tcb_xyz_qwxyz_;
+  Eigen::Quaterniond quat(qt[3],qt[4],qt[5],qt[6]);
+  Eigen::Vector3d t(qt[0],qt[1],qt[2]);
+  g2o::SE3Quat Tcb(quat,t);
+  g2o::SE3Quat Tbc = Tcb.inverse();
+  Eigen::Matrix3d Rbc = Tbc.rotation().matrix();
+
+  // TODO Hard coded coordinate transform, bx~=cz, by~=-cy, bz~=-cx
+  std::vector<int> axis_c2b = {2,1,0};
+
+  EigenVector<Eigen::Vector4f> output;
+  output.reserve(5); {
+      Eigen::Vector4f plane;
+      const int& k = axis_c2b.at(2);
+      Eigen::Vector3d n = Rbc.row(k);
+      plane.head<3>() = Eigen::Vector3f(n[0],n[1],n[2]);
+      Eigen::Vector3d pt0;
+      pt0[k] = obb.scale_[k] / 2.;
+      Eigen::Vector3d pt = Tcb * pt0;
+      plane[3] = -n.dot(pt);
+      output.push_back(plane);
+      //std::cout << "plane #0 = " << plane.transpose() << std::endl;
+  }
+
+  for(int axis = 0; axis < 2; axis++){
+    for(int i = 0; i < 2; i++){
+      const int& k = axis_c2b.at(axis);
+      float sign = i==0 ? 1. : -1.;
+      Eigen::Vector4f plane;
+      Eigen::Vector3d n = sign * Rbc.row(k);
+      plane.head<3>() = Eigen::Vector3f(n[0],n[1],n[2]);
+      Eigen::Vector3d pt0;
+      pt0[k] = sign * obb.scale_[k] / 2.;
+      Eigen::Vector3d pt = Tcb * pt0;
+      plane[3] = -n.dot(pt);
+      output.push_back(plane);
+      //std::cout << "plane #" << output.size()-1 << " = " << plane.transpose() << std::endl;
+    }
+  }
+
+  return output;
+}
+
+std::map<int, OBB> ComputeOBB(cv::Mat frontmarker,
+                              cv::Mat marker,
+                              cv::Mat depth,
                               const EigenMap<int,Eigen::Matrix<float,4,1> >& label2vertices,
-                              const float* ptr_numap,
-                              const float* ptr_nvmap,
+                              cv::Mat numap,
+                              cv::Mat nvmap,
                               float max_depth
                              ){
-  int rows = shape[0];
-  int cols = shape[1];
-  cv::Mat frontmarker(rows,cols, CV_32SC1, (void*)ptr_frontmarker);
-  cv::Mat marker(rows, cols, CV_32SC1, (void*)ptr_marker);
-  cv::Mat depth(rows, cols, CV_32F, (void*)ptr_depth);
-  cv::Mat numap(rows, cols, CV_32F, (void*)ptr_numap);
-  cv::Mat nvmap(rows, cols, CV_32F, (void*)ptr_nvmap);
+  int rows = marker.rows;
+  int cols = marker.cols;
 
   // Euclidean cluster before thickness measurement
   std::map<int, pcl::PointCloud<pcl::PointXYZ>::Ptr> allpoints;
@@ -473,28 +636,17 @@ int GetFilteredDepth(const float* depth,
   return 0;
 }
 
-std::set<std::pair<int,int> > GetNeighbors(const int32_t* marker, const std::vector<long int>& shape, int radius){
-  const int rows = (int)shape.at(0);
-  const int cols = (int)shape.at(1);
+std::set<std::pair<int,int> > GetNeighbors(cv::Mat marker, int w){
   const int bg = 0;
-
   std::set<std::pair<int,int> > contacts;
-
-  for (int r0=0; r0<rows; r0++) {
-    for (int c0=0; c0<cols; c0++) {
-      const int32_t& i0 = marker[r0*cols+c0];
+  for (int r0=0; r0<marker.rows; r0++) {
+    for (int c0=0; c0<marker.cols; c0++) {
+      const int32_t& i0 = marker.at<int>(r0,c0);
       if(i0 == bg)
         continue;
-
-      for (int dr=-radius; dr<=radius; dr++) {
-        const int r = r0 + dr;
-        if( r < 0 || r >= rows)
-          continue;
-        for (int dc=-radius; dc<=radius; dc++) {
-          const int c = c0 + dc;
-          if( c < 0 || c >= cols)
-            continue;
-          const int32_t& i1 = marker[r*cols+c];
+      for(int r1 = std::max(r0-w,0); r1 < std::min(r0+w,marker.rows); r1++){
+        for(int c1 = std::max(c0-w,0); c1 < std::min(c0+w,marker.cols); c1++){
+          const int32_t& i1 = marker.at<int>(r1,c1);
           if(i1 == bg)
             continue;
           if(i0 == i1)
@@ -511,31 +663,106 @@ std::set<std::pair<int,int> > GetNeighbors(const int32_t* marker, const std::vec
   return contacts;
 }
 
-int FindEdge(const unsigned char *arr_in, const std::vector<long int>& shape,
-             const int w,
-             unsigned char *arr_out) {
-  const int rows = (int)shape.at(0);
-  const int cols = (int)shape.at(1);
+std::set<std::pair<int,int> > GetNeighbors(cv::Mat plane_marker, int w,
+                                           const std::map<int,int>& plane2marker,
+                                           bool limit_nearest_plane,
+                                           cv::Mat& opposite){
+  const int bg = 0;
+  std::set<std::pair<int,int> > contacts;
+  opposite = cv::Mat::zeros(plane_marker.rows, plane_marker.cols, CV_32SC1);
+  cv::Mat dist = cv::Mat::zeros(plane_marker.rows, plane_marker.cols, CV_32F);
+  const float r2 = (w+1)*(w+1);
+  for (int r0=0; r0<plane_marker.rows; r0++) {
+    for (int c0=0; c0<plane_marker.cols; c0++) {
+      const int& i0 = plane_marker.at<int>(r0,c0);
+      int& o0 = opposite.at<int>(r0,c0);
+      if(i0 == bg)
+        continue;
+      if(!plane2marker.count(i0))
+        continue;
 
-  for (int r0=0; r0<rows; r0++) {
-    for (int c0=0; c0<cols; c0++) {
-      const unsigned char index0 = arr_in[r0*cols+c0];
-      bool is_edge = false;
-      for(int r = std::max(r0-w,0); r < std::min(r0+w,rows); r++){
-        for(int c = std::max(c0-w,0); c < std::min(c0+w,cols); c++){
-          const unsigned char index1 = arr_in[r*cols+c];
-          if(index0!=index1){
-            is_edge = true;
-            break;
+      const int& m0 = plane2marker.at(i0);
+      for(int r1 = std::max(r0-w,0); r1 < std::min(r0+w,plane_marker.rows); r1++){
+        for(int c1 = std::max(c0-w,0); c1 < std::min(c0+w,plane_marker.cols); c1++){
+          const int& i1 = plane_marker.at<int>(r1,c1);
+          int& o1 = opposite.at<int>(r1,c1);
+          if(i1 == bg)
+            continue;
+          if(!plane2marker.count(i1))
+            continue;
+
+          if(i0 == i1)
+            continue;
+          const int& m1 = plane2marker.at(i1);
+          if(m0 == m1 && !limit_nearest_plane)
+            continue;
+          float dx = c1-c0;
+          float dy = r1-r0;
+          float d = dx*dx+dy*dy;
+          if(d > r2)
+            continue;
+          std::pair<int,int> contact(std::min(i0,i1), std::max(i0,i1) );
+          contacts.insert(contact);
+          if(o0 == 0){
+            dist.at<float>(r0,c0) = d;
+            o0 = i1;
+          }
+          else if(d < dist.at<float>(r0,c0) ){
+            dist.at<float>(r0,c0) = d;
+            o0 = i1;
+          }
+          if(o1 == 0){
+            dist.at<float>(r1,c1) = d;
+            o1 = i0;
+          }
+          else if(d < dist.at<float>(r1,c1) ){
+            dist.at<float>(r1,c1) = d;
+            o1 = i0;
           }
         }
-        if(is_edge)
-          break;
       }
-      arr_out[r0*cols + c0] = (is_edge?1:0);
     }
   }
-  return 0;
+
+  if(limit_nearest_plane){
+    for(int r=0; r<plane_marker.rows;r++){
+      for(int c=0; c<plane_marker.cols;c++){
+        int& pidx1 = opposite.at<int>(r,c);
+        if(pidx1 == 0)
+          continue;
+        const int& pidx0 = plane_marker.at<int>(r,c);
+        const int& midx0 = plane2marker.at(pidx0);
+        const int& midx1 = plane2marker.at(pidx1);
+        if(midx0==midx1) // Erase boundary between same instance with same marker.
+          pidx1 = 0;
+      }
+    }
+  }
+  return contacts;
+}
+
+cv::Mat GetBoundary(const cv::Mat marker, int w){
+  cv::Mat boundarymap = cv::Mat::zeros(marker.rows,marker.cols, CV_8UC1);
+  for(int r0 = 0; r0 < marker.rows; r0++){
+    for(int c0 = 0; c0 < marker.cols; c0++){
+      const int& i0 = marker.at<int>(r0,c0);
+      bool b = false;
+      for(int r1 = std::max(r0-w,0); r1 < std::min(r0+w,marker.rows); r1++){
+        for(int c1 = std::max(c0-w,0); c1 < std::min(c0+w,marker.cols); c1++){
+          const int& i1 = marker.at<int>(r1,c1);
+          b = i0 != i1;
+          if(b)
+            break;
+        }
+        if(b)
+          break;
+      }
+      if(!b)
+        continue;
+      boundarymap.at<unsigned char>(r0,c0) = true;
+    }
+  }
+  return boundarymap;
 }
 
 void GetGradient(const float* filtered_depth,
@@ -714,19 +941,10 @@ void GetHessian(const float* depth,
 }
 
 // ref) https://stackoverflow.com/questions/49582252/pybind-numpy-access-2d-nd-arrays
-py::array_t<unsigned char> PyFindEdge(py::array_t<unsigned char> inputmask, int w) {
-  py::buffer_info buf_inputmask = inputmask.request();
-
-  /*  allocate the buffer */
-  py::array_t<unsigned char> output = py::array_t<unsigned char>(buf_inputmask.size);
-  py::buffer_info buf_output = output.request();
-
-  const unsigned char* ptr_inputmask = (const unsigned char*) buf_inputmask.ptr;
-  unsigned char* ptr_output = (unsigned char*) buf_output.ptr;
-  FindEdge(ptr_inputmask, buf_inputmask.shape, w, ptr_output);
-
-  // reshape array to match input shape
-  output.resize({buf_inputmask.shape[0], buf_inputmask.shape[1]});
+py::array_t<unsigned char> PyGetBoundary(py::array_t<int32_t> _inputmask, int w) {
+  cv::Mat inputmask = PyArray2Cv(_inputmask, CV_32SC1);
+  cv::Mat boundary = GetBoundary(inputmask, w);
+  py::array_t<unsigned char> output = Cv2PyArray<unsigned char>(boundary);
   return output;
 }
 
@@ -983,11 +1201,247 @@ py::array_t<float> PyGetDiscontinuousDepthEdge(py::array_t<float> inputdepth,
   return output;
 }
 
-py::dict PyGetNeighbors(py::array_t<int32_t> marker, int radius) {
+py::tuple PyEvaluateEdgeDetection(py::array_t<int32_t> _gt_marker,
+                                 py::array_t<int32_t> _pred_marker,
+                                 py::array_t<unsigned char> _pred_outline,
+                                 py::array_t<float> _depth,
+                                 py::array_t<int32_t> _plane_marker,
+                                 py::dict _plane2marker,
+                                 py::dict _plane2normals,
+                                 py::array_t<double> _K
+                                 ){
+  cv::Mat gt_marker = PyArray2Cv(_gt_marker, CV_32SC1);
+  cv::Mat pred_marker = PyArray2Cv(_pred_marker, CV_32SC1);
+  cv::Mat pred_outline = PyArray2Cv(_pred_outline, CV_8UC1);
+  cv::Mat depth = PyArray2Cv(_depth, CV_32FC1);
+  cv::Mat gt_outline = GetBoundary(gt_marker,1);
+  cv::Mat plane_marker = PyArray2Cv(_plane_marker, CV_32SC1);
+  std::map<int, int> plane2marker;
+  EigenMap<int, Eigen::Vector4f> plane2coeff;
+  for(auto it : _plane2marker)
+    plane2marker[py::cast<int>(it.first)] = py::cast<int>(it.second);
+  for(auto it : _plane2normals){
+    py::array arr = py::cast<py::array>(it.second);
+    double* ptr = (double*) arr.data();
+    plane2coeff[py::cast<int>(it.first)] = Eigen::Vector4f(ptr[0],ptr[1],ptr[2],ptr[3]);
+  }
+
+  const int line_range = 5;
+  cv::Mat thin_opposite; {
+    cv::Mat dist_frombg;
+    cv::Mat inverted_bg = gt_marker>0;
+    inverted_bg.row(0) = 0;
+    inverted_bg.row(gt_marker.rows-1) = 0;
+    inverted_bg.col(0) = 0;
+    inverted_bg.col(gt_marker.cols-1) = 0;
+    cv::distanceTransform(inverted_bg, dist_frombg, cv::DIST_L2, cv::DIST_MASK_3);
+
+    // 가장 가까운 건너편 segment를 어떻게 찾고, 연결하느냐 문제.
+    GetNeighbors(plane_marker,line_range, plane2marker, false, thin_opposite);
+    for(int r=0; r<plane_marker.rows;r++){
+      for(int c=0; c<plane_marker.cols;c++){
+        int& pidx1 = thin_opposite.at<int>(r,c);
+        if(dist_frombg.at<float>(r,c) < 15.) // Near background with possible depth noise
+          pidx1 = 0;
+      }
+    }
+  }
+
+  Eigen::Matrix<float,3,3> K = PyArray2Eigen<double,3,3>(_K).cast<float>();
+  Eigen::Matrix<float,3,3> invK = K.inverse();
+  const int rows = gt_marker.rows;
+  const int cols = gt_marker.cols;
+  /*
+  Ground truth boundary 상에서 
+  1. Neighbor pair별,
+    1-1. boundary points 및 정보. dict[(ins0,ins1)] = Nxm points array
+      b. done) array(1,bool) : dist_trans(pred_boundary) < threshold[pixel] . 즉, Outline Recall 여부.
+      c. done) array(1,float) : 깊이값
+      *. done) array(1,float) : 두 instance 사이 normal 각 차이 (python에서)
+    1-2. Segmentation 성공여부
+      * dist_trans(boundary) < threshold 범위 내에서 
+      * gi0, gi1 각각에 가장 많이 겹치는 pred id 가 서로 다르면 segmentation 성공, 같으면 실패.
+  */
+  cv::Mat dist_predoutline, dist_gtoutline;
+  cv::distanceTransform(pred_outline<1, dist_predoutline, cv::DIST_L2, cv::DIST_MASK_3);
+  cv::distanceTransform(gt_outline<1, dist_gtoutline, cv::DIST_L2, cv::DIST_MASK_3);
+  cv::Mat dst = GetColoredLabel(plane_marker,true);
+
+  struct BoundaryStat{
+    cv::Point2i pt;
+    bool pred_detection;
+    float depth;
+    float oblique;
+    float plane_offset;
+  };
+
+  std::map<int,size_t> gt_areas;
+  for(int r=0; r<rows;r++){
+    for(int c=0; c<cols;c++){
+      const int& m0 = gt_marker.at<int>(r,c);
+      if(m0 == 0)
+        continue;
+      gt_areas[m0]++;
+    }
+  }
+
+  std::map<std::pair<int,int>, std::list<BoundaryStat> > boundary_stats;
+  std::map<std::pair<int,int>, int> boundary_n, boundary_recall;
+  std::map<std::pair<int,int>, bool> boundary_segmentation;
+  int n_boundaries = 0;
+  const float fline_range = line_range; 
+  for(int r=0; r<rows;r++){
+    for(int c=0; c<cols;c++){
+      const float& z = depth.at<float>(r,c);
+      if(z < .001)
+        continue;
+      if(thin_opposite.at<int>(r,c)==0)
+        continue;
+      const int& pidx0 = plane_marker.at<int>(r,c);
+      const int& pidx1 = thin_opposite.at<int>(r,c);
+      if(!plane2coeff.count(pidx0))
+        continue;
+      if(!plane2coeff.count(pidx1))
+        continue;
+      if(!plane2marker.count(pidx0))
+         continue;
+      if(!plane2marker.count(pidx1))
+         continue;
+      const auto& n0 = plane2coeff.at(pidx0).head<3>();
+      const auto& n1 = plane2coeff.at(pidx1).head<3>();
+      Eigen::Vector4f pt0(0.,0.,0.,1.);
+      pt0.head<3>() = z * invK * Eigen::Vector3f( (float)c, (float)r, 1.);
+      const float err_self = std::abs( plane2coeff.at(pidx0).dot(pt0) );
+      if(err_self > .01)
+        continue;
+      BoundaryStat stat;
+      stat.pt = cv::Point2i(c,r);
+      stat.pred_detection = dist_predoutline.at<float>(r,c) < fline_range;
+      stat.depth = z;
+      stat.oblique = std::acos( n0.dot(n1) );
+      stat.plane_offset = std::abs( plane2coeff.at(pidx1).dot(pt0) );
+      if(stat.plane_offset > 0.1)
+        cv::circle(dst, cv::Point2i(c,r), 2,CV_RGB(0,0,0), -1 );
+      const int& m0 = plane2marker.at(pidx0);
+      const int& m1 = plane2marker.at(pidx1);
+      const auto key = std::make_pair(std::min(m0,m1),std::max(m0,m1));
+      if(!boundary_n.count(key)){
+        boundary_n[key] = 0;
+        boundary_recall[key] = 0;
+        boundary_segmentation[key] = false;
+      }
+      boundary_stats[key].push_back(stat);
+      boundary_n[key]++;
+      if(stat.pred_detection)
+        boundary_recall[key]++;
+      n_boundaries++;
+    }
+  }
+
+  {
+    std::map<int,std::map<int,size_t> > gt2pred_counts;
+    for(int r=0; r<rows;r++){
+      for(int c=0; c<cols;c++){
+        const int& gt = gt_marker.at<int>(r,c);
+        if(gt < 1)
+          continue;
+        const int& pred = pred_marker.at<int>(r,c);
+        if(pred < 1)
+          continue;
+        gt2pred_counts[gt][pred]++;
+      }
+    } // for r
+
+    std::map<int,int> gt2pred;
+    std::map<int, std::set<int> > pred2gt;
+    for(const auto& it : gt2pred_counts){
+      const int& gt = it.first;
+      int max_pred = -1;
+      size_t max_count = .5*gt_areas.at(gt);
+      for(const auto& it1 : it.second){
+        if(it1.second < max_count)
+          continue;
+        max_pred = it1.first;
+        max_count = it1.second;
+      }
+      gt2pred[gt] = max_pred;
+      pred2gt[max_pred].insert(gt);
+    }
+
+    for(auto& it : boundary_segmentation){
+      const int& m0 = it.first.first;
+      const int& m1 = it.first.second;
+      if(!gt2pred.count(m0))
+        continue;
+      if(!gt2pred.count(m1))
+        continue;
+      it.second = gt2pred[m0] != gt2pred[m1];
+      //printf("boundary (%d,%d)'s segmentation = %d\n", m0,m1,it.second);
+    }
+  }
+
+  /*
+  struct InnerStat{
+    int pidx;
+    float depth;
+    float oblique;
+  };
+  std::map<int, std::list<InnerStat> > inner_stats; {
+    Eigen::Vector3f n0(0.,0.,1.);
+    for(int r=0; r<rows;r++){
+      for(int c=0; c<cols;c++){
+        const float& z = depth.at<float>(r,c);
+        if(z < .001)
+          continue;
+        if(dist_gtoutline.at<float>(r,c) >= fline_range)
+          continue;
+        const int& pidx = plane_marker.at<int>(r,c);
+        if(pidx == 0)
+          continue;
+        const auto& n1 = plane2coeff.at(pidx).head<3>();
+        const int& midx = plane2marker.at(pidx);
+        InnerStat stat;
+        stat.depth = z;
+        stat.pidx = pidx;
+        stat.oblique = std::acos( -n0.dot(n1) );
+        inner_stats[midx].push_back(stat);
+      }
+    }
+  }
+  */
+
+  /*{
+    cv::imshow("pred_detection", GetColoredLabel(pred_marker,true) );
+    cv::imshow("marker", GetColoredLabel(gt_marker,true) );
+    cv::imshow("plane_marker", dst);
+    cv::imshow("thin_opposite", GetColoredLabel(thin_opposite) );
+    cv::waitKey(0);
+  }*/
+
+  py::list pyboundary_stats;
+  py::list pyboundary_recall_segment;
+  for(const auto& it : boundary_stats){
+    const int& m0 = it.first.first;
+    const int& m1 = it.first.second;
+    const std::list<BoundaryStat> stats = it.second;
+    for(const auto& stat : stats){
+      py::tuple pystat
+        = py::make_tuple(stat.pred_detection,stat.depth,stat.oblique,stat.plane_offset);
+      pyboundary_stats.append(pystat);
+    }
+    float recall = (float)boundary_recall.at(it.first) / (float) boundary_n.at(it.first);
+    bool bseg = boundary_segmentation.at(it.first);
+    pyboundary_recall_segment.append( py::make_tuple(recall, bseg, m0, m1) );
+  }
+  return py::make_tuple(pyboundary_stats, pyboundary_recall_segment);
+}
+
+py::dict PyGetNeighbors(py::array_t<int32_t> _marker, int radius) {
   py::dict output;
-  py::buffer_info buf_marker = marker.request();
-  const int32_t* ptr_marker = (const int32_t*) buf_marker.ptr;
-  std::set<std::pair<int,int> > contacts = GetNeighbors(ptr_marker, buf_marker.shape, radius);
+  //py::buffer_info buf_marker = marker.request();
+  //const int32_t* ptr_marker = (const int32_t*) buf_marker.ptr;
+  cv::Mat marker = PyArray2Cv(_marker, CV_32SC1);
+  std::set<std::pair<int,int> > contacts = GetNeighbors(marker, radius);
   for(const auto& contact : contacts){
     py::object i0 = py::cast<int>((int)contact.first);
     py::object i1 = py::cast<int>((int)contact.second);
@@ -1004,28 +1458,37 @@ py::dict PyGetNeighbors(py::array_t<int32_t> marker, int radius) {
   return output;
 }
 
-py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
-                       py::array_t<int32_t> marker,
+py::tuple PyComputeOBB(py::array_t<int32_t> _frontmarker,
+                       py::array_t<int32_t> _marker,
                        py::list py_label2vertices,
-                       py::array_t<float> depth,
-                       py::array_t<float> numap,
-                       py::array_t<float> nvmap,
-                       float max_depth
+                       py::array_t<float> _depth,
+                       py::array_t<float> _numap,
+                       py::array_t<float> _nvmap,
+                       float max_depth,
+                       py::array_t<int32_t> _plane_marker,
+                       py::dict _plane2marker,
+                       py::dict _plane2centers
                        ){
-  py::buffer_info buf_depth = depth.request();
-  const float* ptr_depth = (const float*) buf_depth.ptr;
-
-  py::buffer_info buf_marker = marker.request();
-  const int32_t* ptr_marker = (const int32_t*) buf_marker.ptr;
-
-  py::buffer_info buf_frontmarker = frontmarker.request();
-  const int32_t* ptr_frontmarker = (const int32_t*) buf_frontmarker.ptr;
-
-  py::buffer_info buf_numap = numap.request();
-  const float* ptr_numap = (const float*) buf_numap.ptr;
-
-  py::buffer_info buf_nvmap = nvmap.request();
-  const float* ptr_nvmap = (const float*) buf_nvmap.ptr;
+  cv::Mat depth = PyArray2Cv<float>(_depth,CV_32FC1);
+  cv::Mat marker = PyArray2Cv<int32_t>(_marker, CV_32SC1);
+  cv::Mat front_marker = PyArray2Cv<int32_t>(_frontmarker, CV_32SC1);
+  cv::Mat numap = PyArray2Cv<float>(_numap, CV_32FC1);
+  cv::Mat nvmap = PyArray2Cv<float>(_nvmap, CV_32FC1);
+  cv::Mat plane_marker = PyArray2Cv<int32_t>(_plane_marker, CV_32SC1);
+  std::map<int, int> plane2marker;
+  std::map<int, cv::Point2i>  plane2center;
+  for(auto it : _plane2marker){
+    int pidx = py::cast<int>(it.first);
+    int midx = py::cast<int>(it.second);
+    plane2marker[pidx] = midx;
+  }
+  for(auto it : _plane2centers){
+    int pidx = py::cast<int>(it.first);
+    py::tuple xy = py::cast<py::tuple>(it.second);
+    int x = py::cast<int>(xy[0]);
+    int y = py::cast<int>(xy[1]);
+    plane2center[pidx] = cv::Point2i(x,y);
+  }
 
   EigenMap<int,Eigen::Matrix<float,4,1> > label2vertices; // org, x, y on 2D image plane
 
@@ -1043,36 +1506,120 @@ py::list PyComputeOBB(py::array_t<int32_t> frontmarker,
   //assert(info.contains("K"));
   //py::array_t<float> pyK = info["K"].cast<py::array_t<float> >();
   //cv::Mat K(3,3,CV_32FC1, pyK.request().ptr);
-  std::map<int, OBB> output = ComputeOBB(buf_depth.shape,
-                                         ptr_frontmarker,
-                                         ptr_marker,
-                                         ptr_depth,
+  std::map<int, OBB> obbs = ComputeOBB(front_marker,
+                                         marker,
+                                         depth,
                                          label2vertices,
-                                         ptr_numap,
-                                         ptr_nvmap,
+                                         numap,
+                                         nvmap,
                                          max_depth
                                          );
-  py::list list;
-  for(auto it : output){
+  EigenMap<int, EigenVector<Eigen::Vector4f> > front_side_planes;
+  std::map<int, std::vector<int> > inliers;
+  //std::cout << "output =(";
+  for(const auto& it : obbs){
+    const int& midx = it.first;
+    front_side_planes[midx] = GetFrontSidePlanes(it.second);
+    //std::cout << it.first << ",";
+  }
+  //std::cout << ")\n";
+
+  for(int r=0; r<plane_marker.rows; r++){
+    for(int c=0; c<plane_marker.cols; c++){
+      const int& pidx = plane_marker.at<int>(r,c);
+      if(!plane2marker.count(pidx))
+        continue;
+      const int& midx = plane2marker.at(pidx);
+      if(!front_side_planes.count(midx) )
+        continue;
+      const cv::Point2i cp = plane2center.at(pidx);
+      if(front_marker.at<int>(cp.y,cp.x) == midx){
+          //std::cout << "pidx #" << pidx << " is front plane" << std::endl;
+        continue;
+      }
+      float nu = numap.at<float>(r,c);
+      float nv = nvmap.at<float>(r,c);
+      const float& d = depth.at<float>(r,c);
+      const auto pt = Eigen::Vector4f(nu*d,nv*d,d, 1.);
+      int opt_k = -1;
+      float min_err = 99999.;
+      for(int k = 1; k < 5; k++){
+        const Eigen::Vector4f& plane = front_side_planes.at(midx).at(k);
+        float err = std::abs( plane.dot(pt) );
+        if(err > min_err)
+          continue;
+        min_err = err;
+        opt_k = k;
+      }
+      if(opt_k < 0)
+        continue;
+      if(!inliers.count(pidx))
+        inliers[pidx].resize(5);
+      inliers[pidx][opt_k]++;
+    }
+  }
+
+  //for(const auto& it : inliers){
+  //  std::cout << "Counts in pidx#" << it.first << " : ";
+  //  for(const int& c : it.second)
+  //    std::cout << c << ", ";
+  //  std::cout << std::endl;
+  //}
+
+  py::list obb_list;
+  for(auto it : obbs){
     const OBB& obb = it.second;
     py::tuple pose = py::make_tuple(obb.Tcb_xyz_qwxyz_[0], obb.Tcb_xyz_qwxyz_[1],
                                     obb.Tcb_xyz_qwxyz_[2], obb.Tcb_xyz_qwxyz_[3],
                                     obb.Tcb_xyz_qwxyz_[4], obb.Tcb_xyz_qwxyz_[5],
                                     obb.Tcb_xyz_qwxyz_[6]);
     py::tuple scale = py::make_tuple(obb.scale_[0], obb.scale_[1], obb.scale_[2]);
-    list.append(py::make_tuple(it.first, pose, scale) );
+    obb_list.append(py::make_tuple(it.first, pose, scale) );
   }
-  return list;
+  py::dict plane2normals;
+  std::set<int> sides;
+  for(auto it : inliers){
+    int pidx = it.first;
+    const int& midx = plane2marker.at(pidx);
+    const std::vector<int>& counts = it.second;
+    int opt_k = -1;
+    int max_count = 0;
+    for(int k = 1; k < 5; k++){
+      if(max_count > counts.at(k))
+        continue;
+      max_count = counts.at(k);
+      opt_k = k;
+    }
+    if(opt_k < 0)
+      continue;
+    //std::cout << "side plane pidx#" << pidx << ", k#" << opt_k << ", counts=" << max_count << std::endl;
+    sides.insert(pidx);
+    const Eigen::Vector4f& plane = front_side_planes.at(midx).at(opt_k);
+    plane2normals[py::cast(pidx)] = py::make_tuple(plane[0],plane[1],plane[2],plane[3]);
+  }
+  for(auto it : plane2marker){
+    const int& pidx = it.first;
+    const int& midx = it.second;
+    if(sides.count(pidx))
+      continue;
+    const Eigen::Vector4f& plane = front_side_planes.at(midx).at(0);
+    plane2normals[py::cast(pidx)] = py::make_tuple(plane[0],plane[1],plane[2],plane[3]);
+  }
+  return py::make_tuple(obb_list, plane2normals);
 }
 
 
 PYBIND11_MODULE(unet_ext, m) {
+  m.def("EvaluateEdgeDetection", &PyEvaluateEdgeDetection, "Evaluate edge detection",
+        py::arg("gt_marker"),py::arg("pred_marker"),py::arg("pred_outline"), py::arg("depth"),
+        py::arg("plane_marker"), py::arg("plane2marker"), py::arg("plane2normals"),
+        py::arg("camera_marix"));
   m.def("GetNeighbors", &PyGetNeighbors, "Get neighbors of each instance in a given marker.",
         py::arg("marker"), py::arg("radius") );
   m.def("GetFilteredDepth", &PyGetFilteredDepth, "Get filtered depth.",
         py::arg("input_mask"), py::arg("dd_edge"),
         py::arg("sample_width") );
-  m.def("FindEdge", &PyFindEdge, "find edge", py::arg("input_mask"), py::arg("width") );
+  m.def("GetBoundary", &PyGetBoundary, "find edge", py::arg("input_mask"), py::arg("width") );
   m.def("GetDiscontinuousDepthEdge", &PyGetDiscontinuousDepthEdge,
         "Find edge of discontinuous depth",
         py::arg("input_depth"), py::arg("threshold_depth") );
@@ -1092,6 +1639,7 @@ PYBIND11_MODULE(unet_ext, m) {
         py::arg("depth"),
         py::arg("nu_map"),
         py::arg("nv_map"),
-        py::arg("max_depth")
+        py::arg("max_depth"),
+        py::arg("plane_marker"), py::arg("plane2marker"), py::arg("plane2centers")
         );
 }

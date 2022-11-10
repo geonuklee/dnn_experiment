@@ -233,7 +233,7 @@ def get_meterdepth(depth):
          return depth/ 1000.
     return depth
 
-def GetColoredLabel(marker):
+def GetColoredLabel(marker, text=False):
     dst = np.zeros((marker.shape[0],marker.shape[1],3), dtype=np.uint8)
     uniq = np.unique(marker)
     n= len(colors)
@@ -241,6 +241,26 @@ def GetColoredLabel(marker):
         if u == 0:
             continue
         dst[marker==u] = colors[u%n]
+    if not text:
+        return dst
+    boundary = cpp_ext.GetBoundary(marker, 2)
+    boundary[0,:] = boundary[-1,:] = boundary[:,0] = boundary[:,-1] = 1
+    ret, labels, stats, centroids = cv2.connectedComponentsWithStats( (boundary<1).astype(np.uint8) )
+    dst[boundary>0,:] = 0
+    for i, pt in enumerate(centroids):
+        if i == 0:
+            continue
+        c,r = pt.astype(np.int)
+        c = min(marker.shape[1], c)
+        c = max(0, c)
+        r = min(marker.shape[0], r)
+        r = max(0, r)
+        idx = marker[r,c]
+        if idx < 2:
+            continue
+        color = colors[idx%n]
+        color = (255-color[0], 255-color[1], 255-color[2])
+        cv2.putText(dst, '%d'%idx, (c,r), cv2.FONT_HERSHEY_SIMPLEX, .5, color)
     return dst
 
 def GetNormalizedDepth(depth):

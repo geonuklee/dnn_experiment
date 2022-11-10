@@ -127,10 +127,19 @@ public:
                                req.plane
                               );
     res.output = obb_process_visualizer->GetUnsyncedOBB();
-    cv_bridge::CvImage cv_img;
-    cv_img.encoding = sensor_msgs::image_encodings::TYPE_32SC1;
-    cv_img.image    = instance_marker;
-    res.marker = *cv_img.toImageMsg();
+    {
+      cv_bridge::CvImage cv_img;
+      cv_img.encoding = sensor_msgs::image_encodings::TYPE_32SC1;
+      cv_img.image    = instance_marker;
+      res.marker = *cv_img.toImageMsg();
+    }
+    {
+      cv_bridge::CvImage cv_img;
+      cv_img.encoding = sensor_msgs::image_encodings::TYPE_8UC1;
+      cv_img.image    = filtered_outline;
+      res.filtered_outline = *cv_img.toImageMsg();
+    }
+
     obb_process_visualizer->Visualize();
 
     // TODO Future works : matching, publixh xyzrgb

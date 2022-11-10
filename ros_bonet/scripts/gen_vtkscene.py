@@ -39,7 +39,7 @@ import shutil
 #import deepdish as dd
 import pickle
 
-from unet_ext import FindEdge, UnprojectPointscloud
+from unet_ext import GetBoundary, UnprojectPointscloud
 from unet.util import colors, AddEdgeNoise, GetColoredLabel, remove_small_instance, Convert2InterInput
 
 def resize(rgb, depth, K):
@@ -332,7 +332,7 @@ class Scene:
                 self.ren2.ResetCameraClippingRange()
 
                 vis, mask = self.GetMask()
-                edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
+                edge = GetBoundary(mask.astype(np.uint8),2) # Get instance edge
                 #print('id_to_ren2actors.keys()=',self.id_to_ren2actors.keys())
                 #print('unique(mask)=',np.unique(mask))
                 #print('outliker=',outliers)
@@ -370,7 +370,7 @@ class Scene:
                     #exit(-1)
                     continue
 
-                edge = FindEdge(mask.astype(np.uint8)) # Get instance edge
+                edge = GetBoundary(mask.astype(np.uint8),2) # Get instance edge
                 mask[edge>0] = 0
                 if mask.max() < 3:
                     continue
