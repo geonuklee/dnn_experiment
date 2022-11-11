@@ -537,19 +537,26 @@ class FrameEval:
         pick = self.scene_eval.pick
         #pick['convex_edge'], pick['front_marker'],
         #pick['plane_marker'] pick['plane2marker'], pick['plane2coeff']
-        ''' TODO 
-            * [ ] surface marker? visualization 
-            * [ ] normal for each surface
-        '''
         try:
             boundary_stats, boundary_recall_seg = EvaluateEdgeDetection(gt_marker, pred_marker, pred_filtered_outline, depth, pick['plane_marker'], pick['plane2marker'], pick['plane2coeff'], pick['newK'] )
         except:
             import pdb; pdb.set_trace()
         boundary_stats = np.array(boundary_stats,
                 [('detection',bool),('depth',float),('oblique',float),('planeoffset',float)])
-        boundary_recall_seg = np.array(boundary_recall_seg,
-                [('recall',float),('segment',bool), ('midx0',int), ('midx1',int)])
-        #fn = boundary_recall_seg[~boundary_recall_seg['segment']]
+        ldtype = [('recall',float),('segment',bool), ('midx0',int), ('midx1',int),
+                    ('max_depth',float),('oblique',float),('max_planeoffset',float) ]
+        #boundary_recall_seg = np.array(boundary_recall_seg, ldtype)
+        fn = pick['cvgt_fn']
+        fn = osp.splitext(osp.basename(fn))[0]
+        assert(len(fn) < 50)
+        str_type = ('scene','|S50')
+        lt = [] # list,tuple
+        for each in boundary_recall_seg:
+            neach = list(each)
+            neach.append(fn)
+            lt.append(tuple(neach) )
+        ldtype.append(str_type)
+        boundary_recall_seg = np.array(lt, dtype=ldtype)
         #print(np.vstack((fn['midx0'],fn['midx1'])).transpose())
         #cv2.imshow('gt_marker', GetColoredLabel(gt_marker, True) )
         #cv2.imshow('pred_marker', GetColoredLabel(pred_marker, True) )

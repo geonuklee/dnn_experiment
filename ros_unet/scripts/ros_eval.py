@@ -322,34 +322,150 @@ def test_evaluation():
     ax1.yaxis.set_label_coords(-0.08, 1.)
     ax1.legend(loc='lower right', fontsize=7)
 
-    # TODO planeoffset - recall
-    fig = plt.figure(2, figsize=(10,5), dpi=100)
-    ax2 = fig.add_subplot(111)
-    num_bins = 20
-    planeoffset = all_boundary_stats['planeoffset']
-    min_max = (0., 0.01)
-    detection = all_boundary_stats['detection'] # boolean
-    planeoffset_hist, bound  = np.histogram(planeoffset[detection],num_bins,min_max)
-    planeoffset_nhist, _ = np.histogram(planeoffset[~detection],num_bins,min_max)
+    # planeoffset - edge detection recall
+    xlabel_unit = {'planeoffset':'[mm]', 'oblique':'[deg]'}
+    for i, name in enumerate(xlabel_unit.keys()):
+        fig = plt.figure(i+2, figsize=(10,5), dpi=100)
+        fig.suptitle(name,fontsize=16)
+        ax = fig.add_subplot(111)
+        num_bins = 20
+        param = all_boundary_stats[name]
+        detection = all_boundary_stats['detection'] # boolean
+        if name == 'planeoffset':
+            min_max = (0., 0.01)
+        else:
+            min_max = (0., 40)
+        param_hist, bound  = np.histogram(param[detection],num_bins,min_max)
+        param_nhist, _ = np.histogram(param[~detection],num_bins,min_max)
 
-    num_hist = planeoffset_hist + planeoffset_nhist
-    planeoffset_hist = 100.*planeoffset_hist.astype(np.float)/num_hist.astype(np.float)
-    planeoffset_nhist = 100.*planeoffset_nhist.astype(np.float)/num_hist.astype(np.float)
+        num_hist = param_hist + param_nhist
+        nosample =  num_hist==0
+        num_hist[nosample] = 1
+        param_hist = 100.*param_hist.astype(np.float)/num_hist.astype(np.float)
+        param_nhist = 100.*param_nhist.astype(np.float)/num_hist.astype(np.float)
+        x = np.arange(num_bins)
+        ax.bar(x, width=.9, height=param_hist, alpha=.5, label='TP')
+        ax.bar(x, width=.9, height=param_nhist, bottom=param_hist, alpha=.5, label='FN')
+        xlabels = []
+        for i in range(num_bins):
+            if name == 'planeoffset':
+                msg = '%.2f\n~%2.2f'%(1000.*bound[i],1000.*bound[i+1])
+            else:
+                msg = '%.2f\n~%2.2f'%(bound[i],bound[i+1])
+            xlabels.append(msg)
+        ax.set_xlabel(xlabel_unit[name],rotation=0, fontsize=7, fontweight='bold')
+        ax.set_ylabel('[%]',rotation=0, fontsize=7, fontweight='bold')
+        ax.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+        ax.xaxis.set_label_coords(1.05, -0.02)
+        ax.set_xticks(x)
+        ax.yaxis.set_label_coords(-0.08, 1.)
+        ax.legend(loc='lower right', fontsize=7)
+
+    fig = plt.figure(4, figsize=(10,5), dpi=100)
+    ax4 = fig.add_subplot(111)
+    if True:
+        num_bins = 20
+        prop_range = all_boundary_stats['oblique'] < 10.
+        param = all_boundary_stats['planeoffset'][prop_range]
+        detection = all_boundary_stats['detection'][prop_range]
+        min_max = (0., 0.01)
+
+        param_hist, bound  = np.histogram(param[detection],num_bins,min_max)
+        param_nhist, _ = np.histogram(param[~detection],num_bins,min_max)
+        num_hist = param_hist + param_nhist
+        nosample =  num_hist==0
+        num_hist[nosample] = 1
+        param_hist = 100.*param_hist.astype(np.float)/num_hist.astype(np.float)
+        param_nhist = 100.*param_nhist.astype(np.float)/num_hist.astype(np.float)
+        x = np.arange(num_bins)
+        ax4.bar(x, width=.9, height=param_hist, alpha=.5, label='TP')
+        ax4.bar(x, width=.9, height=param_nhist, bottom=param_hist, alpha=.5, label='FN')
+        xlabels = []
+        for i in range(num_bins):
+            msg = '%2.2f\n~%2.2f'%(1000.*bound[i],1000.*bound[i+1])
+            xlabels.append(msg)
+        ax4.set_xlabel(xlabel_unit['planeoffset'],rotation=0, fontsize=7, fontweight='bold')
+        ax4.set_ylabel('[%]',rotation=0, fontsize=7, fontweight='bold')
+        ax4.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+        ax4.xaxis.set_label_coords(1.05, -0.02)
+        ax4.set_xticks(x)
+        ax4.yaxis.set_label_coords(-0.08, 1.)
+        ax4.legend(loc='lower right', fontsize=7)
+    else:
+        num_bins = 5
+        min_max = (0., 10.)
+        prop_range = all_boundary_stats['planeoffset'] < 0.001
+        param = all_boundary_stats['oblique'][prop_range]
+        detection = all_boundary_stats['detection'][prop_range]
+
+        param_hist, bound  = np.histogram(param[detection],num_bins,min_max)
+        param_nhist, _ = np.histogram(param[~detection],num_bins,min_max)
+        num_hist = param_hist + param_nhist
+        nosample =  num_hist==0
+        num_hist[nosample] = 1
+        param_hist = 100.*param_hist.astype(np.float)/num_hist.astype(np.float)
+        param_nhist = 100.*param_nhist.astype(np.float)/num_hist.astype(np.float)
+        x = np.arange(num_bins)
+        ax4.bar(x, width=.9, height=param_hist, alpha=.5, label='TP')
+        ax4.bar(x, width=.9, height=param_nhist, bottom=param_hist, alpha=.5, label='FN')
+        xlabels = []
+        for i in range(num_bins):
+            msg = '%2.2f\n~%2.2f'%(bound[i],bound[i+1])
+            xlabels.append(msg)
+        ax4.set_xlabel(xlabel_unit['oblique'],rotation=0, fontsize=7, fontweight='bold')
+        ax4.set_ylabel('[%]',rotation=0, fontsize=7, fontweight='bold')
+        ax4.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+        ax4.xaxis.set_label_coords(1.05, -0.02)
+        ax4.set_xticks(x)
+        ax4.yaxis.set_label_coords(-0.08, 1.)
+        ax4.legend(loc='lower right', fontsize=7)
+
+
+    fig = plt.figure(5, figsize=(10,5), dpi=100)
+    ax5 = fig.add_subplot(111)
+    num_bins = 10
+    min_max = (0., 0.05)
+    prop_range = all_boundary_recall_seg['max_depth'] < 1.5
+    param = all_boundary_recall_seg['max_planeoffset'][prop_range]
+    param_hist, bound = np.histogram(param,num_bins,min_max)
+    no_samples = param_hist==0
+    param_hist[no_samples] = 1 # To prevent divide by zero
+    param_hist = param_hist.astype(np.float)
+    trueseg = all_boundary_recall_seg['segment'][prop_range]
+    trueseg_hist, _ = np.histogram(param[trueseg],num_bins,min_max)
+    trueseg_hist = 100.*trueseg_hist.astype(np.float)/param_hist
+    underseg_hist, _ = np.histogram(param[~trueseg],num_bins,min_max)
+    underseg_hist = 100.*underseg_hist.astype(np.float)/param_hist
     x = np.arange(num_bins)
-    ax2.bar(x, width=.9, height=planeoffset_hist, alpha=.5, label='TP')
-    ax2.bar(x, width=.9, height=planeoffset_nhist, bottom=planeoffset_hist, alpha=.5, label='FN')
+    ax5.bar(x, width=.9, height=trueseg_hist, alpha=.5, label='TP segment')
+    ax5.bar(x, width=.9, height=underseg_hist, bottom=trueseg_hist, alpha=.5, label='Under segment')
+    param_hist[no_samples] = 0 # To show true number
     xlabels = []
     for i in range(num_bins):
-        msg = '%.2f\n~%2.2f'%(100.*bound[i],100.*bound[i+1])
-        #msg += '\nn=%d'%num_hist[i]
+        msg = '%.2f\n~%.2f'%(1000.*bound[i],1000.*bound[i+1])
+        msg += '\nn(edge)=%d'%param_hist[i]
         xlabels.append(msg)
-    ax2.set_xlabel('[cm]',rotation=0, fontsize=7, fontweight='bold')
-    ax2.set_ylabel('[%]',rotation=0, fontsize=7, fontweight='bold')
-    ax2.set_xticklabels(xlabels, rotation=0.,fontsize=7)
-    ax2.xaxis.set_label_coords(1.05, -0.02)
-    ax2.set_xticks(x)
-    ax2.yaxis.set_label_coords(-0.08, 1.)
-    ax2.legend(loc='lower right', fontsize=7)
+    ax5.set_xlabel(xlabel_unit['planeoffset'],rotation=0, fontsize=7, fontweight='bold')
+    ax5.set_ylabel('[%]',rotation=0, fontsize=7, fontweight='bold')
+    ax5.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax5.xaxis.set_label_coords(1.05, -0.02)
+    ax5.set_xticks(x)
+    ax5.yaxis.set_label_coords(-0.08, 1.)
+    ax5.legend(loc='lower right', fontsize=7)
+
+    fig = plt.figure(6, figsize=(10,5), dpi=100)
+    ax6 = fig.add_subplot(111)
+    trueseg = all_boundary_recall_seg['segment']
+    param_depth = all_boundary_recall_seg['max_depth']
+    param_offset = all_boundary_recall_seg['max_planeoffset']
+    param_oblique = all_boundary_recall_seg['oblique']
+    ax6.scatter(param_depth[trueseg],param_offset[trueseg],color='blue',marker='.')
+    ax6.scatter(param_depth[~trueseg],param_offset[~trueseg],color='red',marker='x')
+    underseg_cases = np.unique( all_boundary_recall_seg[['midx0','midx1','scene']][~trueseg] )
+    print(underseg_cases)
+    import pdb; pdb.set_trace()
+    #ax6.set_xlim(0, 0.1)
+    #ax6.set_ylim(0, 0.1)
 
     plt.show(block=True)
 

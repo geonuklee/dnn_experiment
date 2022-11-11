@@ -651,7 +651,6 @@ std::set<std::pair<int,int> > GetNeighbors(cv::Mat marker, int w){
             continue;
           if(i0 == i1)
             continue;
-            // TODO
           std::pair<int,int> contact(std::min(i0,i1), std::max(i0,i1) );
           contacts.insert(contact);
         }
@@ -1318,7 +1317,7 @@ py::tuple PyEvaluateEdgeDetection(py::array_t<int32_t> _gt_marker,
       stat.pt = cv::Point2i(c,r);
       stat.pred_detection = dist_predoutline.at<float>(r,c) < fline_range;
       stat.depth = z;
-      stat.oblique = std::acos( n0.dot(n1) );
+      stat.oblique = 180. / M_PI * std::acos( n0.dot(n1) );
       stat.plane_offset = std::abs( plane2coeff.at(pidx1).dot(pt0) );
       if(stat.plane_offset > 0.1)
         cv::circle(dst, cv::Point2i(c,r), 2,CV_RGB(0,0,0), -1 );
@@ -1424,14 +1423,28 @@ py::tuple PyEvaluateEdgeDetection(py::array_t<int32_t> _gt_marker,
     const int& m0 = it.first.first;
     const int& m1 = it.first.second;
     const std::list<BoundaryStat> stats = it.second;
+    BoundaryStat extrem_stat;
+    extrem_stat.oblique = -99999.;
+    extrem_stat.plane_offset = -99999.;
+    extrem_stat.depth = -99999.;
     for(const auto& stat : stats){
+      extrem_stat.oblique = std::max(extrem_stat.oblique, stat.oblique);
+      extrem_stat.plane_offset = std::max(extrem_stat.plane_offset, stat.plane_offset);
+      extrem_stat.depth = std::max(extrem_stat.depth,stat.depth);
+      // TODO boundary id?
       py::tuple pystat
         = py::make_tuple(stat.pred_detection,stat.depth,stat.oblique,stat.plane_offset);
       pyboundary_stats.append(pystat);
     }
     float recall = (float)boundary_recall.at(it.first) / (float) boundary_n.at(it.first);
     bool bseg = boundary_segmentation.at(it.first);
-    pyboundary_recall_segment.append( py::make_tuple(recall, bseg, m0, m1) );
+    pyboundary_recall_segment.append( py::make_tuple(recall,
+                                                     bseg,
+                                                     m0,
+                                                     m1,
+                                                     extrem_stat.depth,
+                                                     extrem_stat.oblique,
+                                                     extrem_stat.plane_offset) );
   }
   return py::make_tuple(pyboundary_stats, pyboundary_recall_segment);
 }
