@@ -1311,7 +1311,7 @@ py::tuple PyEvaluateEdgeDetection(py::array_t<int32_t> _gt_marker,
       Eigen::Vector4f pt0(0.,0.,0.,1.);
       pt0.head<3>() = z * invK * Eigen::Vector3f( (float)c, (float)r, 1.);
       const float err_self = std::abs( plane2coeff.at(pidx0).dot(pt0) );
-      if(err_self > .01)
+      if(err_self > .002)
         continue;
       BoundaryStat stat;
       stat.pt = cv::Point2i(c,r);
@@ -1379,43 +1379,56 @@ py::tuple PyEvaluateEdgeDetection(py::array_t<int32_t> _gt_marker,
     }
   }
 
-  /*
-  struct InnerStat{
-    int pidx;
-    float depth;
-    float oblique;
-  };
-  std::map<int, std::list<InnerStat> > inner_stats; {
-    Eigen::Vector3f n0(0.,0.,1.);
+  py::list pyoversegment_stats;
+  {
+    std::map<int,std::map<int,size_t> > gt2pred_counts;
     for(int r=0; r<rows;r++){
       for(int c=0; c<cols;c++){
-        const float& z = depth.at<float>(r,c);
-        if(z < .001)
+        const float& d = dist_gtoutline.at<float>(r,c);
+        if(d < 2.)
           continue;
-        if(dist_gtoutline.at<float>(r,c) >= fline_range)
+        const int& gt = gt_marker.at<int>(r,c);
+        if(gt < 1)
           continue;
-        const int& pidx = plane_marker.at<int>(r,c);
-        if(pidx == 0)
-          continue;
-        const auto& n1 = plane2coeff.at(pidx).head<3>();
-        const int& midx = plane2marker.at(pidx);
-        InnerStat stat;
-        stat.depth = z;
-        stat.pidx = pidx;
-        stat.oblique = std::acos( -n0.dot(n1) );
-        inner_stats[midx].push_back(stat);
+        const int& pred = pred_marker.at<int>(r,c);
+        //if(pred < 1)
+        //  continue;
+        gt2pred_counts[gt][pred]++;
       }
     }
-  }
-  */
 
-  /*{
-    cv::imshow("pred_detection", GetColoredLabel(pred_marker,true) );
-    cv::imshow("marker", GetColoredLabel(gt_marker,true) );
-    cv::imshow("plane_marker", dst);
-    cv::imshow("thin_opposite", GetColoredLabel(thin_opposite) );
-    cv::waitKey(0);
-  }*/
+    //std::set<int> oversegmented_instances;
+    for(const auto& it : gt2pred_counts){
+      const int& m0 = it.first;
+      bool oversegmented = false;
+      std::vector< std::pair<int,size_t> > counts;
+      size_t sum = 0;
+      for(const auto& it2 : it.second){
+        sum += it2.second;
+        counts.push_back(std::make_pair(it2.first, it2.second) );
+      }
+      std::sort(counts.begin(), counts.end(), [](const std::pair<int,size_t>& a,
+                                                 const std::pair<int,size_t>& b) {return a.second > b.second; } );
+      if(counts.size() > 1){
+        const float n1 = counts[0].second;
+        const float n2 = counts[1].second;
+        oversegmented = n2 > .2 * n1;
+      }
+      //if(oversegmented)
+      //  oversegmented_instances.insert(m0);
+      py::tuple pystat = py::make_tuple(m0,oversegmented);
+      pyoversegment_stats.append(pystat);
+    }
+  }
+
+  {
+    //cv::imshow("dist_gtoutline", 0.01*dist_gtoutline);
+    //cv::imshow("pred_detection", GetColoredLabel(pred_marker,true) );
+    //cv::imshow("marker", GetColoredLabel(gt_marker,true) );
+    //cv::imshow("plane_marker", dst);
+    //cv::imshow("thin_opposite", GetColoredLabel(thin_opposite) );
+    //cv::waitKey(0);
+  }
 
   py::list pyboundary_stats;
   py::list pyboundary_recall_segment;
@@ -1423,30 +1436,35 @@ py::tuple PyEvaluateEdgeDetection(py::array_t<int32_t> _gt_marker,
     const int& m0 = it.first.first;
     const int& m1 = it.first.second;
     const std::list<BoundaryStat> stats = it.second;
-    BoundaryStat extrem_stat;
-    extrem_stat.oblique = -99999.;
-    extrem_stat.plane_offset = -99999.;
-    extrem_stat.depth = -99999.;
+    BoundaryStat rep_stat; // Representative stats
+    rep_stat.oblique = -99999.;
+    rep_stat.plane_offset = -99999.;
+    rep_stat.depth = -99999.;
+    std::vector<double> plane_offsets;
+    plane_offsets.reserve(stats.size());
     for(const auto& stat : stats){
-      extrem_stat.oblique = std::max(extrem_stat.oblique, stat.oblique);
-      extrem_stat.plane_offset = std::max(extrem_stat.plane_offset, stat.plane_offset);
-      extrem_stat.depth = std::max(extrem_stat.depth,stat.depth);
+      rep_stat.oblique = std::max(rep_stat.oblique, stat.oblique);
+      //rep_stat.plane_offset = std::max(rep_stat.plane_offset, stat.plane_offset);
+      plane_offsets.push_back(stat.plane_offset);
+      rep_stat.depth = std::max(rep_stat.depth,stat.depth);
       // TODO boundary id?
       py::tuple pystat
         = py::make_tuple(stat.pred_detection,stat.depth,stat.oblique,stat.plane_offset);
       pyboundary_stats.append(pystat);
     }
+    std::sort(plane_offsets.begin(), plane_offsets.end());
+    rep_stat.plane_offset = plane_offsets[plane_offsets.size()/2];
     float recall = (float)boundary_recall.at(it.first) / (float) boundary_n.at(it.first);
     bool bseg = boundary_segmentation.at(it.first);
     pyboundary_recall_segment.append( py::make_tuple(recall,
                                                      bseg,
                                                      m0,
                                                      m1,
-                                                     extrem_stat.depth,
-                                                     extrem_stat.oblique,
-                                                     extrem_stat.plane_offset) );
+                                                     rep_stat.depth,
+                                                     rep_stat.oblique,
+                                                     rep_stat.plane_offset) );
   }
-  return py::make_tuple(pyboundary_stats, pyboundary_recall_segment);
+  return py::make_tuple(pyboundary_stats, pyboundary_recall_segment, pyoversegment_stats);
 }
 
 py::dict PyGetNeighbors(py::array_t<int32_t> _marker, int radius) {
