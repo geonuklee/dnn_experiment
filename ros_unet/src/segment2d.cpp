@@ -344,17 +344,39 @@ bool Segment2DEdgeBasedAbstract::Process(const cv::Mat rgb,
   return _Process(rgb, depth, marker, convex_edge, instance2class, verbose);
 }
 
-void PrintUnique(const cv::Mat marker){
+std::set<int> GetUnique(const cv::Mat marker){
   std::set<int> unique;
   for(int r=0; r<marker.rows; r++){
     for(int c=0; c<marker.cols; c++){
       unique.insert(marker.at<int>(r,c) );
     }
   }
+  return unique;
+}
+
+void PrintUnique(const cv::Mat marker){
+  std::set<int> unique = GetUnique(marker);
+
   for(const auto& i : unique)
     std::cout << i << ", ";
   std::cout << std::endl;
   return;
+}
+
+bool IsTooSmallSeed(const cv::RotatedRect& obb, const int& rows, const int& cols){
+  // 화면 구석 너무 작은 seed 쪼가리 때문에 oversegment 나는것 방지.
+  const cv::Point2f& cp = obb.center;
+  const float offset = 20.;
+  if(cp.x < offset)
+    return true;
+  else if(cp.x > cols - offset)
+    return true;
+  else if(cp.y < offset)
+    return true;
+  else if(cp.y > rows - offset)
+    return true;
+  float wh = std::max(obb.size.width, obb.size.height);
+  return wh < 20.;
 }
 
 bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
@@ -505,6 +527,9 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
         q1.push(parent); // Keep descent to a lower contour.
       }
       else if(siblings_of_key.size()==2) {
+#if 1
+        continue;
+#else
         float sum = 0;
         for(const int& sibling : siblings_of_key)
           sum += seed_areas.at(sibling);
@@ -533,17 +558,23 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
             }
           }
         }
+#endif
       }
     }
     int lowest_contour = *contours_under_pole.begin(); // lowest boundary = max(contours_under_pole)
     int highest_contour = *contours_under_pole.rbegin(); // pole = min(contours_under_pole)
-    if(idx == lowest_contour)
-      continue;
-    // replace current idx to its pole
-    lowest2highest[lowest_contour] = highest_contour;
-    for(const int& i : contours_under_pole){
-      if(i != lowest_contour)
-        convert_lists[i] = lowest_contour;
+    const cv::RotatedRect& lowest_obb = seed_obbs.at(lowest_contour);
+    if(IsTooSmallSeed(lowest_obb,seedmap.rows,seedmap.cols)){
+      for(const int& i : contours_under_pole)
+        convert_lists[i] = 0;
+    }
+    else{
+      // replace current idx to its pole
+      lowest2highest[lowest_contour] = highest_contour;
+      for(const int& i : contours_under_pole){
+        if(i != lowest_contour)
+          convert_lists[i] = lowest_contour;
+      }
     }
   } // compute leaf_seeds
 
@@ -572,16 +603,19 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       nidx2lh[newidx] = std::pair<int,int>(lowest,highest);
     }
 
-    marker0 = cv::Mat::zeros(seedmap.rows,seedmap.cols,CV_32S);
+    //marker0 = cv::Mat::zeros(seedmap.rows,seedmap.cols,CV_32S);
+    marker0 = seedmap.clone();
     for(int r=0; r<seedmap.rows; r++){
       for(int c=0; c<seedmap.cols; c++){
+        if(marker0.at<int>(r,c) > 0)
+          continue;
         const int& nidx = seedmap_distransform_markers.at<int>(r,c);
         const auto& it = nidx2lh[nidx];
         const int& lowest = it.first;
         const int& highest = it.second;
         if(lowest==0)
           continue;
-        const float innercenter_radius = seed_dists.at(highest);
+        const float& innercenter_radius = seed_dists.at(highest);
         if(innercenter_radius < 10.){
           marker0.at<int>(r,c) = lowest;
         }
@@ -593,12 +627,17 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       }
     }
   }
+
 #if 0
-  marker = marker0;
+  {
+    marker = marker0.clone();
+    int range = 50;
+    ModifiedWatershed(rgb, marker, range);
+  }
 #else
+  //marker = marker0;
   {
     // Fiting boundary with watershed
-    //cv::Mat watermarker = marker.clone();
     const int mode   = cv::RETR_EXTERNAL; // RETR_CCOMP -> RETR_EXTERNAL
     const int method = cv::CHAIN_APPROX_SIMPLE;
     std::vector<std::vector<cv::Point> > contours;
@@ -627,10 +666,21 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
           idx1 = idx0;
       }
     }
-    cv::watershed(rgb, marker);
+
+#if 1
+    /*  
+      * rosbag, 15-37-32
+      * fg로부터 거리가 아니라 marker0==idx부로부터 거리로 제한해야한다. 
+      * 이는 인스턴스 숫자에 비례해 처리속도를 극단적으로 느리게 만드는 문제가 발생.
+    */
+    int range = 50;
+    // TODO dofs로 거리계산하는건 틀리다. inputoutput array에 expand_distance 추가해서 누적계산해야한다.
+    ModifiedWatershed(rgb, marker, range);
+#else
+    cv::watershed(rgb, marker); // TODO with 15-37-32
+#endif
     cv::Mat distfrom_fg;
     cv::distanceTransform(~fg, distfrom_fg, cv::DIST_L2, cv::DIST_MASK_5);
-    // Limit expanding by watershed.
     for(int r=0; r<seedmap.rows; r++){
       for(int c=0; c<seedmap.cols; c++){
         int& i1 = marker.at<int>(r,c);
@@ -647,6 +697,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       }
     }
   }
+  
 #endif
   //std::cout << "marker = ";
   //PrintUnique(marker);
@@ -656,7 +707,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     cv::imshow(name_+"outline", outline_edge*255);
     cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
     cv::imshow(name_+"seed", Overlap(rgb,seedmap) );
-    cv::imshow(name_+"marker0", Overlap(rgb, marker0) );
+    cv::imshow(name_+"marker0", Overlap(rgb, marker0,true) );
     //cv::Mat dst_marker = GetColoredLabel(marker);
     //HighlightBoundary(marker,dst_marker);
     //cv::imshow(name_+"final_marker", dst_marker );
@@ -729,7 +780,7 @@ lap_depth_threshold_(lap_depth_threshold){
 
 cv::Mat FilterOutlineEdges(const cv::Mat outline, bool verbose) {
   // TODO filter를 여기에 작성.
-  cv::Mat ones = cv::Mat::ones(5,5,outline.type());
+  cv::Mat ones = cv::Mat::ones(10,10,outline.type());
   cv::Mat expanded_outline;
   cv::dilate(outline, expanded_outline, ones);
 

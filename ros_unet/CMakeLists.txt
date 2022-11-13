@@ -60,6 +60,7 @@ set(PCL_LIBRARIES
 )
 
 add_library(unetsegment SHARED
+  src/watershed.cpp
   src/segment2d.cpp
   src/utils.cpp
 )

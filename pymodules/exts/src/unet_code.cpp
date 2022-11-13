@@ -1391,8 +1391,8 @@ py::tuple PyEvaluateEdgeDetection(py::array_t<int32_t> _gt_marker,
         if(gt < 1)
           continue;
         const int& pred = pred_marker.at<int>(r,c);
-        //if(pred < 1)
-        //  continue;
+        if(pred < 1) // Ignore bg 
+          continue;
         gt2pred_counts[gt][pred]++;
       }
     }

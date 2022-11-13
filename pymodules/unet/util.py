@@ -99,14 +99,15 @@ class SplitAdapter:
         assert(pred.shape[0]==1)
         pred = pred.squeeze(0).moveaxis(0,-1)
         mask = np.zeros((pred.shape[0],pred.shape[1]),np.uint8)
+        th = .9
         if pred.shape[-1] == 1:
-            edge = (pred[:,:,-1] > .9).numpy()
+            edge = (pred[:,:,-1] > th).numpy()
             mask[edge] = 1
         else:
-            outline = (pred[:,:,0] > .9).numpy()
-            convex_edges = (pred[:,:,1] > .9).numpy()
-            mask[convex_edges] = 2
+            outline = (pred[:,:,0] > th).numpy()
+            convex_edges = (pred[:,:,1] > th).numpy()
             mask[outline] = 1 # Overwrite outline edge on convex edge.
+            mask[convex_edges] = 2
         return mask
 
     def pred2dst(self, pred, np_rgb):

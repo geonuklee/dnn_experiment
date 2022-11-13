@@ -82,7 +82,7 @@ public:
 
     cv::Mat depth, rgb, convex_edge, outline_edge, surebox;
     GetCvMat(req, depth, rgb, convex_edge, outline_edge, surebox);
-    bool verbose = false;
+    bool verbose = param_.verbose;
 
     const float threshold_depth = .2;
     cv::Mat dd_edge= GetDiscontinuousDepthEdge(depth, threshold_depth);

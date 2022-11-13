@@ -167,7 +167,7 @@ if __name__=="__main__":
 
         t0 = time.time()
         edge_resp = predict_edge(rect_rgb_msg, rect_depth_msg, fx, fy)
-        obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.mask,
+        obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.edge,
                 Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
         t1 = time.time()
         #print("etime = ", t1-t0)
