@@ -405,9 +405,9 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     cv::bitwise_and(outline_edge, vignett8U_, outline_edge);
 #endif
   cv::Mat divided;
-  cv::Mat dist_transform; {
+  cv::Mat dist_fromoutline; {
 #if 1
-    cv::distanceTransform(outline_edge<1, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
+    cv::distanceTransform(outline_edge<1, dist_fromoutline, cv::DIST_L2, cv::DIST_MASK_3);
 #else
     cv::bitwise_and(depthmask, ~outline_edge, divided);
     cv::bitwise_and(vignett8U_, divided, divided);
@@ -437,7 +437,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     for(int lv = 0; lv < n; lv++){
       int th_distance = dth*(float)lv;
       cv::Mat local_seed;
-      cv::threshold(dist_transform, local_seed, th_distance, 255, cv::THRESH_BINARY);
+      cv::threshold(dist_fromoutline, local_seed, th_distance, 255, cv::THRESH_BINARY);
       local_seed.convertTo(local_seed, CV_8UC1); // findContour support only CV_8UC1
 
       std::vector<std::vector<cv::Point> > contours;
@@ -569,7 +569,6 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
         convert_lists[i] = 0;
     }
     else{
-      // replace current idx to its pole
       lowest2highest[lowest_contour] = highest_contour;
       for(const int& i : contours_under_pole){
         if(i != lowest_contour)
@@ -587,7 +586,6 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   else
     bg_idx = 2;
 
-  cv::Mat marker0;
   {
     // Restore orginal size of each instance shurken by edges.
     cv::Mat positive_seedmap = seedmap>1; // idx 1 for edge or bg - Ref) utils.cpp, GetColoredLabel
@@ -603,38 +601,27 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       nidx2lh[newidx] = std::pair<int,int>(lowest,highest);
     }
 
-    //marker0 = cv::Mat::zeros(seedmap.rows,seedmap.cols,CV_32S);
-    marker0 = seedmap.clone();
-    for(int r=0; r<seedmap.rows; r++){
-      for(int c=0; c<seedmap.cols; c++){
-        if(marker0.at<int>(r,c) > 0)
-          continue;
-        const int& nidx = seedmap_distransform_markers.at<int>(r,c);
-        const auto& it = nidx2lh[nidx];
-        const int& lowest = it.first;
-        const int& highest = it.second;
-        if(lowest==0)
-          continue;
-        const float& innercenter_radius = seed_dists.at(highest);
-        if(innercenter_radius < 10.){
-          marker0.at<int>(r,c) = lowest;
-        }
-        else{
-          const float range_limit = 5.+seed_dists.at(lowest); // Limit expand range.
-          if(distfrom_lowest.at<float>(r,c) <= range_limit)
-            marker0.at<int>(r,c) = lowest;
-        }
-      }
+#if 1
+    // TODO seedmap -(Distance Watershed)-> marker0
+    marker = seedmap.clone();
+    DistanceWatershed(dist_fromoutline, marker);
+
+    /*
+    {
+      cv::watershed(rgb, marker); // TODO with 15-37-32
+      cv::Mat dst = Overlap(rgb, marker);
+      cv::imshow("org watershed", dst);
+      cv::imwrite("input seed.png", Overlap(rgb, seedmap) );
+      cv::imwrite("org_watershed.png", dst);
     }
+    char c = cv::waitKey();
+    if(c == 'q')
+      exit(1);
+    */
+#endif
   }
 
 #if 0
-  {
-    marker = marker0.clone();
-    int range = 50;
-    ModifiedWatershed(rgb, marker, range);
-  }
-#else
   //marker = marker0;
   {
     // Fiting boundary with watershed
@@ -644,8 +631,6 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     std::vector<cv::Vec4i> hierarchy;
     cv::Mat fg = marker0 > 0;
     cv::Mat boundary = GetBoundary(marker0) < 1;
-    //cv::imshow("a", 255*fg);
-    //cv::imshow("b", 255*boundary);
     cv::bitwise_and(fg, boundary, fg);
     cv::findContours(fg,contours,hierarchy,mode,method);
 
@@ -666,19 +651,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
           idx1 = idx0;
       }
     }
-
-#if 1
-    /*  
-      * rosbag, 15-37-32
-      * fg로부터 거리가 아니라 marker0==idx부로부터 거리로 제한해야한다. 
-      * 이는 인스턴스 숫자에 비례해 처리속도를 극단적으로 느리게 만드는 문제가 발생.
-    */
-    int range = 50;
-    // TODO dofs로 거리계산하는건 틀리다. inputoutput array에 expand_distance 추가해서 누적계산해야한다.
-    ModifiedWatershed(rgb, marker, range);
-#else
     cv::watershed(rgb, marker); // TODO with 15-37-32
-#endif
     cv::Mat distfrom_fg;
     cv::distanceTransform(~fg, distfrom_fg, cv::DIST_L2, cv::DIST_MASK_5);
     for(int r=0; r<seedmap.rows; r++){
@@ -697,17 +670,18 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       }
     }
   }
-  
 #endif
   //std::cout << "marker = ";
   //PrintUnique(marker);
 
-  if(verbose){
-    cv::Mat dst = Overlap(rgb,marker0);
+  //if(verbose){
+  if(false){
+    //cv::Mat dst = Overlap(rgb,marker);
+    cv::imshow(name_+"dist", .01*dist_fromoutline);
     cv::imshow(name_+"outline", outline_edge*255);
     cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
     cv::imshow(name_+"seed", Overlap(rgb,seedmap) );
-    cv::imshow(name_+"marker0", Overlap(rgb, marker0,true) );
+    //cv::imshow(name_+"marker0", Overlap(rgb, marker0,true) );
     //cv::Mat dst_marker = GetColoredLabel(marker);
     //HighlightBoundary(marker,dst_marker);
     //cv::imshow(name_+"final_marker", dst_marker );
@@ -719,16 +693,15 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
 
     cv::Mat norm_depth, norm_dist;
     cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
-    cv::normalize(dist_transform, norm_dist, 0, 255, cv::NORM_MINMAX, CV_8UC1);
-    cv::imwrite(name_+"dst.png", dst );
+    cv::normalize(dist_fromoutline, norm_dist, 0, 255, cv::NORM_MINMAX, CV_8UC1);
     cv::imwrite(name_+"depth.png", norm_depth);
     cv::imwrite(name_+"rgb.png", rgb);
     cv::imwrite(name_+"outline_edge.png", 255*outline_edge);
-    cv::imwrite(name_+"dist.png", dist_transform);
+    cv::imwrite(name_+"dist.png", dist_fromoutline);
     cv::imwrite(name_+"norm_dist.png", norm_dist);
     cv::imwrite(name_+"seed_contour.png", GetColoredLabel(seed_contours));
     cv::imwrite(name_+"seed.png", GetColoredLabel(seedmap));
-    cv::imwrite(name_+"marker.png", GetColoredLabel(marker0));
+    //cv::imwrite(name_+"marker.png", GetColoredLabel(marker));
   }
   return true;
 }
