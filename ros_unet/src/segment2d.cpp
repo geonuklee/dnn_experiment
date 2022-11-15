@@ -346,21 +346,35 @@ bool Segment2DEdgeBasedAbstract::Process(const cv::Mat rgb,
 
 std::set<int> GetUnique(const cv::Mat marker){
   std::set<int> unique;
-  for(int r=0; r<marker.rows; r++){
-    for(int c=0; c<marker.cols; c++){
-      unique.insert(marker.at<int>(r,c) );
-    }
-  }
+  int n = marker.total();
+  const int* ptr = marker.ptr<int>();
+  for(int i=0; i < n; i++)
+    unique.insert(ptr[i]);
   return unique;
 }
 
 void PrintUnique(const cv::Mat marker){
   std::set<int> unique = GetUnique(marker);
-
   for(const auto& i : unique)
     std::cout << i << ", ";
   std::cout << std::endl;
   return;
+}
+
+cv::Mat Unify(cv::Mat _marker){
+  cv::Mat _output = cv::Mat::zeros(_marker.rows, _marker.cols, CV_32SC1);
+  int* marker = _marker.ptr<int>();
+  int* output = _output.ptr<int>();
+  std::map<int,int> cvt_map;
+  cvt_map[0] = 0;
+  int n = _marker.total();
+  for(int i=0; i<n; i++){
+    const int& m0 = marker[i];
+    if(!cvt_map.count(m0))
+      cvt_map[m0] = cvt_map.size();
+    output[i] = cvt_map[m0];
+  }
+  return _output;
 }
 
 bool IsTooSmallSeed(const cv::RotatedRect& obb, const int& rows, const int& cols){
@@ -407,7 +421,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   cv::Mat divided;
   cv::Mat dist_fromoutline; {
 #if 1
-    cv::distanceTransform(outline_edge<1, dist_fromoutline, cv::DIST_L2, cv::DIST_MASK_3);
+    cv::distanceTransform(outline_edge<1, dist_fromoutline, cv::DIST_L2, cv::DIST_MASK_PRECISE);
 #else
     cv::bitwise_and(depthmask, ~outline_edge, divided);
     cv::bitwise_and(vignett8U_, divided, divided);
@@ -586,105 +600,22 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   else
     bg_idx = 2;
 
-  {
-    // Restore orginal size of each instance shurken by edges.
-    cv::Mat positive_seedmap = seedmap>1; // idx 1 for edge or bg - Ref) utils.cpp, GetColoredLabel
-    cv::Mat distfrom_lowest, seedmap_distransform_markers;
-    cv::distanceTransform(~positive_seedmap, distfrom_lowest, seedmap_distransform_markers,
-                          cv::DIST_L2, cv::DIST_MASK_3);
-    std::map<int, std::pair<int,int> > nidx2lh;
-    for(auto it : lowest2highest){
-      const int& lowest = it.first;
-      const int& highest= it.second;
-      cv::Point2i cp = seed_obbs.at(highest).center;
-      const int& newidx = seedmap_distransform_markers.at<int>(cp);
-      nidx2lh[newidx] = std::pair<int,int>(lowest,highest);
-    }
+  seedmap = cv::max(seedmap,0);
+  cv::Mat marker0 = Unify(seedmap);
+  DistanceWatershed(dist_fromoutline, marker0);
 
-#if 1
-    // TODO seedmap -(Distance Watershed)-> marker0
-    marker = seedmap.clone();
-    DistanceWatershed(dist_fromoutline, marker);
+  marker = marker0;
+  marker = cv::max(marker, 0);
 
-    /*
-    {
-      cv::watershed(rgb, marker); // TODO with 15-37-32
-      cv::Mat dst = Overlap(rgb, marker);
-      cv::imshow("org watershed", dst);
-      cv::imwrite("input seed.png", Overlap(rgb, seedmap) );
-      cv::imwrite("org_watershed.png", dst);
-    }
-    char c = cv::waitKey();
-    if(c == 'q')
-      exit(1);
-    */
-#endif
-  }
-
-#if 0
-  //marker = marker0;
-  {
-    // Fiting boundary with watershed
-    const int mode   = cv::RETR_EXTERNAL; // RETR_CCOMP -> RETR_EXTERNAL
-    const int method = cv::CHAIN_APPROX_SIMPLE;
-    std::vector<std::vector<cv::Point> > contours;
-    std::vector<cv::Vec4i> hierarchy;
-    cv::Mat fg = marker0 > 0;
-    cv::Mat boundary = GetBoundary(marker0) < 1;
-    cv::bitwise_and(fg, boundary, fg);
-    cv::findContours(fg,contours,hierarchy,mode,method);
-
-    int outer_uncertain = 20; // The half of a left value is the uncertain range
-    int inner_uncertain = 5;
-    marker = cv::Mat::ones(marker0.rows, marker0.cols, CV_32SC1);
-    for(int i = 0; i < contours.size(); i++)
-      cv::drawContours(marker, contours, i, 0, outer_uncertain);
-    for(int i = 0; i < contours.size(); i++)
-      cv::drawContours(marker, contours, i, 1, -1);
-    for(int i = 0; i < contours.size(); i++)
-      cv::drawContours(marker, contours, i, 0, inner_uncertain);
-    for(int r = 0; r < marker0.rows; r++){
-      for(int c = 0; c < marker0.cols; c++){
-        const int& idx0 = marker0.at<int>(r,c);
-        int& idx1 = marker.at<int>(r,c);
-        if(idx0 > 0 && idx1 > 0)
-          idx1 = idx0;
-      }
-    }
-    cv::watershed(rgb, marker); // TODO with 15-37-32
-    cv::Mat distfrom_fg;
-    cv::distanceTransform(~fg, distfrom_fg, cv::DIST_L2, cv::DIST_MASK_5);
-    for(int r=0; r<seedmap.rows; r++){
-      for(int c=0; c<seedmap.cols; c++){
-        int& i1 = marker.at<int>(r,c);
-        if(i1<2)
-          i1 = 0;
-        else{
-          float dist = distfrom_fg.at<float>(r,c);
-          if(dist > outer_uncertain)
-            i1 = 0;
-        }
-        const int& i0 = marker0.at<int>(r,c);
-        if(i1 <1 && i0 > 1)
-          i1 = i0;
-      }
-    }
-  }
-#endif
-  //std::cout << "marker = ";
-  //PrintUnique(marker);
-
-  //if(verbose){
-  if(false){
-    //cv::Mat dst = Overlap(rgb,marker);
-    cv::imshow(name_+"dist", .01*dist_fromoutline);
+  if(verbose){
+    //cv::imshow(name_+"dist", .01*dist_fromoutline);
     cv::imshow(name_+"outline", outline_edge*255);
-    cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
+    //cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
     cv::imshow(name_+"seed", Overlap(rgb,seedmap) );
-    //cv::imshow(name_+"marker0", Overlap(rgb, marker0,true) );
-    //cv::Mat dst_marker = GetColoredLabel(marker);
+    cv::imshow(name_+"marker0", Overlap(rgb, marker0,true) );
+    cv::Mat dst_marker = Overlap(rgb,marker);
     //HighlightBoundary(marker,dst_marker);
-    //cv::imshow(name_+"final_marker", dst_marker );
+    cv::imshow(name_+"final_marker", dst_marker );
     //cv::imshow(name_+"overlaped", dst );
     // cv::imshow(name_+"groove", 255*groove );
     //cv::flip(dst,dst,0);

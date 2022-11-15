@@ -89,7 +89,10 @@ public:
     cv::bitwise_or(outline_edge, dd_edge, outline_edge);
     cv::Mat filtered_outline;
 #if 1
-    filtered_outline = FilterOutlineEdges(outline_edge, verbose);
+    {
+      bool verbose_filter = false;
+      filtered_outline = FilterOutlineEdges(outline_edge, verbose_filter);
+    }
     segment2d->SetEdge(filtered_outline, convex_edge, surebox);
 #else
     segment2d->SetEdge(outline_edge, convex_edge, surebox);

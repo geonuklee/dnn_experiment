@@ -100,7 +100,9 @@ cv::Mat GetGroove(const cv::Mat marker,
 cv::Mat GetDiscontinuousDepthEdge(const cv::Mat& depth, float threshold_depth);
 cv::Mat FilterOutlineEdges(const cv::Mat outline, bool verbose);
 
-void ModifiedWatershed(cv::InputArray _src, cv::InputOutputArray _markers, int range);
 void DistanceWatershed(const cv::Mat dist_fromedge, cv::Mat& markers);
+
+// No extension over maker==-1, Limit expand range
+void ModifiedWatershed(cv::InputArray _src, cv::InputOutputArray _markers);
 
 #endif
