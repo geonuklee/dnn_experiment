@@ -241,27 +241,18 @@ def GetColoredLabel(marker, text=False):
     for u in uniq:
         if u == 0:
             continue
-        dst[marker==u] = colors[u%n]
-    if not text:
-        return dst
-    boundary = cpp_ext.GetBoundary(marker, 2)
-    boundary[0,:] = boundary[-1,:] = boundary[:,0] = boundary[:,-1] = 1
-    ret, labels, stats, centroids = cv2.connectedComponentsWithStats( (boundary<1).astype(np.uint8) )
-    dst[boundary>0,:] = 0
-    for i, pt in enumerate(centroids):
-        if i == 0:
+        part = marker==u
+        color = colors[u%n]
+        dst[part] = color
+        if not text:
             continue
-        c,r = pt.astype(np.int)
-        c = min(marker.shape[1], c)
-        c = max(0, c)
-        r = min(marker.shape[0], r)
-        r = max(0, r)
-        idx = marker[r,c]
-        if idx < 2:
-            continue
-        color = colors[idx%n]
+        ret, labels, stats, centroids = cv2.connectedComponentsWithStats( (part).astype(np.uint8) )
         color = (255-color[0], 255-color[1], 255-color[2])
-        cv2.putText(dst, '%d'%idx, (c,r), cv2.FONT_HERSHEY_SIMPLEX, .5, color)
+        for i, (x0,y0,w,h,s) in enumerate(stats):
+            if w == marker.shape[1] and h == marker.shape[0]:
+                continue
+            cp = centroids[i].astype(np.int)
+            cv2.putText(dst, '%d'%u, (cp[0],cp[1]), cv2.FONT_HERSHEY_PLAIN, 1.5, color, 2)
     return dst
 
 def GetNormalizedDepth(depth):
