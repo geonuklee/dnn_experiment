@@ -93,8 +93,8 @@ def visualize_scene(pick, eval_scene):
     gt_indices = np.unique(eval_scene['gidx'])
     dst = np.zeros_like(pick['rgb'])
     gt_marker = pick['marker']
-    min_iou = .3
-    msg = ' # /    AP /  Over / Under '
+    min_iou = .6
+    msg = ' # /AP>%.1f/  Over / Under '%min_iou
     font_face, font_scale, font_thick = cv2.FONT_HERSHEY_PLAIN, 1., 1
     w,h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
     hoffset = 10
@@ -214,7 +214,7 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
                 depth_msgs[cam_id] = msg
             elif topic in set_rgb:
                 rgb_msgs[cam_id] = msg
-                continue # 매 depth topic에 대해서만 OBB 생성후 evaluation 실행
+
             rgb_msg, depth_msg = rgb_msgs[cam_id], depth_msgs[cam_id]
             if depth_msg is None or rgb_msg is None:
                 continue
@@ -232,26 +232,33 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
             eval_frame, pred_marker, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
             for each in eval_frame:
                 eval_scene.append( (base,nframe)+ each)
-            a = GetColoredLabel(pred_marker)
-            b = GetColoredLabel(pick['marker'])
-            pred_gt = cv2.addWeighted(a,.5,b,.5,0.)
-            cv2.imshow("pred_gt", pred_gt)
-            cv2.imshow("dst", dst)
-            if ord('q') == cv2.waitKey():
+            #a = GetColoredLabel(pred_marker)
+            #b = GetColoredLabel(pick['marker'])
+            #pred_gt = cv2.addWeighted(a,.5,b,.5,0.)
+            #cv2.imshow("pred_gt", pred_gt)
+            cv2.imshow("frame", dst)
+            if ord('q') == cv2.waitKey(1):
                 exit(1)
+            fn = osp.join(screenshot_dir, 'segment_%04d_%s.png'%(nframe, base) )
+            cv2.imwrite(fn, dst)
+
             nframe += 1
             depth_msg, rgb_msg = None, None
             if nframe >= 5:
                 break
 
         # TODO 통계 처리
-        dtype = [('base',object), ('fidx',int), ('gidx',int),
-                ('recall',float), ('iou',float), ('overseg',bool),('underseg',bool)]
+        dtype = [('base',object), ('fidx',int),
+                ('gidx',int),
+                ('iou',float), ('recall',float), ('overseg',bool),('underseg',bool),
+                ('pidx',int), ('precision',float)]
         eval_scene = np.array(eval_scene, dtype)
         dst = visualize_scene(pick,eval_scene)
-        cv2.imshow("dst", dst)
-        if ord('q') == cv2.waitKey():
+        cv2.imshow("scene%d"%i_file, dst)
+        if ord('q') == cv2.waitKey(1):
             exit(1)
+        fn = osp.join(screenshot_dir, 'scene%04d.png'%(i_file) )
+        cv2.imwrite(fn, dst)
 
 
 def test_evaluation():

@@ -7,12 +7,10 @@
 #include "utils.h"
 
 void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
-  const float min_d_fromedge = 2.;
   const int IN_QUEUE = -2; // Pixel visited
   const int WSHED = -1;    // Pixel belongs to watershed
   const cv::Size size = _marker.size();
   cv::Mat _expandmap = cv::Mat::zeros(_marker.rows,_marker.cols, CV_32FC1);
-
   struct Node {
     int* m;
     int* m_parent;
@@ -39,6 +37,25 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
       return false;
     }
   };
+  std::priority_queue<Node> q1, q2;
+
+  struct ENode {
+    int* m;
+    int* m_parent;
+    float expd; // expand distance
+
+    ENode(int* _m, int* _m_parent, float _expd)
+      :m(_m), m_parent(_m_parent), expd(_expd){
+        m[0] = IN_QUEUE;
+      }
+    bool operator < (const ENode& other) const{
+      if(expd > other.expd)
+        return true;
+      return false;
+    }
+  };
+  std::priority_queue<ENode> q3;
+
 
   // Current pixel in input image
   int* marker = _marker.ptr<int>();
@@ -55,7 +72,6 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
     marker[j] = marker[j + mstep*(size.height-1)] = WSHED;
 
   int n_instance = 0;
-  std::priority_queue<Node> q1, q2;
   for( i = 1; i < size.height-1; i++ ) {
     marker += mstep;
     edge_distance += dstep;
@@ -69,12 +85,9 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
       float* expd     = expand_distance + j;
       const float* ed = edge_distance   + j;
       n_instance = std::max(*m, n_instance);
-      if( *ed < min_d_fromedge){
-        m[0] = WSHED;
-        continue;
-      }
       if( m[0] != 0)
         continue;
+      int n = q1.size();
       if(m[-1] > 0)
         q1.push(Node(m, m-1, expd, expd-1, ed));
       else if(m[1] > 0)
@@ -90,8 +103,10 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
   std::vector<int> remain_expand_areas, edge_distances;
   edge_distances.resize(n_instance, 9999);
   remain_expand_areas.resize(n_instance, 500);
-  std::vector<std::map<int, size_t> > boundary_counts;
-  boundary_counts.resize(n_instance);
+  std::vector<std::map<int, size_t> > direct_boundary_counts;
+  direct_boundary_counts.resize(n_instance);
+  std::vector<std::map<int, size_t> > indirect_boundary_counts;
+  indirect_boundary_counts.resize(n_instance);
 
   int iter = 0;
   /*
@@ -101,40 +116,55 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
   writer.open("modified_watershed.mp4", codec, 15, sizeFrame, true);
   */
   // First step - Expand each instance in limited area
-#define ws_push(idx){ \
-  if(k.m[idx] == 0) \
-    q1.push(Node(k.m+idx, k.m, k.expd+idx, k.expd, k.ed+idx) ); \
+
+// Counts boundary with edges
+#define ws_check(idx){ \
+  if(k.m[idx]>0){ \
+    if(k.m[idx]!=*k.m) \
+      direct_boundary_counts[std::max(*k.m,k.m[idx])][std::min(*k.m,k.m[idx])]++;\
+  }  \
 }
 
+#define ws_push(idx){ \
+  if(k.m[idx]==WSHED) \
+    neighbor_shed = true; \
+  else if(k.m[idx] == 0) \
+    q1.push(Node(k.m+idx, k.m, k.expd+idx, k.expd, k.ed+idx) ); \
+}
   while(!q1.empty()){
     Node k = q1.top(); q1.pop();
     *k.m = *k.m_parent;
-    int& area = remain_expand_areas[*k.m];
+    ws_check(-1);
+    ws_check(1);
+    ws_check(-mstep);
+    ws_check(mstep);
     int& min_ed = edge_distances[*k.m];
     min_ed = std::min(min_ed, (int)*k.ed);
-    if(area < 1){
+
+    int& area = remain_expand_areas[*k.m];
+    if(*k.ed < 20. || area < 1){
       *k.m = IN_QUEUE;
       q2.push(k);
       continue;
     }
-    if( *k.ed < min_d_fromedge){
-      boundary_counts[*k.m][WSHED]++;
-      *k.m = WSHED;
-      continue;
-    }
     area--;
+    int n = q1.size();
+    bool neighbor_shed = false;
     ws_push(-1);
     ws_push(1);
     ws_push(-mstep);
     ws_push(mstep);
-    /*
-    if( (++iter) % 100 == 0){
-      cv::Mat dst = GetColoredLabel(_marker);
-      cv::imshow("ModifiedWatershed", dst);
-      char c = cv::waitKey(1);
-      //writer.write(dst);
+    if(q1.size() == n && neighbor_shed){
+      *k.m = IN_QUEUE;
+      q3.push( ENode(k.m,k.m_parent,*k.expd) );
     }
-    */
+    /* if( (++iter) % 10 == 0){
+      cv::Mat dst = GetColoredLabel(_marker);
+      cv::imshow("ModifiedWatershed1", dst);
+      if('q' == cv::waitKey(1))
+        exit(1);
+      //writer.write(dst);
+    } */
   }
 #undef ws_push
 
@@ -160,76 +190,126 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
         marker[i] = WSHED;
   }
 
-// Counts boundary with edges
-#define ws_check(idx){ \
-  if(k.m[idx]>0){ \
-    if(k.m[idx]!=*k.m) \
-      boundary_counts[std::max(*k.m,k.m[idx])][std::min(*k.m,k.m[idx])]++;\
-  }  \
-  else if(k.m[idx] > WSHED) \
+#define ws_push(idx){ \
+  if(k.m[idx]==WSHED) \
+    neighbor_shed = true; \
+  else if(k.m[idx] == 0) \
     q2.push(Node(k.m+idx, k.m, k.expd+idx, k.expd, k.ed+idx) ); \
-  else if(k.m[idx]>IN_QUEUE) \
-    boundary_counts[std::max(*k.m,k.m[idx])][std::min(*k.m,k.m[idx])]++;\
 }
   while(!q2.empty()){
     Node k = q2.top(); q2.pop();
     *k.m = *k.m_parent;
-    if( *k.ed < min_d_fromedge){
-      boundary_counts[*k.m][WSHED]++;
-      *k.m = WSHED;
-      continue;
-    }
     ws_check(-1);
     ws_check(1);
-    ws_check(mstep);
     ws_check(-mstep);
+    ws_check(mstep);
+
+    int n = q2.size();
+    bool neighbor_shed = false;
+    ws_push(-1);
+    ws_push(1);
+    ws_push(-mstep);
+    ws_push(mstep);
+    if(q2.size() == n && neighbor_shed){
+      *k.m = IN_QUEUE;
+      q3.push( ENode(k.m,k.m_parent,0.) );
+    }
     /*
     if( (++iter) % 100 == 0){
       cv::Mat dst = GetColoredLabel(_marker);
-      cv::imshow("ModifiedWatershed", dst);
+      cv::imshow("ModifiedWatershed2", dst);
       if(cv::waitKey(1) == 'q')
         exit(1);
     }
     */
   }
+#undef ws_push
 #undef ws_check
 
-#if 1
-  const size_t min_merge_boundary = 50; // [TODO Hard coded param
+#define ws_check(idx){ \
+  if(k.m[idx]>0){ \
+    if(k.m[idx]!=*k.m) \
+      indirect_boundary_counts[std::max(*k.m,k.m[idx])][std::min(*k.m,k.m[idx])]++;\
+  }  \
+}
+#define ws_push(idx){ \
+  if(k.m[idx] == 0) \
+    q3.push(ENode(k.m+idx, k.m, k.expd+1.) ); \
+}
+
   {
-    std::vector<int*> convert_list;
-    std::map<int,std::set<int> > _pairs;
+    cv::Mat marker0 = _marker.clone();
+    marker = _marker.ptr<int>();
+    for( j = 0; j < size.width; j++ )
+      marker[j] = marker[j + mstep*(size.height-1)] = WSHED;
+    for( i = 1; i < size.height-1; i++ ) {
+      marker += mstep;
+      marker[0] = marker[size.width-1] = WSHED; // boundary pixels
+      for( j = 1; j < size.width-1; j++ ) {
+        int* m = marker + j;
+        if(*m == WSHED)
+          *m = 0;
+      }
+    }
+    while(!q3.empty()){
+      ENode k = q3.top(); q3.pop();
+      *k.m = *k.m_parent;
+      if(k.expd > 5.) // Marker extend range
+        continue;
+      ws_check(-1);
+      ws_check(1);
+      ws_check(-mstep);
+      ws_check(mstep);
+
+      ws_push(-1);
+      ws_push(1);
+      ws_push(mstep);
+      ws_push(-mstep);
+    }
+
+    //cv::imshow("ext_marker", GetColoredLabel(_marker,true));
+    _marker = marker0;
+  }
+#undef ws_push
+
+
+  int n_merge = 0;
+  {  // Need fix with bug
+    struct DSNode{ // Disjoint-set structure
+      DSNode* parent;
+      DSNode() : parent(nullptr) { }
+    };
+    std::vector<DSNode> _nodes;
+    _nodes.resize(n_instance);
+    DSNode* nodes = _nodes.data();
     for(int m0 =0; m0 < n_instance; m0++){
-      const auto& counts = boundary_counts[m0];
+      const auto& counts = direct_boundary_counts[m0];
       for(const auto& it : counts){
         int m1 = it.first;
         if(m1 < 1)
           continue;
-        size_t n1 = it.second;
-        if( n1 < min_merge_boundary)
+        float n_contact = it.second;
+        float n_edge = 0.;
+        if(indirect_boundary_counts[m0].count(m1))
+          n_edge = indirect_boundary_counts[m0][m1];
+        float n_all = n_contact+n_edge;
+        if(n_edge > .5*n_all)
           continue;
-        _pairs[std::min(m0,m1)].insert(std::max(m0,m1));
+        //printf("Pair between %d,%d. Contact %.2f/%.f\n",std::min(m0,m1),std::max(m0,m1),n_contact,n_all);
+        DSNode* child = nodes+std::max(m0,m1);
+        child->parent = nodes+std::min(m0,m1);
+        n_merge += 1;
       }
     }
-    std::vector<int> buf;
-    buf.resize(n_instance);
-    convert_list.resize(n_instance,nullptr); {
-      int* ptr = buf.data();
-      for(i=0; i<buf.size(); i++){
-        buf[i] = i;
-        convert_list[i] = ptr+i;
+    std::vector<int> convert_list;
+    convert_list.resize(n_instance,-1);
+    for(i=1; i < n_instance; i++) {
+      DSNode* keynode = nodes+i;
+      while(keynode->parent){
+        //std::cout << "move to parent, #" << i << std::endl;
+        keynode = keynode->parent;
       }
-    }
-    for(auto it :_pairs){
-      const int& p1 = it.first;
-      for(const int& p2 : it.second)
-        convert_list[p2] = convert_list[p1];
-    }
-    for(i=0; i <convert_list.size(); i++){
-      int* ptr = convert_list[i];
-      if(*ptr==i)
-        convert_list[i] = nullptr;
-      //std::cout << "cvt " << i << " -> " << *ptr << std::endl;
+      convert_list[i] = keynode - nodes;
     }
     //cv::imshow("beforemerge", GetColoredLabel(_marker,true));
     marker = _marker.ptr<int>();
@@ -239,17 +319,16 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
         int* m = marker + j;
         if(*m < 1)
           continue;
-        const int* ptr = convert_list[*m];
-        if(!ptr)
+        const int& new_m = convert_list[*m];
+        if(new_m < 0)
           continue;
-        *m = *ptr;
+        *m = new_m;
       }
     }
     //cv::imshow("aftermerge", GetColoredLabel(_marker,true));
-    //cv::waitKey();
+    //if('q'==cv::waitKey(n_merge>0?0:1))
+    //  exit(1);
   }
-#endif
-
   //writer.release();
   return;
 }

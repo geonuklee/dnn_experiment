@@ -380,7 +380,7 @@ cv::Mat Unify(cv::Mat _marker){
 bool IsTooSmallSeed(const cv::RotatedRect& obb, const int& rows, const int& cols){
   // 화면 구석 너무 작은 seed 쪼가리 때문에 oversegment 나는것 방지.
   const cv::Point2f& cp = obb.center;
-  const float offset = 20.;
+  const float offset = 10.;
   if(cp.x < offset)
     return true;
   else if(cp.x > cols - offset)

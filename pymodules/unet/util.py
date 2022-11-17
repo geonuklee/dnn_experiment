@@ -252,8 +252,41 @@ def GetColoredLabel(marker, text=False):
             if w == marker.shape[1] and h == marker.shape[0]:
                 continue
             cp = centroids[i].astype(np.int)
-            cv2.putText(dst, '%d'%u, (cp[0],cp[1]), cv2.FONT_HERSHEY_PLAIN, 1.5, color, 2)
+            msg = '%d'%u
+            w,h = cv2.getTextSize(msg, cv2.FONT_HERSHEY_PLAIN,1.5,2)[0]
+            cv2.rectangle(dst,(cp[0]-2,cp[1]+5),(cp[0]+w+2,cp[1]-h-5),(255,255,255),-1)
+            cv2.rectangle(dst,(cp[0]-2,cp[1]+5),(cp[0]+w+2,cp[1]-h-5),(100,100,100),1)
+            cv2.putText(dst, msg, (cp[0],cp[1]), cv2.FONT_HERSHEY_PLAIN, 1.5, (0,0,0), 2)
     return dst
+
+def Overlap(marker, rgb, text=False):
+    dst = np.zeros((marker.shape[0],marker.shape[1],3), dtype=np.uint8)
+    dst_rgb = rgb.copy()
+    uniq = np.unique(marker)
+    n= len(colors)
+    for u in uniq:
+        if u == 0:
+            continue
+        part = marker==u
+        color = colors[u%n]
+        dst[part] = color
+        if not text:
+            continue
+        ret, labels, stats, centroids = cv2.connectedComponentsWithStats( (part).astype(np.uint8) )
+        color = (255-color[0], 255-color[1], 255-color[2])
+        for i, (x0,y0,w,h,s) in enumerate(stats):
+            if w == marker.shape[1] and h == marker.shape[0]:
+                continue
+            cp = centroids[i].astype(np.int)
+            msg = '%d'%u
+            w,h = cv2.getTextSize(msg, cv2.FONT_HERSHEY_PLAIN,1.5,2)[0]
+            for img in [dst, dst_rgb]:
+                cv2.rectangle(img,(cp[0]-2,cp[1]+5),(cp[0]+w+2,cp[1]-h-5),(255,255,255),-1)
+                cv2.rectangle(img,(cp[0]-2,cp[1]+5),(cp[0]+w+2,cp[1]-h-5),(100,100,100),1)
+                cv2.putText(img, msg, (cp[0],cp[1]), cv2.FONT_HERSHEY_PLAIN, 1.5, (0,0,0), 2)
+    dst = cv2.addWeighted(dst_rgb, .3, dst, .7, 0.)
+    return dst
+
 
 def Evaluate2D(obb_resp, gt_marker, rgb):
     pred_marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32)\
@@ -263,6 +296,10 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
     # ref : https://stackoverflow.com/questions/24780697/numpy-unique-list-of-colors-in-the-image
     gt_pred = np.stack((gt_marker, pred_marker), axis=2)
     pair_marker, counts = np.unique(gt_pred.reshape(-1,2),axis=0, return_counts=True)
+    #cv2.imshow("gt",GetColoredLabel(gt_marker,True))
+    #cv2.imshow("pred",GetColoredLabel(pred_marker,True))
+    #cv2.waitKey()
+
     arr = []
     for (gidx, pidx), count in zip(pair_marker,counts):
         if 0 in [gidx, pidx]:
@@ -271,36 +308,52 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
     arr = np.array(arr, dtype=[('gidx',int),('pidx',int),('count',float)] )
 
     undersegs, oversegs = set(), set()
-    ious, recalls, max_precisions, g2p = {},{},{},{}
+    ious, recalls = {}, {}
+    max_precisions, g2maxpidx = {},{}
+
+    pred_indices, tmp = np.unique(pred_marker, return_counts=True)
+    pred_areas ={}
+    for (pidx, ps) in zip(pred_indices, tmp.astype(np.float) ):
+        if pidx<1:
+            continue
+        pred_areas[pidx] = ps
 
     gt_indices, tmp = np.unique(gt_marker, return_counts=True)
     gt_areas ={}
-    min_th = .1
     for (gidx, gs) in zip(gt_indices, tmp.astype(np.float) ):
-        gt_areas[gidx] = gs
         if gidx<1:
             continue
+        gt_areas[gidx] = gs
         matches = arr[arr['gidx']==gidx]
         matches = np.flip( matches[np.argsort(matches, order='count')] )
         if matches.shape[0] == 0:
-            recall = 0.
             iou = 0.
+            recall = 0.
             pidx = -1
+            precision = 0.
         else:
-            recall = matches['count'][0]/gs
+            pidx = matches['pidx'][0]
+            intersection = matches['count'][0]
+            recall    = intersection/gs
+            precision = intersection/pred_areas[pidx]
+            iou       = intersection/float(np.logical_or(gt_marker==gidx,pred_marker==pidx).sum())
             overlap_pred = []
-            for pidx, s in matches[['pidx','count']]:
+            for pidx, intersection in matches[['pidx','count']]:
                 if pidx < 1:
                     continue
-                prec = s / gs
-                if prec > min_th:
+                if intersection/pred_areas[pidx] > .8:
                     overlap_pred.append(pidx)
-            if len(overlap_pred) > 1:
+            overseg = len(overlap_pred) > 1 and recall < .8
+            #if not overse and len(matches) > 1:
+            #    intersection_others = np.sum(matches['count'][1:])
+            #    if intersection_others > .05*intersection:
+            #        overseg = True
+            if overseg:
                 oversegs.add(gidx)
-            gt_pred_s = np.logical_or(gt_marker==gidx,pred_marker==pidx).sum()
-            iou = matches['count'][0]/gt_pred_s
-            pidx = matches['pidx']
-        ious[gidx], recalls[gidx], max_precisions[gidx], g2p[gidx] = iou, recall, 0., pidx
+        recalls[gidx] = recall
+        ious[gidx] = iou
+        g2maxpidx[gidx] = pidx
+        max_precisions[gidx] = precision 
 
     pred_indices, pred_areas = np.unique(pred_marker, return_counts=True)
     for (pidx, ps) in zip(pred_indices, pred_areas.astype(np.float) ):
@@ -309,44 +362,100 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
         matches = arr[arr['pidx']==pidx]
         matches = np.flip( matches[np.argsort(matches, order='count')] )
         if matches.shape[0] == 0:
-            prec = 0.
+            precision = 0.
         else:
-            prec = matches['count'][0] / ps
+            precision = matches['count'][0] / ps
             overlap_gt = []
-            for gidx, s in matches[['gidx','count']]:
+            for gidx, intersection in matches[['gidx','count']]:
                 if gidx < 1:
                     continue
-                recall = s/gt_areas[gidx]
-                if recall > min_th:
+                if intersection/gt_areas[gidx] > .2:
                     overlap_gt.append(gidx)
-            if len(overlap_gt) > 1:
+            underseg = len(overlap_gt) > 1 and precision < .8
+            if underseg:
                 for gidx in overlap_gt:
                     undersegs.add(gidx)
-        max_precisions[gidx] = max(max_precisions[gidx], prec)
 
-    # TODO Visualization of evaluation for 'debugging'
     outputlist = []
     dst = np.zeros((gt_marker.shape[0],gt_marker.shape[1],3), dtype=np.uint8)
     #dst[gt_marker<1,:] = 0
     for gidx in gt_indices:
         if gidx == 0:
             continue
-        recall, iou, pidx, precision = recalls[gidx], ious[gidx], g2p[gidx], max_precisions[gidx]
+        iou, recall, precision = ious[gidx], recalls[gidx], max_precisions[gidx]
+        pidx = g2maxpidx[gidx]
         overseg, underseg = gidx in oversegs, gidx in undersegs
-        output = gidx, recall, iou, overseg, underseg
+        output = gidx, iou, recall, overseg, underseg, pidx, precision
         outputlist.append(output)
         part = gt_marker==gidx
         if overseg:
             dst[part,0] = 255
         if underseg:
-            dst[part,-1] = 255
+            dst[part,2] = 255
         if not overseg and not underseg:
             dst[part,:] = rgb[part,:]
+
     boundary = cpp_ext.GetBoundary(gt_marker, 2)
     dst_rgb = rgb.copy()
     dst_rgb[boundary>0,:] = dst[boundary>0,:] = 0
     dst = cv2.addWeighted(dst_rgb, .3, dst, .7, 0.)
-    return output, pred_marker, dst
+    dst_pred = Overlap(pred_marker,rgb,True)
+    for gidx in gt_indices:
+        if gidx<1:
+            continue
+        part = gt_marker == gidx
+        ret, labels, stats, centroids = cv2.connectedComponentsWithStats( part.astype(np.uint8) )
+        for i, (x0,y0,w,h,s) in enumerate(stats):
+            if w == gt_marker.shape[1] and h == gt_marker.shape[0]:
+                continue
+            pt = centroids[i].astype(np.int)
+            msg = '%d'%gidx
+            w,h = cv2.getTextSize(msg, cv2.FONT_HERSHEY_PLAIN,1.5,2)[0]
+            cv2.rectangle(dst,(pt[0]-2,pt[1]+5),(pt[0]+w+2,pt[1]-h-5),(255,255,255),-1)
+            cv2.rectangle(dst,(pt[0]-2,pt[1]+5),(pt[0]+w+2,pt[1]-h-5),(100,100,100),1)
+            cv2.putText(dst, msg, (pt[0],pt[1]), cv2.FONT_HERSHEY_PLAIN,1.5,(0,0,0),2)
+    dst = np.hstack((dst_pred,dst))
+
+    msg = ' # /  IoU / Recall/ '
+    font_face, font_scale, font_thick = cv2.FONT_HERSHEY_PLAIN, 1., 1
+    w,h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+    hoffset = 5
+    w,h = w+2,h+hoffset
+    dst_score = np.zeros((dst.shape[0],w,3),dst.dtype)
+    cp = [0,h]
+    cv2.putText(dst_score, msg, tuple(cp), font_face, font_scale, (255,255,255), font_thick)
+    cp[1] += h+hoffset
+    for output in outputlist:
+        gidx, iou, recall, overseg, underseg, pidx, precision = output
+        cp[0] = 0
+        msg = '%2d' % gidx
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(cp), font_face, font_scale, (255,255,255), font_thick)
+        if  iou < .6:
+            color = (0,0,255)
+        else:
+            color = (255,255,255)
+        cp[0] += w
+        msg = '   %.3f'%iou
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(cp), font_face, font_scale, color, font_thick)
+        if  recall < .5:
+            color = (0,0,255)
+        else:
+            color = (255,255,255)
+        cp[0] += w
+        msg = '   %.3f'%recall
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(cp), font_face, font_scale, color, font_thick)
+
+        cp[1] += h+hoffset
+
+    dst = np.hstack((dst,dst_score))
+    #cv2.imshow("dst", dst)
+    #if ord('q') == cv2.waitKey(len(oversegs)==0):
+    #    exit(1)
+
+    return outputlist, pred_marker, dst
 
 
 def GetNormalizedDepth(depth):
