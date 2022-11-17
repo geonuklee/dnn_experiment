@@ -18,7 +18,8 @@ from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as rotation_util
 import time
 
-from ros_client import *
+#from ros_client import *
+from unet.util import GetColoredLabel, Evaluate2D
 
 def get_rectification(camera_info):
     K = np.array( camera_info.K ,dtype=np.float).reshape((3,3))
@@ -118,6 +119,17 @@ class Sub:
     def cb_info(self, msg):
         self.info = msg
 
+def get_pkg_dir():
+    return osp.abspath( osp.join(osp.dirname(__file__),'..') )
+
+def get_pick_fromrosbag(datasetname, rosbagfn):
+    base = osp.splitext( osp.basename(rosbagfn) )[0]
+    pick_fn = osp.join(get_pkg_dir(), datasetname, "%s_cam0.pick"%base)
+    f = open(pick_fn,'r')
+    pick = pickle.load(f)
+    f.close()
+    return pick
+
 if __name__=="__main__":
     rospy.init_node('~', anonymous=True)
     rospy.wait_for_service('~PredictEdge')
@@ -134,8 +146,13 @@ if __name__=="__main__":
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
 
-    bridge = CvBridge()
+    do_eval = rospy.get_param("~do_eval")=='true'
+    if do_eval:
+        rosbagfn = rospy.get_param("~filename")
+        datasetname = rospy.get_param("~datasetname")
+        pick = get_pick_fromrosbag(datasetname, rosbagfn)
 
+    bridge = CvBridge()
     cam_id = "cam0"
     sub = Sub("~%s/rgb"%cam_id, "~%s/depth"%cam_id, "~%s/info"%cam_id)
     rect_info_msgs = {}
@@ -170,6 +187,15 @@ if __name__=="__main__":
         obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.edge,
                 Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
         t1 = time.time()
+
+        if do_eval:
+            eval_frame, pred_marker, dst = Evaluate2D(obb_resp, pick['marker'], rgb)
+            cv2.imshow("pred", GetColoredLabel(pred_marker))
+            cv2.imshow("dst", dst)
+            if ord('q') == cv2.waitKey(1):
+                exit(1)
+
         #print("etime = ", t1-t0)
+        # TODO obb_resp
         rate.sleep()
 

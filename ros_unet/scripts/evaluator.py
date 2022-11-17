@@ -488,7 +488,7 @@ class Evaluator:
                 cv2.waitKey(1)
             else:
                 cv2.waitKey(1) 
-            cv2.imwrite(osp.join(eval_dir,'segments%d.png'%i), dst)
+            cv2.imwrite(osp.join(eval_dir,'segments%d_%s.png'%(i,scene)), dst)
 
 
     def Evaluate(self, eval_dir, gt_files, arr_frames=None, all_profiles=None, is_final=False):

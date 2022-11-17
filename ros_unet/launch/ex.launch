@@ -5,6 +5,7 @@
 <arg name="sensor_model" default="helios"/>
 <arg name="voxel_leaf" value="0.01" />
 <arg name="filename" default=""/>
+<arg name="do_eval" default="false"/>
 <arg name="rgb" default="aligned/rgb_to_depth/image_raw"/>
 <arg name="depth" default="helios2/depth/image_raw"/>
 <arg name="info" default="helios2/camera_info"/>
@@ -47,6 +48,12 @@
     <remap from="~cam0/rgb"    to="/cam0/$(arg rgb)" />
     <remap from="~cam0/depth"  to="/cam0/$(arg depth)" />
     <remap from="~cam0/info"   to="/cam0/$(arg info)" />
+
+    <rosparam subst_value="True">
+      do_eval: "$(arg do_eval)"
+      filename: "$(arg filename)"
+      datasetname: "obb_dataset_test0523"
+    </rosparam>
 </node>
 
 

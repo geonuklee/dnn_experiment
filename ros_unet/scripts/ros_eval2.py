@@ -24,8 +24,8 @@ from os import makedirs
 import matplotlib.pyplot as plt
 import pyautogui
 import shutil
-from unet.util import GetColoredLabel
-from unet_ext import GetBoundary
+from unet.util import GetColoredLabel, Evaluate2D
+#from unet_ext import GetBoundary
 
 def get_topicnames(bagfn, bag, given_camid='cam0'):
     depth = '/%s/helios2/depth/image_raw'%given_camid
@@ -89,104 +89,6 @@ def get_topics(bridge, pkg_dir,gt_fn, pick, set_camera,floordetector_set_camera,
     return bag, set_depth, set_rgb, topic2cam, rgb_topics, depth_topics, rgb_msgs, depth_msgs,\
             rect_info_msgs, mx, my, fx, fy, Twc, plane_c, floor
 
-def Evaluate2D(obb_resp, gt_marker, rgb):
-    pred_marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32)\
-            .reshape(obb_resp.marker.height, obb_resp.marker.width)
-    pred_filtered_outline = np.frombuffer(obb_resp.filtered_outline.data, dtype=np.uint8)\
-            .reshape(obb_resp.marker.height, obb_resp.marker.width)
-    # ref : https://stackoverflow.com/questions/24780697/numpy-unique-list-of-colors-in-the-image
-    gt_pred = np.stack((gt_marker, pred_marker), axis=2)
-    pair_marker, counts = np.unique(gt_pred.reshape(-1,2),axis=0, return_counts=True)
-    arr = []
-    for (gidx, pidx), count in zip(pair_marker,counts):
-        if 0 in [gidx, pidx]:
-            continue
-        arr.append( (gidx, pidx, count) )
-    arr = np.array(arr, dtype=[('gidx',int),('pidx',int),('count',float)] )
-
-    undersegs, oversegs = set(), set()
-    ious, recalls, max_precisions, g2p = {},{},{},{}
-
-    gt_indices, tmp = np.unique(gt_marker, return_counts=True)
-    gt_areas ={}
-    min_th = .1
-    for (gidx, gs) in zip(gt_indices, tmp.astype(np.float) ):
-        gt_areas[gidx] = gs
-        if gidx<1:
-            continue
-        matches = arr[arr['gidx']==gidx]
-        matches = np.flip( matches[np.argsort(matches, order='count')] )
-        if matches.shape[0] == 0:
-            recall = 0.
-            iou = 0.
-            pidx = -1
-        else:
-            recall = matches['count'][0]/gs
-            overlap_pred = []
-            for pidx, s in matches[['pidx','count']]:
-                if pidx < 1:
-                    continue
-                prec = s / gs
-                if prec > min_th:
-                    overlap_pred.append(pidx)
-            if len(overlap_pred) > 1:
-                oversegs.add(gidx)
-            gt_pred_s = np.logical_or(gt_marker==gidx,pred_marker==pidx).sum()
-            iou = matches['count'][0]/gt_pred_s
-            pidx = matches['pidx']
-        ious[gidx], recalls[gidx], max_precisions[gidx], g2p[gidx] = iou, recall, 0., pidx
-
-    pred_indices, pred_areas = np.unique(pred_marker, return_counts=True)
-    for (pidx, ps) in zip(pred_indices, pred_areas.astype(np.float) ):
-        if pidx == 0:
-            continue
-        matches = arr[arr['pidx']==pidx]
-        matches = np.flip( matches[np.argsort(matches, order='count')] )
-        if matches.shape[0] == 0:
-            prec = 0.
-        else:
-            prec = matches['count'][0] / ps
-            overlap_gt = []
-            for gidx, s in matches[['gidx','count']]:
-                if gidx < 1:
-                    continue
-                recall = s/gt_areas[gidx]
-                if recall > min_th:
-                    overlap_gt.append(gidx)
-            if len(overlap_gt) > 1:
-                for gidx in overlap_gt:
-                    undersegs.add(gidx)
-        max_precisions[gidx] = max(max_precisions[gidx], prec)
-
-    # TODO Visualization of evaluation for 'debugging'
-    outputlist = []
-    dst = np.zeros((gt_marker.shape[0],gt_marker.shape[1],3), dtype=np.uint8)
-    #dst[gt_marker<1,:] = 0
-    for gidx in gt_indices:
-        if gidx == 0:
-            continue
-        recall, iou, pidx, precision = recalls[gidx], ious[gidx], g2p[gidx], max_precisions[gidx]
-        overseg, underseg = gidx in oversegs, gidx in undersegs
-        output = gidx, recall, iou, overseg, underseg
-        outputlist.append(output)
-        part = gt_marker==gidx
-        if overseg:
-            dst[part,0] = 255
-        if underseg:
-            dst[part,-1] = 255
-        if not overseg and not underseg:
-            dst[part,:] = rgb[part,:]
-    boundary = GetBoundary(gt_marker, 2)
-    dst_rgb = rgb.copy()
-    dst_rgb[boundary>0,:] = dst[boundary>0,:] = 0
-    dst = cv2.addWeighted(dst_rgb, .3, dst, .7, 0.)
-    #cv2.imshow("gt",   GetColoredLabel(gt_marker,True))
-    cv2.imshow("pred", GetColoredLabel(pred_marker))
-    cv2.imshow("dst", dst)
-    if ord('q') == cv2.waitKey(1):
-        exit(1)
-    return output
-
 def perform_test(eval_dir, gt_files, screenshot_dir):
     if osp.exists(screenshot_dir):
         shutil.rmtree(screenshot_dir)
@@ -213,7 +115,7 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
                 rect_info_msgs, mx, my, fx, fy, Twc, plane_c, floor = \
                 get_topics(bridge,pkg_dir,gt_fn, pick, set_camera,floordetector_set_camera, compute_floor)
 
-        secene_evallist, nframe = [], 0
+        eval_scene, nframe = [], 0
         for topic, msg, t in bag.read_messages(topics=rgb_topics.values()+depth_topics.values()):
             cam_id = topic2cam[topic]
             if topic in set_depth:
@@ -235,11 +137,15 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
             t1 = time.time()
             #obb_resp.filtered_outline, obb_resp.marker, obb_resp.output
-            output = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
-            secene_evallist += output
+            eval_frame, pred_marker, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
+            cv2.imshow("pred", GetColoredLabel(pred_marker))
+            cv2.imshow("dst", dst)
+            if ord('q') == cv2.waitKey(1):
+                exit(1)
+            eval_scene += eval_frame
             nframe += 1
             depth_msg, rgb_msg = None, None
-            if nframe >= 5:
+            if nframe >= 20:
                 break
         # TODO 통계 처리
 

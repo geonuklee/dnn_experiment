@@ -87,9 +87,11 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
   }
   n_instance += 1;
 
-  std::vector<int> remain_expand_areas, min_edge_distances;
-  remain_expand_areas.resize(n_instance, 300);
-  min_edge_distances.resize(n_instance, 9999);
+  std::vector<int> remain_expand_areas, edge_distances;
+  edge_distances.resize(n_instance, 9999);
+  remain_expand_areas.resize(n_instance, 500);
+  std::vector<std::map<int, size_t> > boundary_counts;
+  boundary_counts.resize(n_instance);
 
   int iter = 0;
   /*
@@ -99,11 +101,16 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
   writer.open("modified_watershed.mp4", codec, 15, sizeFrame, true);
   */
   // First step - Expand each instance in limited area
+#define ws_push(idx){ \
+  if(k.m[idx] == 0) \
+    q1.push(Node(k.m+idx, k.m, k.expd+idx, k.expd, k.ed+idx) ); \
+}
+
   while(!q1.empty()){
     Node k = q1.top(); q1.pop();
     *k.m = *k.m_parent;
     int& area = remain_expand_areas[*k.m];
-    int& min_ed = min_edge_distances[*k.m];
+    int& min_ed = edge_distances[*k.m];
     min_ed = std::min(min_ed, (int)*k.ed);
     if(area < 1){
       *k.m = IN_QUEUE;
@@ -111,18 +118,15 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
       continue;
     }
     if( *k.ed < min_d_fromedge){
+      boundary_counts[*k.m][WSHED]++;
       *k.m = WSHED;
       continue;
     }
     area--;
-    if(k.m[-1] == 0)
-      q1.push(Node(k.m-1, k.m, k.expd-1, k.expd, k.ed-1) );
-    if(k.m[1] == 0)
-      q1.push(Node(k.m+1, k.m, k.expd+1, k.expd, k.ed+1) );
-    if(k.m[-mstep] == 0)
-      q1.push(Node(k.m-mstep, k.m, k.expd-dstep, k.expd, k.ed-dstep) );
-    if(k.m[mstep] == 0)
-      q1.push(Node(k.m+mstep, k.m, k.expd+dstep, k.expd, k.ed+dstep) );
+    ws_push(-1);
+    ws_push(1);
+    ws_push(-mstep);
+    ws_push(mstep);
     /*
     if( (++iter) % 100 == 0){
       cv::Mat dst = GetColoredLabel(_marker);
@@ -132,6 +136,7 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
     }
     */
   }
+#undef ws_push
 
   // Second step - Expand each instance in limited range
   {
@@ -144,7 +149,7 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
     for(i = 0; i < contours.size(); i++){
       const cv::Point& pt = contours.at(i).at(0);
       const int& m = _marker.at<int>(pt.y,pt.x);
-      const int thick = 1+2*min_edge_distances[m];
+      const int thick = 1+2*edge_distances[m];
       //cv::drawContours(_marker, contours, i, m, thick);
       cv::drawContours(_fg, contours, i, 1, thick);
     }
@@ -155,21 +160,29 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
         marker[i] = WSHED;
   }
 
+// Counts boundary with edges
+#define ws_check(idx){ \
+  if(k.m[idx]>0){ \
+    if(k.m[idx]!=*k.m) \
+      boundary_counts[std::max(*k.m,k.m[idx])][std::min(*k.m,k.m[idx])]++;\
+  }  \
+  else if(k.m[idx] > WSHED) \
+    q2.push(Node(k.m+idx, k.m, k.expd+idx, k.expd, k.ed+idx) ); \
+  else if(k.m[idx]>IN_QUEUE) \
+    boundary_counts[std::max(*k.m,k.m[idx])][std::min(*k.m,k.m[idx])]++;\
+}
   while(!q2.empty()){
     Node k = q2.top(); q2.pop();
     *k.m = *k.m_parent;
     if( *k.ed < min_d_fromedge){
+      boundary_counts[*k.m][WSHED]++;
       *k.m = WSHED;
       continue;
     }
-    if(k.m[-1] == 0)
-      q2.push(Node(k.m-1, k.m, k.expd-1, k.expd, k.ed-1) );
-    if(k.m[1] == 0)
-      q2.push(Node(k.m+1, k.m, k.expd+1, k.expd, k.ed+1) );
-    if(k.m[-mstep] == 0)
-      q2.push(Node(k.m-mstep, k.m, k.expd-dstep, k.expd, k.ed-dstep) );
-    if(k.m[mstep] == 0)
-      q2.push(Node(k.m+mstep, k.m, k.expd+dstep, k.expd, k.ed+dstep) );
+    ws_check(-1);
+    ws_check(1);
+    ws_check(mstep);
+    ws_check(-mstep);
     /*
     if( (++iter) % 100 == 0){
       cv::Mat dst = GetColoredLabel(_marker);
@@ -179,6 +192,64 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
     }
     */
   }
+#undef ws_check
+
+#if 1
+  const size_t min_merge_boundary = 50; // [TODO Hard coded param
+  {
+    std::vector<int*> convert_list;
+    std::map<int,std::set<int> > _pairs;
+    for(int m0 =0; m0 < n_instance; m0++){
+      const auto& counts = boundary_counts[m0];
+      for(const auto& it : counts){
+        int m1 = it.first;
+        if(m1 < 1)
+          continue;
+        size_t n1 = it.second;
+        if( n1 < min_merge_boundary)
+          continue;
+        _pairs[std::min(m0,m1)].insert(std::max(m0,m1));
+      }
+    }
+    std::vector<int> buf;
+    buf.resize(n_instance);
+    convert_list.resize(n_instance,nullptr); {
+      int* ptr = buf.data();
+      for(i=0; i<buf.size(); i++){
+        buf[i] = i;
+        convert_list[i] = ptr+i;
+      }
+    }
+    for(auto it :_pairs){
+      const int& p1 = it.first;
+      for(const int& p2 : it.second)
+        convert_list[p2] = convert_list[p1];
+    }
+    for(i=0; i <convert_list.size(); i++){
+      int* ptr = convert_list[i];
+      if(*ptr==i)
+        convert_list[i] = nullptr;
+      //std::cout << "cvt " << i << " -> " << *ptr << std::endl;
+    }
+    //cv::imshow("beforemerge", GetColoredLabel(_marker,true));
+    marker = _marker.ptr<int>();
+    for( i = 1; i < size.height-1; i++ ) {
+      marker += mstep;
+      for( j = 1; j < size.width-1; j++ ) {
+        int* m = marker + j;
+        if(*m < 1)
+          continue;
+        const int* ptr = convert_list[*m];
+        if(!ptr)
+          continue;
+        *m = *ptr;
+      }
+    }
+    //cv::imshow("aftermerge", GetColoredLabel(_marker,true));
+    //cv::waitKey();
+  }
+#endif
+
   //writer.release();
   return;
 }
