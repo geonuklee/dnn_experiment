@@ -124,6 +124,31 @@ def ParseMarker(cv_gt, rgb=None):
 
     ## thick outline
     #outline = dist < 3.
+    idx0to1 = {}
+    nidx = 0
+    for pidx, _, _ in planemarker2vertices:
+        nidx += 1
+        idx0to1[pidx] = nidx
+
+    for pidx in np.unique(plane_marker0):
+        if pidx in idx0to1:
+            continue
+        if pidx == 0:
+            continue
+        nidx += 1
+        idx0to1[pidx] = nidx
+
+    tmp_marker0, tmp_plane_marker, tmp_plane_marker0 = \
+            (np.zeros_like(marker0) for i in range(3))
+    for pidx, nidx in idx0to1.items():
+        tmp_marker0[marker0==pidx] = nidx
+        tmp_plane_marker[plane_marker==pidx] = nidx
+        tmp_plane_marker0[plane_marker0==pidx] = nidx
+    marker0, plane_marker, plane_marker0 = tmp_marker0, tmp_plane_marker, tmp_plane_marker0
+
+    for i in range(len(planemarker2vertices)):
+        pidx = planemarker2vertices[i][0]
+        planemarker2vertices[i][0] = idx0to1[pidx]
     
     # Sync correspondence of marker and  plane_marker
     marker = np.zeros_like(marker0)
@@ -131,7 +156,7 @@ def ParseMarker(cv_gt, rgb=None):
     for pidx, _, cp in planemarker2vertices:
         idx = marker0[cp[1],cp[0]]
         marker[marker0==idx] = pidx
-        front_marker[plane_marker0==pidx] = pidx
+        front_marker[plane_marker==pidx] = pidx
 
     ext_range = 10.
     dist, tmp_ext_marker = cv2.distanceTransformWithLabels( (marker==0).astype(np.uint8),
@@ -145,17 +170,19 @@ def ParseMarker(cv_gt, rgb=None):
 
     ext_plane_marker, plane2marker, plane2centers \
             = get_ext_plane(front_marker, ext_marker, plane_marker0, ext_range)
+    #for p, m in plane2marker.items():
+    #    print('%d -> %d' % (p, m) )
 
     verbose=False
     if verbose:
-        cv2.imshow("plane_marker0", GetColoredLabel(plane_marker0))
-        dst = GetColoredLabel(ext_plane_marker)
+        cv2.imshow("plane_marker0", GetColoredLabel(plane_marker0,True))
+        dst = GetColoredLabel(ext_plane_marker,True)
         cv2.imshow("ext_plane", dst)
         #cv2.imshow("outline", 255*outline.astype(np.uint8))
         #cv2.imshow("color_pm0", color_pm0)
-        cv2.imshow("front_marker", GetColoredLabel(front_marker))
-        #cv2.imshow("marker", GetColoredLabel(marker))
-        cv2.imshow("ext_marker", GetColoredLabel(ext_marker))
+        cv2.imshow("front_marker", GetColoredLabel(front_marker,True))
+        #cv2.imshow("marker", GetColoredLabel(marker,True))
+        cv2.imshow("ext_marker", GetColoredLabel(ext_marker,True))
         dst = GetColoredLabel(marker)
         for pidx, arr_oyz, cp in planemarker2vertices:
             pt_org = tuple(arr_oyz[:2].astype(np.int32).tolist())
@@ -165,7 +192,7 @@ def ParseMarker(cv_gt, rgb=None):
         if rgb is not None:
             dst = cv2.addWeighted(dst, 0.4, rgb, 0.6, 0.)
         cv2.imshow("dst", dst)
-        if ord('q') == cv2.waitKey():
+        if ord('q') == cv2.waitKey(0):
             exit(1)
     #return outline, marker, front_marker, planemarker2vertices
     return outline, convex_edges, ext_marker, front_marker,\
