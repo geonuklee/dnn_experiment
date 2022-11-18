@@ -190,7 +190,6 @@ if __name__=="__main__":
 
         if do_eval:
             eval_frame, pred_marker, dst = Evaluate2D(obb_resp, pick['marker'], rgb)
-            cv2.imshow("pred", GetColoredLabel(pred_marker))
             cv2.imshow("dst", dst)
             if ord('q') == cv2.waitKey(1):
                 exit(1)

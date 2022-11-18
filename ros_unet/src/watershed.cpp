@@ -84,6 +84,8 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
       int* m = marker + j;
       float* expd     = expand_distance + j;
       const float* ed = edge_distance   + j;
+      if(*ed <.1)
+        *m = WSHED;
       n_instance = std::max(*m, n_instance);
       if( m[0] != 0)
         continue;
@@ -102,7 +104,19 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
 
   std::vector<int> remain_expand_areas, edge_distances;
   edge_distances.resize(n_instance, 9999);
-  remain_expand_areas.resize(n_instance, 500);
+  remain_expand_areas.resize(n_instance, 100*100);
+  marker = _marker.ptr<int>();
+  for( i = 1; i < size.height-1; i++ ) {
+    marker += mstep;
+    for( j = 1; j < size.width-1; j++ ) {
+      int* m = marker + j;
+      if(*m < 1)
+        continue;
+      int& s = remain_expand_areas[*m];
+      s = std::max(s--, 0);
+    }
+  }
+
   std::vector<std::map<int, size_t> > direct_boundary_counts;
   direct_boundary_counts.resize(n_instance);
   std::vector<std::map<int, size_t> > indirect_boundary_counts;
@@ -142,7 +156,8 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
     min_ed = std::min(min_ed, (int)*k.ed);
 
     int& area = remain_expand_areas[*k.m];
-    if(*k.ed < 20. || area < 1){
+    //if(*k.ed < 20. || area < 1){
+    if(*k.ed < 20.){
       *k.m = IN_QUEUE;
       q2.push(k);
       continue;
@@ -164,7 +179,7 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
       if('q' == cv::waitKey(1))
         exit(1);
       //writer.write(dst);
-    } */
+    }*/
   }
 #undef ws_push
 
@@ -177,11 +192,21 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
     std::vector<cv::Vec4i> hierarchy;
     cv::findContours(_fg,contours,hierarchy,mode,method);
     for(i = 0; i < contours.size(); i++){
+      const std::vector<cv::Point>& contour = contours.at(i);
+#if 1
+      int n_contour = contour.size();
+      for(j=0; j < n_contour; j++){
+        const cv::Point& pt0 = contour.at(j);
+        const cv::Point& pt1 = contour.at((j+1)%n_contour);
+        const int thick = 1+2*_dist_fromedge.at<float>(pt0.y,pt0.x);
+        cv::line(_fg,pt0, pt1, 1, thick);
+      }
+#else
       const cv::Point& pt = contours.at(i).at(0);
       const int& m = _marker.at<int>(pt.y,pt.x);
       const int thick = 1+2*edge_distances[m];
-      //cv::drawContours(_marker, contours, i, m, thick);
       cv::drawContours(_fg, contours, i, 1, thick);
+#endif
     }
     unsigned char* fg = _fg.ptr<unsigned char>();
     marker = _marker.ptr<int>();
@@ -214,14 +239,12 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
       *k.m = IN_QUEUE;
       q3.push( ENode(k.m,k.m_parent,0.) );
     }
-    /*
-    if( (++iter) % 100 == 0){
+    /* if( (++iter) % 100 == 0){
       cv::Mat dst = GetColoredLabel(_marker);
       cv::imshow("ModifiedWatershed2", dst);
       if(cv::waitKey(1) == 'q')
         exit(1);
-    }
-    */
+    } */
   }
 #undef ws_push
 #undef ws_check

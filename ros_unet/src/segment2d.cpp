@@ -601,18 +601,16 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     bg_idx = 2;
 
   seedmap = cv::max(seedmap,0);
-  cv::Mat marker0 = Unify(seedmap);
-  DistanceWatershed(dist_fromoutline, marker0);
-
-  marker = marker0;
+  marker = Unify(seedmap);
+  DistanceWatershed(dist_fromoutline, marker);
   marker = cv::max(marker, 0);
 
   if(verbose){
+    cv::imshow(name_+"marker", GetColoredLabel(marker,true) );
     //cv::imshow(name_+"dist", .01*dist_fromoutline);
     cv::imshow(name_+"outline", outline_edge*255);
     //cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
     cv::imshow(name_+"seed", Overlap(rgb,seedmap) );
-    cv::imshow(name_+"marker0", Overlap(rgb, marker0,true) );
     cv::Mat dst_marker = Overlap(rgb,marker);
     //HighlightBoundary(marker,dst_marker);
     cv::imshow(name_+"final_marker", dst_marker );
