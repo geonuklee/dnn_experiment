@@ -239,12 +239,11 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
             cv2.imshow("frame", dst)
             if ord('q') == cv2.waitKey(1):
                 exit(1)
-            fn = osp.join(screenshot_dir, 'segment_%04d_%s.png'%(nframe, base) )
+            fn = osp.join(screenshot_dir, 'frame_%d_%s_%04d.png'%(i_file,base,nframe) )
             cv2.imwrite(fn, dst)
-
             nframe += 1
             depth_msg, rgb_msg = None, None
-            if nframe >= 5:
+            if nframe >= 20:
                 break
 
         # TODO 통계 처리
@@ -257,7 +256,7 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
         cv2.imshow("scene%d"%i_file, dst)
         if ord('q') == cv2.waitKey(1):
             exit(1)
-        fn = osp.join(screenshot_dir, 'scene%04d.png'%(i_file) )
+        fn = osp.join(screenshot_dir, 'scene_%d_%s.png'%(i_file,base) )
         cv2.imwrite(fn, dst)
 
 

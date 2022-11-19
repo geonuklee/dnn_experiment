@@ -104,7 +104,7 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
 
   std::vector<int> remain_expand_areas, edge_distances;
   edge_distances.resize(n_instance, 9999);
-  remain_expand_areas.resize(n_instance, 100*100);
+  remain_expand_areas.resize(n_instance, 200);
   marker = _marker.ptr<int>();
   for( i = 1; i < size.height-1; i++ ) {
     marker += mstep;
@@ -156,8 +156,7 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
     min_ed = std::min(min_ed, (int)*k.ed);
 
     int& area = remain_expand_areas[*k.m];
-    //if(*k.ed < 20. || area < 1){
-    if(*k.ed < 20.){
+    if(*k.ed < 20. && area < 1){
       *k.m = IN_QUEUE;
       q2.push(k);
       continue;
@@ -193,7 +192,7 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
     cv::findContours(_fg,contours,hierarchy,mode,method);
     for(i = 0; i < contours.size(); i++){
       const std::vector<cv::Point>& contour = contours.at(i);
-#if 1
+#if 0
       int n_contour = contour.size();
       for(j=0; j < n_contour; j++){
         const cv::Point& pt0 = contour.at(j);

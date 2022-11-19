@@ -343,11 +343,22 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
                     continue
                 if intersection/pred_areas[pidx] > .8:
                     overlap_pred.append(pidx)
-            overseg = len(overlap_pred) > 1 and recall < .8
-            #if not overse and len(matches) > 1:
-            #    intersection_others = np.sum(matches['count'][1:])
-            #    if intersection_others > .05*intersection:
-            #        overseg = True
+            # TODO recall대신 gidx boundary중, overlap_pred 로부터 20pixel 이상 떨어진 원소가 있는경우.
+            if len(overlap_pred) > 1:
+                overseg = False
+                gt_mask = gt_marker==gidx
+                for pidx in overlap_pred:
+                    part = pred_marker==pidx
+                    part[0,:] = part[:,0] = part[-1,:] = part[:,-1] = 0
+                    dist_part = cv2.distanceTransform( (~part).astype(np.uint8),
+                            distanceType=cv2.DIST_L2, maskSize=5)
+                    farthest = np.max(dist_part[gt_mask])
+                    if farthest > 20.:
+                        overseg=True
+                        break
+            else:
+                overseg = False
+                
             if overseg:
                 oversegs.add(gidx)
         recalls[gidx] = recall
@@ -371,7 +382,22 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
                     continue
                 if intersection/gt_areas[gidx] > .2:
                     overlap_gt.append(gidx)
-            underseg = len(overlap_gt) > 1 and precision < .8
+            # TODO precision대신 pidx boundary중, overlap_gt로부터 20pixel 이상 떨어진 원소가 있는경우.
+            if len(overlap_gt) > 1:
+                underseg = False
+                pred_mask = pred_marker==pidx
+                for gidx in overlap_gt:
+                    part = gt_marker==gidx
+                    part[0,:] = part[:,0] = part[-1,:] = part[:,-1] = 0
+                    dist_part = cv2.distanceTransform( (~part).astype(np.uint8),
+                            distanceType=cv2.DIST_L2, maskSize=5)
+                    farthest = np.max(dist_part[pred_mask])
+                    if farthest > 20.:
+                        underseg=True
+                        break
+            else:
+                underseg = False
+
             if underseg:
                 for gidx in overlap_gt:
                     undersegs.add(gidx)

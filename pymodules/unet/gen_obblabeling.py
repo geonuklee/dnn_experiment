@@ -79,15 +79,26 @@ def ParseMarker(cv_gt, rgb=None):
 
     dist = cv2.distanceTransform( (~boundary).astype(np.uint8),
             distanceType=cv2.DIST_L2, maskSize=5)
-    n_planesegments, plane_marker0, plane_stats, plane_centroids \
+    n_planesegments, plane_marker0, plane_stats, _ \
             = cv2.connectedComponentsWithStats((dist>1).astype(np.uint8) )
+    plane_centers = {}
+    for pidx in range(1,n_planesegments):
+        part = plane_marker0==pidx
+        part[0,:] = part[:,0] = part[-1,:] = part[:,-1] = 0
+        dist_part = cv2.distanceTransform( (part).astype(np.uint8),
+                distanceType=cv2.DIST_L2, maskSize=5)
+        loc = np.unravel_index( np.argmax(dist_part,axis=None), plane_marker0.shape)
+        plane_centers[pidx] = (loc[1],loc[0])
 
     color_pm0 = GetColoredLabel(plane_marker0)
     plane_marker = plane_marker0.copy()
     vertices = {}
     for element, mask_of_dots in {'o':reddots,'p':bluedots}.items():
-        _,_,_, centroids = cv2.connectedComponentsWithStats(mask_of_dots.astype(np.uint8))
-        for pt in centroids[1:,:]: # 1st row : centroid of 'zero background'
+        _,_,stats,centroids = cv2.connectedComponentsWithStats(mask_of_dots.astype(np.uint8))
+        for pt, stat in zip(centroids, stats):
+            w,h = stat[cv2.CC_STAT_WIDTH],stat[cv2.CC_STAT_HEIGHT]
+            if w==cv_gt.shape[1] or h==cv_gt.shape[0]:
+                continue
             c, r = int(pt[0]), int(pt[1])
             pidx = plane_marker0[r,c]
             if pidx <= 0:
@@ -100,7 +111,7 @@ def ParseMarker(cv_gt, rgb=None):
     planemarker2vertices = []
     for pidx in range(1,n_planesegments): # 0 for edge and background
         valid = False
-        cp = plane_centroids[pidx,:].astype(np.int32)
+        cp = plane_centers[pidx]
         x0,y0,w,h,area = plane_stats[pidx,:]
         if pidx in vertices:
             keys = vertices[pidx].keys()
