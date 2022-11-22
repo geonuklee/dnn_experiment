@@ -179,11 +179,63 @@ def visualize_scene(pick, eval_scene):
     dst = np.hstack((dst,dst_score))
     return dst
 
+def CentroidLocApChart(eval_data, picks, tags):
+    d_array = np.repeat(-1,eval_data.shape)
+    valid = np.repeat(True,eval_data.shape)
+    for base, pick in picks.items():
+        gt_marker = pick['marker']
+        w,h = float(gt_marker.shape[1]), float(gt_marker.shape[0])
+        for gidx in np.unique(gt_marker):
+            if gidx == 0:
+                continue
+            part = gt_marker==gidx
+            part[0,:] = part[:,0] = part[-1,:] = part[:,-1] = 0
+            dist_part = cv2.distanceTransform( part.astype(np.uint8),
+                    distanceType=cv2.DIST_L2, maskSize=5)
+            loc = np.unravel_index( np.argmax(dist_part,axis=None), gt_marker.shape)
+            dist = dist_part[loc]
+            a = min(loc[0], h-loc[0])
+            b = min(loc[1], w-loc[1])
+            d = min( float(a), float(b) )
+            indicies, = np.where(np.logical_and(eval_data['base']==base,eval_data['gidx']==gidx))
+            d_array[indicies] = d
+            if (base,gidx) in tags: # tag = tags[(base,gidx)]
+                valid[indicies] = False
+    assert( (d_array<0).sum() == 0)
+    la = np.logical_and
 
-def perform_test(eval_dir, gt_files, screenshot_dir):
-    if osp.exists(screenshot_dir):
-        shutil.rmtree(screenshot_dir)
-    makedirs(screenshot_dir)
+    min_iou =.5
+    num_bins = 5
+    min_max = (0., 100.)
+    n_hist , bound  = np.histogram(d_array[valid], num_bins,min_max)
+    tp_hist , bound = np.histogram(d_array[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    no_samples = n_hist==0
+    n_hist[no_samples] = 1 # To prevent divide by zero
+    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    n_hist[no_samples] = 0
+    x = np.arange(num_bins)
+    fig = plt.figure(1, figsize=(12,5), dpi=100)
+    ax1 = fig.add_subplot(111)
+
+    ax1.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
+    xlabels = []
+    for i in range(num_bins):
+        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
+        msg += '\nn(instace)=%d'%n_hist[i]
+        xlabels.append(msg)
+    ax1.set_ylabel('AP(IoU > .5)',rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax1.xaxis.set_label_coords(1.05, -0.02)
+    ax1.set_xticks(x)
+    ax1.yaxis.set_label_coords(-0.08, 1.)
+    #ax1.legend(loc='lower right', fontsize=7)
+    plt.show(block=True)
+    return
+
+def perform_test(eval_dir, gt_files,fn_evaldata):
+    #if osp.exists(screenshot_dir):
+    #    shutil.rmtree(screenshot_dir)
+    #makedirs(screenshot_dir)
     rospy.init_node('evaluator', anonymous=True)
     rospy.wait_for_service('~PredictEdge')
     predict_edge = rospy.ServiceProxy('~PredictEdge', ros_unet.srv.ComputeEdge)
@@ -199,6 +251,7 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
     rate = rospy.Rate(hz=50)
     pkg_dir = get_pkg_dir()
 
+    eval_data = None
     for i_file, gt_fn in enumerate(gt_files):
         #print(gt_fn)
         pick = get_pick(gt_fn)
@@ -228,18 +281,16 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
             obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.edge,
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
             t1 = time.time()
+
             #obb_resp.filtered_outline, obb_resp.marker, obb_resp.output
             eval_frame, pred_marker, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
+            # TODO Evaluate3D obb_respoutput.markers <-> {obbs[k]['id']:obbs[k]['pose','scale']}
             for each in eval_frame:
-                eval_scene.append( (base,nframe)+ each)
-            #a = GetColoredLabel(pred_marker)
-            #b = GetColoredLabel(pick['marker'])
-            #pred_gt = cv2.addWeighted(a,.5,b,.5,0.)
-            #cv2.imshow("pred_gt", pred_gt)
+                eval_scene.append( (base,i_file,nframe)+ each)
             cv2.imshow("frame", dst)
             if ord('q') == cv2.waitKey(1):
                 exit(1)
-            fn = osp.join(screenshot_dir, 'frame_%d_%s_%04d.png'%(i_file,base,nframe) )
+            fn = osp.join(eval_dir, 'frame_%d_%s_%04d.png'%(i_file,base,nframe) )
             cv2.imwrite(fn, dst)
             nframe += 1
             depth_msg, rgb_msg = None, None
@@ -247,32 +298,81 @@ def perform_test(eval_dir, gt_files, screenshot_dir):
                 break
 
         # TODO 통계 처리
-        dtype = [('base',object), ('fidx',int),
-                ('gidx',int),
+        dtype = [('base',object),
+                ('sidx',int), # Scene index
+                ('fidx',int), # Frame index
+                ('gidx',int), # Ground truth object index
                 ('iou',float), ('recall',float), ('overseg',bool),('underseg',bool),
-                ('pidx',int), ('precision',float)]
+                ('pidx',int), # Prediction object index
+                ('precision',float)
+                ]
         eval_scene = np.array(eval_scene, dtype)
+        if eval_data is None:
+            eval_data = eval_scene
+        else:
+            eval_data = np.hstack((eval_data,eval_scene) )
         dst = visualize_scene(pick,eval_scene)
         cv2.imshow("scene%d"%i_file, dst)
         if ord('q') == cv2.waitKey(1):
             exit(1)
-        fn = osp.join(screenshot_dir, 'scene_%d_%s.png'%(i_file,base) )
+        fn = osp.join(eval_dir, 'scene_%d_%s.png'%(i_file,base) )
         cv2.imwrite(fn, dst)
 
+    with open(fn_evaldata,'wb') as f: 
+        np.save(f, eval_data)
+
+    return
 
 def test_evaluation():
     pkg_dir = get_pkg_dir()
     eval_dir = osp.join(pkg_dir, 'eval_test0523')
     if not osp.exists(eval_dir):
         makedirs(eval_dir)
-    profile_fn = osp.join(eval_dir, 'profile.pick')
+    fn_evaldata = osp.join(eval_dir,'eval_data.npy')
     usages = ['test0523']
     gt_files = []
     for usage in usages:
         obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
         gt_files += glob2.glob(obbdatasetpath)
+    if not osp.exists(fn_evaldata):
+        perform_test(eval_dir, gt_files, fn_evaldata)
+    else:
+        with open(fn_evaldata,'rb') as f: 
+            eval_data = np.load(f, allow_pickle=True)
+        picks = {}
+        for fn in gt_files:
+            base = osp.splitext( osp.basename(fn) )[0]
+            groups = re.findall("(.*)_(cam0|cam1)", base)[0]
+            base = groups[0]
+            with open(fn,'r') as f:
+                picks[base] = pickle.load(f)
 
-    perform_test(eval_dir, gt_files, osp.join(eval_dir, 'screenshot'))
+    tags = {}
+    tags['eval_test0523/scene_3_helios_test_2022-05-23-15-37-08.png']\
+        = { 8:'tape'}
+    tags['eval_test0523/scene_4_helios_test_2022-05-23-15-37-32.png']\
+        = { 8:'tape'}
+    tags['eval_test0523/scene_5_helios_2022-05-06-20-11-00.png'] = {11:'tape'}
+    tags['eval_test0523/scene_6_helios_test_2022-05-23-15-52-03.png'] = {3:'tape'}
+    tags['eval_test0523/scene_7_helios_scene2_2022-05-23-15-57-05.png']\
+            = {6:'flat box', 9:'tape'}
+    tmp_tags = {}
+    for fn, val in tags.items():
+        fn = osp.splitext( osp.basename(fn) )[0]
+        base = re.findall("scene_\d*_(.*)", fn)[0]
+        for gidx, tag in val.items():
+            tmp_tags[(base,gidx)] = tag
+    tags = tmp_tags
+    CentroidLocApChart(eval_data, picks, tags)
+    '''
+    # TODO
+        * [x] 거리 <-> AP, prob(under seg)
+        * [ ] 기울기 <-> AP
+    * 표면상태와 인식률 
+        * tags 추가후 범주별 AP, prob(over seg) 비교
+    '''
+
+    return
 
 if __name__=="__main__":
     test_evaluation()
