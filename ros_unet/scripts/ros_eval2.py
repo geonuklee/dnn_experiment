@@ -255,73 +255,111 @@ def GetValid(eval_data, picks, tags):
                 valid[indicies] = False
     return valid
 
-def PlotDistanceAp(eval_data, picks, distance, valid, fig, ax1):
-    min_iou = .6
-    num_bins = 5
-    min_max = (0., 100.)
-    n_hist , bound  = np.histogram(margin[valid], num_bins,min_max)
-    tp_hist , bound = np.histogram(margin[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
-    no_samples = n_hist==0
-    n_hist[no_samples] = 1 # To prevent divide by zero
-    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
-    n_hist[no_samples] = 0
-    x = np.arange(num_bins)
-
-def PlotMarginAp(eval_data, picks, margin, valid, fig, ax1, min_iou):
+def PlotMarginAp(eval_data, picks, margin, valid, fig, ax1, min_iou,
+        num_bins=5, min_max=(0., 100.),
+        show_underseg=False, show_overseg=False):
     la = np.logical_and
-    num_bins = 5
-    min_max = (0., 100.)
-    n_hist , bound  = np.histogram(margin[valid], num_bins,min_max)
-    tp_hist , bound = np.histogram(margin[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    n_hist , bound    = np.histogram(margin[valid], num_bins,min_max)
+    tp_hist , _       = np.histogram(margin[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    underseg_hist , _ = np.histogram(margin[la(eval_data['underseg'],valid)], num_bins,min_max)
+    overseg_hist , _  = np.histogram(margin[la(eval_data['overseg'],valid)], num_bins,min_max)
     no_samples = n_hist==0
     n_hist[no_samples] = 1 # To prevent divide by zero
+    nbar= 1
+    if show_underseg:
+        if underseg_hist.sum()==0:
+            show_underseg = False
+        else:
+            nbar+=1
+    if show_overseg:
+        if overseg_hist.sum()==0:
+            show_overseg = False
+        else:
+            nbar+=1
     tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    underseg_hist = underseg_hist.astype(float) / n_hist.astype(float)
+    overseg_hist  = overseg_hist.astype(float) / n_hist.astype(float)
     n_hist[no_samples] = 0
+    width = 1. / float(nbar) - .1
     x = np.arange(num_bins)
-
-    ax1.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
+    offset = float(nbar-1)*width/2.
+    ap_label = 'AP (IoU >%.1f)'%min_iou
+    ax1.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    offset -= width
+    if show_underseg:
+        ax1.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        offset -= width
+    if show_overseg:
+        ax1.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        offset -= width
     xlabels = []
     for i in range(num_bins):
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
         msg += '\nn(instace)=%d'%n_hist[i]
         xlabels.append(msg)
     ax1.set_xlabel('Margin [pixel]',rotation=0, fontsize=7, fontweight='bold')
-    ax1.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=7, fontweight='bold')
     ax1.set_xticklabels(xlabels, rotation=0.,fontsize=7)
     ax1.xaxis.set_label_coords(1.05, -0.02)
     ax1.set_xticks(x)
     ax1.yaxis.set_label_coords(-0.08, 1.)
-    #ax1.legend(loc='lower right', fontsize=7)
-    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    return extent
+    if nbar > 1:
+        ax1.legend(loc='upper left', fontsize=7)
+    else:
+        ax1.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
+    return
 
-def PlotMinwidthAp(eval_data, picks, minwidth, valid, fig, ax1, min_iou):
+def PlotMinwidthAp(eval_data, picks, minwidth, valid, fig, ax1, min_iou,
+        num_bins=9, min_max=(10., 100.),
+        show_underseg=False, show_overseg=False):
     la = np.logical_and
-    num_bins = 9
-    min_max = (10., 100.)
-    n_hist , bound  = np.histogram(minwidth[valid], num_bins,min_max)
-    tp_hist , bound = np.histogram(minwidth[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    n_hist , bound    = np.histogram(minwidth[valid], num_bins,min_max)
+    tp_hist , _       = np.histogram(minwidth[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    underseg_hist , _ = np.histogram(minwidth[la(eval_data['underseg'],valid)], num_bins,min_max)
+    overseg_hist , _  = np.histogram(minwidth[la(eval_data['overseg'],valid)], num_bins,min_max)
     no_samples = n_hist==0
     n_hist[no_samples] = 1 # To prevent divide by zero
+    nbar= 1
+    if show_underseg:
+        if underseg_hist.sum()==0:
+            show_underseg = False
+        else:
+            nbar+=1
+    if show_overseg:
+        if overseg_hist.sum()==0:
+            show_overseg = False
+        else:
+            nbar+=1
     tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    underseg_hist = underseg_hist.astype(float) / n_hist.astype(float)
+    overseg_hist  = overseg_hist.astype(float) / n_hist.astype(float)
     n_hist[no_samples] = 0
+    width = 1. / float(nbar) - .1
     x = np.arange(num_bins)
-
-    ax1.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
+    offset = float(nbar-1)*width/2.
+    ap_label = 'AP (IoU >%.1f)'%min_iou
+    ax1.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    offset -= width
+    if show_underseg:
+        ax1.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        offset -= width
+    if show_overseg:
+        ax1.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        offset -= width
     xlabels = []
     for i in range(num_bins):
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
         msg += '\nn(instace)=%d'%n_hist[i]
         xlabels.append(msg)
     ax1.set_xlabel('Min width [pixel]',rotation=0, fontsize=7, fontweight='bold')
-    ax1.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=7, fontweight='bold')
     ax1.set_xticklabels(xlabels, rotation=0.,fontsize=7)
     ax1.xaxis.set_label_coords(1.05, -0.02)
     ax1.set_xticks(x)
     ax1.yaxis.set_label_coords(-0.08, 1.)
-    #ax1.legend(loc='lower right', fontsize=7)
-    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    return extent
+    if nbar > 1:
+        ax1.legend(loc='upper left', fontsize=7)
+    else:
+        ax1.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
+    return
 
 def PlotIncircleRadius(eval_data, picks, margin, valid, fig, ax1, min_iou):
     la = np.logical_and
@@ -348,51 +386,100 @@ def PlotIncircleRadius(eval_data, picks, margin, valid, fig, ax1, min_iou):
     ax1.set_xticks(x)
     ax1.yaxis.set_label_coords(-0.08, 1.)
     #ax1.legend(loc='lower right', fontsize=7)
-    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    return extent
+    return 
 
 
-def PlotObliqueAp(eval_data, picks, oblique, valid, fig, ax1, min_iou):
+def PlotObliqueAp(eval_data, picks, oblique, valid, fig, ax1, min_iou,
+        num_bins=5, min_max=(0., 50.),
+        show_underseg=False, show_overseg=False):
     la = np.logical_and
-    num_bins = 5
-    min_max = (0., 50.)
     n_hist , bound  = np.histogram(oblique[valid], num_bins,min_max)
-    tp_hist , bound = np.histogram(oblique[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    tp_hist , _       = np.histogram(oblique[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    underseg_hist , _ = np.histogram(oblique[la(eval_data['underseg'],valid)], num_bins,min_max)
+    overseg_hist , _  = np.histogram(oblique[la(eval_data['overseg'],valid)], num_bins,min_max)
     no_samples = n_hist==0
     n_hist[no_samples] = 1 # To prevent divide by zero
+    nbar= 1
+    if show_underseg:
+        if underseg_hist.sum()==0:
+            show_underseg = False
+        else:
+            nbar+=1
+    if show_overseg:
+        if overseg_hist.sum()==0:
+            show_overseg = False
+        else:
+            nbar+=1
     tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    underseg_hist = underseg_hist.astype(float) / n_hist.astype(float)
+    overseg_hist  = overseg_hist.astype(float) / n_hist.astype(float)
     n_hist[no_samples] = 0
+    width = 1. / float(nbar) - .1
     x = np.arange(num_bins)
-
-    ax1.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
+    offset = float(nbar-1)*width/2.
+    ap_label = 'AP (IoU >%.1f)'%min_iou
+    ax1.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    offset -= width
+    if show_underseg:
+        ax1.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        offset -= width
+    if show_overseg:
+        ax1.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        offset -= width
     xlabels = []
     for i in range(num_bins):
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
         msg += '\nn(instace)=%d'%n_hist[i]
         xlabels.append(msg)
     ax1.set_xlabel('Oblique [deg]',rotation=0, fontsize=7, fontweight='bold')
-    ax1.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=7, fontweight='bold')
     ax1.set_xticklabels(xlabels, rotation=0.,fontsize=7)
     ax1.xaxis.set_label_coords(1.05, -0.02)
     ax1.set_xticks(x)
     ax1.yaxis.set_label_coords(-0.08, 1.)
-    #ax1.legend(loc='lower right', fontsize=7)
-    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    return extent
+    if nbar > 1:
+        ax1.legend(loc='upper right', fontsize=7)
+    else:
+        ax1.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
+    return 
 
-def PlotDistanceAp(eval_data, picks, distance, valid, fig, ax1, min_iou):
+def PlotDistanceAp(eval_data, picks, distance, valid, fig, ax1, min_iou,
+        num_bins=4, min_max=(.5, 3.),
+        show_underseg=False, show_overseg=False):
     la = np.logical_and
-    num_bins = 4
-    min_max = (.5, 3.)
-    n_hist , bound  = np.histogram(distance[valid], num_bins,min_max)
-    tp_hist , bound = np.histogram(distance[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    n_hist , bound    = np.histogram(distance[valid], num_bins,min_max)
+    tp_hist , _       = np.histogram(distance[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    underseg_hist , _ = np.histogram(distance[la(eval_data['underseg'],valid)], num_bins,min_max)
+    overseg_hist , _  = np.histogram(distance[la(eval_data['overseg'],valid)], num_bins,min_max)
     no_samples = n_hist==0
     n_hist[no_samples] = 1 # To prevent divide by zero
+    nbar= 1
+    if show_underseg:
+        if underseg_hist.sum()==0:
+            show_underseg = False
+        else:
+            nbar+=1
+    if show_overseg:
+        if overseg_hist.sum()==0:
+            show_overseg = False
+        else:
+            nbar+=1
     tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    underseg_hist = underseg_hist.astype(float) / n_hist.astype(float)
+    overseg_hist  = overseg_hist.astype(float) / n_hist.astype(float)
     n_hist[no_samples] = 0
+    width = 1. / float(nbar) - .1
     x = np.arange(num_bins)
+    offset = float(nbar-1)*width/2.
+    ap_label = 'AP (IoU >%.1f)'%min_iou
+    ax1.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    offset -= width
+    if show_underseg:
+        ax1.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        offset -= width
+    if show_overseg:
+        ax1.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        offset -= width
 
-    ax1.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
     xlabels = []
     for i in range(num_bins):
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
@@ -404,11 +491,11 @@ def PlotDistanceAp(eval_data, picks, distance, valid, fig, ax1, min_iou):
     ax1.xaxis.set_label_coords(1.05, -0.02)
     ax1.set_xticks(x)
     ax1.yaxis.set_label_coords(-0.08, 1.)
-    #ax1.legend(loc='lower right', fontsize=7)
-    #ax1.set_title('Oblique-AP')
-    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    return extent
-
+    if nbar > 1:
+        ax1.legend(loc='upper right', fontsize=7)
+    else:
+        ax1.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
+    return
 
 def perform_test(eval_dir, gt_files,fn_evaldata):
     #if osp.exists(screenshot_dir):
@@ -475,7 +562,6 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
             if nframe >= 20:
                 break
 
-        # TODO 통계 처리
         dtype = [('base',object),
                 ('sidx',int), # Scene index
                 ('fidx',int), # Frame index
@@ -496,10 +582,11 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
         fn = osp.join(eval_dir, 'scene_%d_%s.png'%(i_file,base) )
         cv2.imwrite(fn, dst)
 
+    cv2.destroyAllWindows()
     with open(fn_evaldata,'wb') as f: 
         np.save(f, eval_data)
 
-    return
+    return eval_data
 
 def test_evaluation():
     pkg_dir = get_pkg_dir()
@@ -513,18 +600,17 @@ def test_evaluation():
         obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
         gt_files += glob2.glob(obbdatasetpath)
     if not osp.exists(fn_evaldata):
-        perform_test(eval_dir, gt_files, fn_evaldata)
+        eval_data = perform_test(eval_dir, gt_files, fn_evaldata)
     else:
         with open(fn_evaldata,'rb') as f: 
             eval_data = np.load(f, allow_pickle=True)
-        picks = {}
-        for fn in gt_files:
-            base = osp.splitext( osp.basename(fn) )[0]
-            groups = re.findall("(.*)_(cam0|cam1)", base)[0]
-            base = groups[0]
-            with open(fn,'r') as f:
-                picks[base] = pickle.load(f)
-
+    picks = {}
+    for fn in gt_files:
+        base = osp.splitext( osp.basename(fn) )[0]
+        groups = re.findall("(.*)_(cam0|cam1)", base)[0]
+        base = groups[0]
+        with open(fn,'r') as f:
+            picks[base] = pickle.load(f)
     tags = {}
     tags['eval_test0523/scene_3_helios_test_2022-05-23-15-37-08.png']\
         = { 8:'tape'}
@@ -542,44 +628,112 @@ def test_evaluation():
             tmp_tags[(base,gidx)] = tag
     tags = tmp_tags
     
-    fig = plt.figure(1, figsize=(12,8), dpi=100)
-    N, axes = 4, {}
-    for i in range(N):
-        n = int('%d1%d'%(N,i+1))
-        axes[i] = fig.add_subplot(n)
-    fig.subplots_adjust(wspace=.1, hspace=.4)
-
     la = np.logical_and
     oblique = GetOblique(eval_data, picks)
     margin, minwidth = GetMargin(eval_data, picks)
     distance = GetDistance(eval_data, picks)
     valid   = GetValid(eval_data, picks, tags)
-   
-    extents = Od()
-    extents['margin_ap'] \
-            = PlotMarginAp(eval_data, picks, margin, valid, fig, axes[0], min_iou=.6)
-    extents['oblique_ap'] \
-            = PlotObliqueAp(eval_data, picks, oblique, valid, fig, axes[1], min_iou=.6)
-    extents['distance_ap'] \
-            = PlotDistanceAp(eval_data, picks, distance, valid, fig, axes[2], min_iou=.6)
-    extents['minwidth_ap'] \
-            = PlotMinwidthAp(eval_data, picks, minwidth, valid, fig, axes[3], min_iou=.6)
+    show = True
 
-    for name, extent in extents.items():
-        fig.savefig(osp.join(eval_dir,'%s.png'%name), bbox_inches=extent)
+    N, axes, figs = 4, {}, {}
+    for i in range(N):
+        figs[i] = plt.figure(i+1, figsize=(12,3), dpi=100)
+        axes[i] = figs[i].add_subplot(111)
+        #fig.subplots_adjust(wspace=.1, hspace=.4)
+    PlotMarginAp(eval_data, picks, margin, valid,     figs[0], axes[0], min_iou=.6, show_underseg=show)
+    PlotMinwidthAp(eval_data, picks, minwidth, valid, figs[1], axes[1], min_iou=.6, show_underseg=show)
+    PlotObliqueAp(eval_data, picks, oblique, valid,   figs[2], axes[2], min_iou=.6, show_underseg=show)
+    PlotDistanceAp(eval_data, picks, distance, valid, figs[3], axes[3], min_iou=.6, show_underseg=show)
+
+    figs[0].savefig(osp.join(eval_dir,'test_margin_ap.svg'))
+    figs[1].savefig(osp.join(eval_dir,'test_minwidth_ap.svg'))
+    figs[2].savefig(osp.join(eval_dir,'test_oblique_ap.svg'))
+    figs[3].savefig(osp.join(eval_dir,'test_distance_ap.svg'))
 
     plt.show(block=True)
     '''
     # TODO
         * [x] Margin <-> AP, prob(under seg)
         * [x] 기울기 <-> AP
-        * [ ] 깊이 거리 <-> AP, prob(under seg)
+        * [*] 깊이 거리 <-> AP, prob(under seg)
     * 표면상태와 인식률 
         * tags 추가후 범주별 AP, prob(over seg) 비교
     '''
 
     return
 
+def dist_evaluation():
+    pkg_dir = get_pkg_dir()
+    eval_dir = osp.join(pkg_dir, 'eval_dist')
+    if not osp.exists(eval_dir):
+        makedirs(eval_dir)
+    fn_evaldata = osp.join(eval_dir,'eval_data.npy')
+    usages = ['aligneddist']
+    gt_files = []
+    for usage in usages:
+        obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
+        gt_files += glob2.glob(obbdatasetpath)
+    if not osp.exists(fn_evaldata):
+        eval_data = perform_test(eval_dir, gt_files, fn_evaldata)
+    else:
+        with open(fn_evaldata,'rb') as f: 
+            eval_data = np.load(f, allow_pickle=True)
+    picks = {}
+    for fn in gt_files:
+        base = osp.splitext( osp.basename(fn) )[0]
+        groups = re.findall("(.*)_(cam0|cam1)", base)[0]
+        base = groups[0]
+        with open(fn,'r') as f:
+            picks[base] = pickle.load(f)
+    tags = {}
+    distance = GetDistance(eval_data, picks)
+    margin, minwidth = GetMargin(eval_data, picks)
+    valid    = margin>40.
+    fig = plt.figure(1, figsize=(12,4), dpi=100)
+    ax = fig.add_subplot(111)
+    PlotDistanceAp(eval_data, picks, distance, valid, fig, ax, min_iou=.5,
+            num_bins=5,min_max=(1.,2.5), show_underseg=True, show_overseg=True)
+    fig.savefig(osp.join(eval_dir,'dist_ap.svg') )
+    plt.show(block=True)
+    return
+
+def oblique_evaluation():
+    pkg_dir = get_pkg_dir()
+    eval_dir = osp.join(pkg_dir, 'eval_oblique')
+    if not osp.exists(eval_dir):
+        makedirs(eval_dir)
+    fn_evaldata = osp.join(eval_dir,'eval_data.npy')
+    usages = ['alignedyaw', 'alignedroll']
+    gt_files = []
+    for usage in usages:
+        obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
+        gt_files += glob2.glob(obbdatasetpath)
+    if not osp.exists(fn_evaldata):
+        eval_data = perform_test(eval_dir, gt_files, fn_evaldata)
+    else:
+        with open(fn_evaldata,'rb') as f: 
+            eval_data = np.load(f, allow_pickle=True)
+    picks = {}
+    for fn in gt_files:
+        base = osp.splitext( osp.basename(fn) )[0]
+        groups = re.findall("(.*)_(cam0|cam1)", base)[0]
+        base = groups[0]
+        with open(fn,'r') as f:
+            picks[base] = pickle.load(f)
+    tags = {}
+    margin, minwidth = GetMargin(eval_data, picks)
+    oblique = GetOblique(eval_data, picks)
+    valid   = margin>40.
+    fig = plt.figure(1, figsize=(12,4), dpi=100)
+    ax = fig.add_subplot(111)
+    PlotObliqueAp(eval_data,picks,oblique,valid,fig,ax,min_iou=.5, show_underseg=True)
+    plt.show(block=True)
+    fig.savefig(osp.join(eval_dir,'oblique_ap.svg'))
+    return
+
 if __name__=="__main__":
-    test_evaluation()
+    #test_evaluation()
+    #dist_evaluation()
+    oblique_evaluation()
+
     print("#######Evaluation is finished########")
