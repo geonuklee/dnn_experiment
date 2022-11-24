@@ -16,6 +16,7 @@ import geometry_msgs
 import cv2
 from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as rotation_util
+from collections import OrderedDict as Od
 
 from evaluator import get_pkg_dir, get_pick
 from ros_client import *
@@ -179,43 +180,104 @@ def visualize_scene(pick, eval_scene):
     dst = np.hstack((dst,dst_score))
     return dst
 
-def CentroidLocApChart(eval_data, picks, tags):
-    d_array = np.repeat(-1,eval_data.shape)
-    valid = np.repeat(True,eval_data.shape)
+def GetOblique(eval_data, picks):
+    oblique_array = np.repeat(-1.,eval_data.shape)
+    depthvec = np.array((0.,0.,1.))
+    for base, pick in picks.items():
+        obbs = {}
+        for each in pick['obbs']:
+            obbs[each['id']] = each
+        gt_marker = pick['marker']
+        w,h = float(gt_marker.shape[1]), float(gt_marker.shape[0])
+        for gidx in np.unique(gt_marker):
+            if gidx == 0:
+                continue
+            indicies, = np.where(np.logical_and(eval_data['base']==base,eval_data['gidx']==gidx))
+            t_cb = obbs[gidx]['pose'][:3]
+            qw,qx,qy,qz = obbs[gidx]['pose'][3:] # w,x,y,z
+            rot_cb = rotation_util.from_quat([qx, qy, qz, qw])
+            nvec = rot_cb.as_dcm()[:,0]
+            deg = np.rad2deg(np.arccos(-nvec.dot(depthvec)))
+            oblique_array[indicies] = deg
+    assert( (oblique_array<0).sum() == 0)
+    return oblique_array
+
+def GetDistance(eval_data, picks):
+    distance_array = np.repeat(-1.,eval_data.shape)
+    for base, pick in picks.items():
+        obbs = {}
+        for each in pick['obbs']:
+            obbs[each['id']] = each
+        gt_marker = pick['marker']
+        w,h = float(gt_marker.shape[1]), float(gt_marker.shape[0])
+        for gidx in np.unique(gt_marker):
+            if gidx == 0:
+                continue
+            indicies, = np.where(np.logical_and(eval_data['base']==base,eval_data['gidx']==gidx))
+            t_cb = obbs[gidx]['pose'][:3]
+            distance_array[indicies] = np.linalg.norm(t_cb)
+            #distance_array[indicies] = t_cb[2]
+    assert( (distance_array<0).sum() == 0)
+    return distance_array 
+
+def GetMargin(eval_data, picks):
+    margin_array = np.repeat(-1,eval_data.shape)
+    minwidth_array = np.repeat(-1,eval_data.shape)
     for base, pick in picks.items():
         gt_marker = pick['marker']
         w,h = float(gt_marker.shape[1]), float(gt_marker.shape[0])
         for gidx in np.unique(gt_marker):
             if gidx == 0:
                 continue
+            indicies, = np.where(np.logical_and(eval_data['base']==base,eval_data['gidx']==gidx))
             part = gt_marker==gidx
             part[0,:] = part[:,0] = part[-1,:] = part[:,-1] = 0
             dist_part = cv2.distanceTransform( part.astype(np.uint8),
                     distanceType=cv2.DIST_L2, maskSize=5)
             loc = np.unravel_index( np.argmax(dist_part,axis=None), gt_marker.shape)
-            dist = dist_part[loc]
             a = min(loc[0], h-loc[0])
             b = min(loc[1], w-loc[1])
             d = min( float(a), float(b) )
+            margin_array[indicies] = d
+            minwidth_array[indicies] = dist_part[loc]
+    assert( (margin_array<0).sum() == 0)
+    return margin_array, minwidth_array
+
+def GetValid(eval_data, picks, tags):
+    valid = np.repeat(True,eval_data.shape)
+    for base, pick in picks.items():
+        gt_marker = pick['marker']
+        for gidx in np.unique(gt_marker):
+            if gidx == 0:
+                continue
             indicies, = np.where(np.logical_and(eval_data['base']==base,eval_data['gidx']==gidx))
-            d_array[indicies] = d
             if (base,gidx) in tags: # tag = tags[(base,gidx)]
                 valid[indicies] = False
-    assert( (d_array<0).sum() == 0)
-    la = np.logical_and
+    return valid
 
-    min_iou =.5
+def PlotDistanceAp(eval_data, picks, distance, valid, fig, ax1):
+    min_iou = .6
     num_bins = 5
     min_max = (0., 100.)
-    n_hist , bound  = np.histogram(d_array[valid], num_bins,min_max)
-    tp_hist , bound = np.histogram(d_array[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    n_hist , bound  = np.histogram(margin[valid], num_bins,min_max)
+    tp_hist , bound = np.histogram(margin[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
     no_samples = n_hist==0
     n_hist[no_samples] = 1 # To prevent divide by zero
     tp_hist = tp_hist.astype(float) / n_hist.astype(float)
     n_hist[no_samples] = 0
     x = np.arange(num_bins)
-    fig = plt.figure(1, figsize=(12,5), dpi=100)
-    ax1 = fig.add_subplot(111)
+
+def PlotMarginAp(eval_data, picks, margin, valid, fig, ax1, min_iou):
+    la = np.logical_and
+    num_bins = 5
+    min_max = (0., 100.)
+    n_hist , bound  = np.histogram(margin[valid], num_bins,min_max)
+    tp_hist , bound = np.histogram(margin[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    no_samples = n_hist==0
+    n_hist[no_samples] = 1 # To prevent divide by zero
+    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    n_hist[no_samples] = 0
+    x = np.arange(num_bins)
 
     ax1.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
     xlabels = []
@@ -223,14 +285,130 @@ def CentroidLocApChart(eval_data, picks, tags):
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
         msg += '\nn(instace)=%d'%n_hist[i]
         xlabels.append(msg)
-    ax1.set_ylabel('AP(IoU > .5)',rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_xlabel('Margin [pixel]',rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=7, fontweight='bold')
     ax1.set_xticklabels(xlabels, rotation=0.,fontsize=7)
     ax1.xaxis.set_label_coords(1.05, -0.02)
     ax1.set_xticks(x)
     ax1.yaxis.set_label_coords(-0.08, 1.)
     #ax1.legend(loc='lower right', fontsize=7)
-    plt.show(block=True)
-    return
+    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    return extent
+
+def PlotMinwidthAp(eval_data, picks, minwidth, valid, fig, ax1, min_iou):
+    la = np.logical_and
+    num_bins = 9
+    min_max = (10., 100.)
+    n_hist , bound  = np.histogram(minwidth[valid], num_bins,min_max)
+    tp_hist , bound = np.histogram(minwidth[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    no_samples = n_hist==0
+    n_hist[no_samples] = 1 # To prevent divide by zero
+    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    n_hist[no_samples] = 0
+    x = np.arange(num_bins)
+
+    ax1.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
+    xlabels = []
+    for i in range(num_bins):
+        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
+        msg += '\nn(instace)=%d'%n_hist[i]
+        xlabels.append(msg)
+    ax1.set_xlabel('Min width [pixel]',rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax1.xaxis.set_label_coords(1.05, -0.02)
+    ax1.set_xticks(x)
+    ax1.yaxis.set_label_coords(-0.08, 1.)
+    #ax1.legend(loc='lower right', fontsize=7)
+    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    return extent
+
+def PlotIncircleRadius(eval_data, picks, margin, valid, fig, ax1, min_iou):
+    la = np.logical_and
+    num_bins = 5
+    min_max = (0., 100.)
+    n_hist , bound  = np.histogram(margin[valid], num_bins,min_max)
+    tp_hist , bound = np.histogram(margin[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    no_samples = n_hist==0
+    n_hist[no_samples] = 1 # To prevent divide by zero
+    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    n_hist[no_samples] = 0
+    x = np.arange(num_bins)
+
+    ax1.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
+    xlabels = []
+    for i in range(num_bins):
+        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
+        msg += '\nn(instace)=%d'%n_hist[i]
+        xlabels.append(msg)
+    ax1.set_xlabel('Margin [pixel]',rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax1.xaxis.set_label_coords(1.05, -0.02)
+    ax1.set_xticks(x)
+    ax1.yaxis.set_label_coords(-0.08, 1.)
+    #ax1.legend(loc='lower right', fontsize=7)
+    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    return extent
+
+
+def PlotObliqueAp(eval_data, picks, oblique, valid, fig, ax1, min_iou):
+    la = np.logical_and
+    num_bins = 5
+    min_max = (0., 50.)
+    n_hist , bound  = np.histogram(oblique[valid], num_bins,min_max)
+    tp_hist , bound = np.histogram(oblique[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    no_samples = n_hist==0
+    n_hist[no_samples] = 1 # To prevent divide by zero
+    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    n_hist[no_samples] = 0
+    x = np.arange(num_bins)
+
+    ax1.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
+    xlabels = []
+    for i in range(num_bins):
+        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
+        msg += '\nn(instace)=%d'%n_hist[i]
+        xlabels.append(msg)
+    ax1.set_xlabel('Oblique [deg]',rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax1.xaxis.set_label_coords(1.05, -0.02)
+    ax1.set_xticks(x)
+    ax1.yaxis.set_label_coords(-0.08, 1.)
+    #ax1.legend(loc='lower right', fontsize=7)
+    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    return extent
+
+def PlotDistanceAp(eval_data, picks, distance, valid, fig, ax1, min_iou):
+    la = np.logical_and
+    num_bins = 4
+    min_max = (.5, 3.)
+    n_hist , bound  = np.histogram(distance[valid], num_bins,min_max)
+    tp_hist , bound = np.histogram(distance[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    no_samples = n_hist==0
+    n_hist[no_samples] = 1 # To prevent divide by zero
+    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    n_hist[no_samples] = 0
+    x = np.arange(num_bins)
+
+    ax1.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
+    xlabels = []
+    for i in range(num_bins):
+        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
+        msg += '\nn(instace)=%d'%n_hist[i]
+        xlabels.append(msg)
+    ax1.set_xlabel('Distance [m]',rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=7, fontweight='bold')
+    ax1.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax1.xaxis.set_label_coords(1.05, -0.02)
+    ax1.set_xticks(x)
+    ax1.yaxis.set_label_coords(-0.08, 1.)
+    #ax1.legend(loc='lower right', fontsize=7)
+    #ax1.set_title('Oblique-AP')
+    extent = ax1.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    return extent
+
 
 def perform_test(eval_dir, gt_files,fn_evaldata):
     #if osp.exists(screenshot_dir):
@@ -363,11 +541,39 @@ def test_evaluation():
         for gidx, tag in val.items():
             tmp_tags[(base,gidx)] = tag
     tags = tmp_tags
-    CentroidLocApChart(eval_data, picks, tags)
+    
+    fig = plt.figure(1, figsize=(12,8), dpi=100)
+    N, axes = 4, {}
+    for i in range(N):
+        n = int('%d1%d'%(N,i+1))
+        axes[i] = fig.add_subplot(n)
+    fig.subplots_adjust(wspace=.1, hspace=.4)
+
+    la = np.logical_and
+    oblique = GetOblique(eval_data, picks)
+    margin, minwidth = GetMargin(eval_data, picks)
+    distance = GetDistance(eval_data, picks)
+    valid   = GetValid(eval_data, picks, tags)
+   
+    extents = Od()
+    extents['margin_ap'] \
+            = PlotMarginAp(eval_data, picks, margin, valid, fig, axes[0], min_iou=.6)
+    extents['oblique_ap'] \
+            = PlotObliqueAp(eval_data, picks, oblique, valid, fig, axes[1], min_iou=.6)
+    extents['distance_ap'] \
+            = PlotDistanceAp(eval_data, picks, distance, valid, fig, axes[2], min_iou=.6)
+    extents['minwidth_ap'] \
+            = PlotMinwidthAp(eval_data, picks, minwidth, valid, fig, axes[3], min_iou=.6)
+
+    for name, extent in extents.items():
+        fig.savefig(osp.join(eval_dir,'%s.png'%name), bbox_inches=extent)
+
+    plt.show(block=True)
     '''
     # TODO
-        * [x] 거리 <-> AP, prob(under seg)
-        * [ ] 기울기 <-> AP
+        * [x] Margin <-> AP, prob(under seg)
+        * [x] 기울기 <-> AP
+        * [ ] 깊이 거리 <-> AP, prob(under seg)
     * 표면상태와 인식률 
         * tags 추가후 범주별 AP, prob(over seg) 비교
     '''
