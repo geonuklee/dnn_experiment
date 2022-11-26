@@ -6,7 +6,8 @@
 #include <opencv2/opencv.hpp> // TODO Remove after debugging.
 #include "utils.h"
 
-void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
+void DistanceWatershed(const cv::Mat _dist_fromedge,
+                       cv::Mat& _marker){
   const int IN_QUEUE = -2; // Pixel visited
   const int WSHED = -1;    // Pixel belongs to watershed
   const cv::Size size = _marker.size();
@@ -290,7 +291,7 @@ void DistanceWatershed(const cv::Mat _dist_fromedge, cv::Mat& _marker){
     }
 
     //cv::imshow("ext_marker", GetColoredLabel(_marker,true));
-    _marker = marker0;
+    //_marker = marker0;
   }
 #undef ws_push
 

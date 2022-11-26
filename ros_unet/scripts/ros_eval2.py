@@ -567,7 +567,6 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
     #if osp.exists(screenshot_dir):
     #    shutil.rmtree(screenshot_dir)
     #makedirs(screenshot_dir)
-    rospy.init_node('evaluator', anonymous=True)
     rospy.wait_for_service('~PredictEdge')
     predict_edge = rospy.ServiceProxy('~PredictEdge', ros_unet.srv.ComputeEdge)
     rospy.wait_for_service('~SetCamera')
@@ -719,18 +718,6 @@ def test_evaluation():
 
     fig = plt.figure(figsize=(4,3), dpi=100)
     PlotTagAp(eval_data, tags, fig, min_iou=.6, show_overseg=True, show_underseg=True)
-
-    # TODO tape set과 normal set 사이의 AP, Over-seg 비교 
-    plt.show(block=True)
-    '''
-    # TODO
-        * [x] Margin <-> AP, prob(under seg)
-        * [x] 기울기 <-> AP
-        * [*] 깊이 거리 <-> AP, prob(under seg)
-    * 표면상태와 인식률 
-        * tags 추가후 범주별 AP, prob(over seg) 비교
-    '''
-
     return
 
 def dist_evaluation():
@@ -765,7 +752,6 @@ def dist_evaluation():
     PlotDistanceAp(eval_data, picks, distance, valid, fig, ax, min_iou=.5,
             num_bins=5,min_max=(1.,2.5), show_underseg=True, show_overseg=True)
     fig.savefig(osp.join(eval_dir,'dist_ap.svg') )
-    plt.show(block=True)
     return
 
 def oblique_evaluation():
@@ -798,13 +784,19 @@ def oblique_evaluation():
     fig = plt.figure(1, figsize=(12,4), dpi=100)
     ax = fig.add_subplot(111)
     PlotObliqueAp(eval_data,picks,oblique,valid,fig,ax,min_iou=.5, show_underseg=True)
-    plt.show(block=True)
     fig.savefig(osp.join(eval_dir,'oblique_ap.svg'))
     return
 
 if __name__=="__main__":
-    test_evaluation()
-    #dist_evaluation()
-    #oblique_evaluation()
+    rospy.init_node('ros_eval', anonymous=True)
+    target = rospy.get_param('~target')
+    show = int(rospy.get_param('~show'))
+    if target=='test':
+        test_evaluation()
+    elif target=='dist':
+        dist_evaluation()
+    elif target=='oblique':
+        oblique_evaluation()
 
-    print("#######Evaluation is finished########")
+    if show:
+        plt.show(block=True)
