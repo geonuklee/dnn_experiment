@@ -5,6 +5,8 @@
 <arg name="sensor_model" default="helios"/>
 <arg name="voxel_leaf" value="0.01" />
 <arg name="rviz_name" default="unet.rviz"/>
+<arg name="target" default="test"/>
+<arg name="show" default="1"/>
 
 <arg name="weight_file" value="$(find ros_unet)/weights_big/iternet_9000.pth"/>
 <!--arg name="weight_file" value="$(find ros_unet)/iternet_0_backup.pth"/-->
@@ -34,6 +36,10 @@
     <remap from="~ComputeObb"  to="/pipeline/ComputeObb" />
     <remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
     <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" />
+    <rosparam subst_value="True">
+      target: "$(arg target)"
+      show: "$(arg show)"
+    </rosparam>
 </node>
 
 <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>

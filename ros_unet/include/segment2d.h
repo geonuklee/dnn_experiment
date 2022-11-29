@@ -101,7 +101,11 @@ cv::Mat GetDiscontinuousDepthEdge(const cv::Mat& depth, float threshold_depth);
 cv::Mat FilterOutlineEdges(const cv::Mat outline, bool verbose);
 
 void DistanceWatershed(const cv::Mat dist_fromedge,
-                       cv::Mat& markers);
+                       cv::Mat& markers,
+                       cv::Mat& vis_arealimitedflood,
+                       cv::Mat& vis_rangelimitedflood,
+                       cv::Mat& vis_onedgesflood
+                       );
 
 // No extension over maker==-1, Limit expand range
 void ModifiedWatershed(cv::InputArray _src, cv::InputOutputArray _markers);

@@ -7,7 +7,12 @@
 #include "utils.h"
 
 void DistanceWatershed(const cv::Mat _dist_fromedge,
-                       cv::Mat& _marker){
+                       cv::Mat& _marker,
+                       cv::Mat& vis_arealimitedflood,
+                       cv::Mat& vis_rangelimitedflood,
+                       cv::Mat& vis_onedgesflood
+                       ){
+
   const int IN_QUEUE = -2; // Pixel visited
   const int WSHED = -1;    // Pixel belongs to watershed
   const cv::Size size = _marker.size();
@@ -103,8 +108,7 @@ void DistanceWatershed(const cv::Mat _dist_fromedge,
   }
   n_instance += 1;
 
-  std::vector<int> remain_expand_areas, edge_distances;
-  edge_distances.resize(n_instance, 9999);
+  std::vector<int> remain_expand_areas;
   remain_expand_areas.resize(n_instance, 200);
   marker = _marker.ptr<int>();
   for( i = 1; i < size.height-1; i++ ) {
@@ -153,8 +157,6 @@ void DistanceWatershed(const cv::Mat _dist_fromedge,
     ws_check(1);
     ws_check(-mstep);
     ws_check(mstep);
-    int& min_ed = edge_distances[*k.m];
-    min_ed = std::min(min_ed, (int)*k.ed);
 
     int& area = remain_expand_areas[*k.m];
     if(*k.ed < 20. && area < 1){
@@ -183,6 +185,45 @@ void DistanceWatershed(const cv::Mat _dist_fromedge,
   }
 #undef ws_push
 
+  if(!vis_arealimitedflood.empty()){
+    cv::Mat fg = _marker > 0;
+    const int mode   = cv::RETR_EXTERNAL;
+    const int method = cv::CHAIN_APPROX_SIMPLE;
+    std::vector<std::vector<cv::Point> > contours;
+    std::vector<cv::Vec4i> hierarchy;
+    cv::findContours(fg,contours,hierarchy,mode,method);
+    for(i = 0; i < contours.size(); i++){
+      const std::vector<cv::Point>& contour = contours.at(i);
+      float ed = 99999.;
+      for(const cv::Point& ipt : contours.at(i))
+        ed = std::min(ed, _dist_fromedge.at<float>(ipt.y,ipt.x) );
+      const cv::Point& pt = contours.at(i).at(0);
+      const int& m = _marker.at<int>(pt.y,pt.x);
+      const int thick = 1+2*ed;
+      cv::drawContours(fg, contours, i, 1, thick);
+    }
+    cv::findContours(fg,contours,hierarchy,mode,method);
+
+    for(int r=0; r<_marker.rows; r++){
+      for(int c=0; c<_marker.cols; c++){
+        const int& m = _marker.at<int>(r,c);
+        cv::Vec3b& ca = vis_arealimitedflood.at<cv::Vec3b>(r,c);
+        if(m < 1){
+          if(fg.at<uchar>(r,c) >0){
+            ca[0] = ca[1] = ca[2] = 100;
+          }
+          continue;
+        }
+        //if(ca[0] != 255 || ca[1] != 255 || ca[2] != 255)
+        //  continue;
+        const auto& co = colors.at(m%colors.size());
+        ca[0] = co[0]; ca[1] = co[1]; ca[2] = co[2];
+      }
+    }
+    //for(i = 0; i < contours.size(); i++)
+    //  cv::drawContours(vis_arealimitedflood, contours, i, CV_RGB(0,0,0), 2);
+  }
+
   // Second step - Expand each instance in limited range
   {
     cv::Mat _fg = _marker > 0;
@@ -202,9 +243,12 @@ void DistanceWatershed(const cv::Mat _dist_fromedge,
         cv::line(_fg,pt0, pt1, 1, thick);
       }
 #else
+      float ed = 99999.;
+      for(const cv::Point& ipt : contours.at(i))
+        ed = std::min(ed, _dist_fromedge.at<float>(ipt.y,ipt.x) );
       const cv::Point& pt = contours.at(i).at(0);
       const int& m = _marker.at<int>(pt.y,pt.x);
-      const int thick = 1+2*edge_distances[m];
+      const int thick = 1+2*ed;
       cv::drawContours(_fg, contours, i, 1, thick);
 #endif
     }
@@ -248,6 +292,26 @@ void DistanceWatershed(const cv::Mat _dist_fromedge,
   }
 #undef ws_push
 #undef ws_check
+
+  if(!vis_rangelimitedflood.empty()){
+    //vis_rangelimitedflood = GetColoredLabel(_marker);
+    for(int r=0; r<_marker.rows; r++){
+      for(int c=0; c<_marker.cols; c++){
+        const int& m = _marker.at<int>(r,c);
+        auto& vr = vis_rangelimitedflood.at<cv::Vec3b>(r,c);
+        if(m > 0){
+          const auto& co = colors.at(m%colors.size());
+          vr[0] = co[0]; vr[1] = co[1]; vr[2] = co[2];
+          continue;
+        }
+        if(_dist_fromedge.at<float>(r,c) < 2.){
+          vr[0] = vr[1] = 0; vr[2] = 255;
+        }
+        else
+          vr[0] = vr[1] = vr[2] = 255;
+      }
+    }
+  }
 
 #define ws_check(idx){ \
   if(k.m[idx]>0){ \
@@ -294,7 +358,22 @@ void DistanceWatershed(const cv::Mat _dist_fromedge,
     //_marker = marker0;
   }
 #undef ws_push
-
+  if(!vis_onedgesflood.empty()){
+    //vis_onedgesflood = GetColoredLabel(_marker);
+    for(int r=0; r<_marker.rows; r++){
+      for(int c=0; c<_marker.cols; c++){
+        auto& ce = vis_onedgesflood.at<cv::Vec3b>(r,c);
+        int& m = _marker.at<int>(r,c);
+        if(m > 0){
+          const auto& co = colors.at(m%colors.size());
+          ce[0] = co[0]; ce[1] = co[1]; ce[2] = co[2];
+        }
+        else{
+          ce[0] = ce[1] = ce[2] = 255;
+        }
+      }
+    }
+  }
 
   int n_merge = 0;
   {  // Need fix with bug

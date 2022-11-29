@@ -102,8 +102,11 @@ public:
     std::map<int,int> ins2cls;
     segment2d->Process(rgb, depth, instance_marker, convex_edge, ins2cls, verbose);
 
-    if(verbose)
-      cv::waitKey(1);
+    if(verbose){
+      char c = cv::waitKey(0);
+      if(c == 'q')
+        exit(1);
+    }
 
     std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr> segmented_clouds, boundary_clouds;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb(new pcl::PointCloud<pcl::PointXYZRGB>());

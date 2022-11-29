@@ -6,22 +6,16 @@
 #include <string>
 
 std::vector<cv::Scalar> colors = {
-  CV_RGB(0,255,0),
   CV_RGB(0,180,0),
   CV_RGB(0,100,0),
   CV_RGB(255,0,255),
   CV_RGB(100,0,255),
-  CV_RGB(255,0,100),
   CV_RGB(100,0,100),
-  CV_RGB(0,0,255),
   CV_RGB(0,0,180),
   CV_RGB(0,0,100),
   CV_RGB(255,255,0),
   CV_RGB(100,255,0),
-  CV_RGB(255,100,0),
   CV_RGB(100,100,0),
-  CV_RGB(255,0,0),
-  CV_RGB(180,0,0),
   CV_RGB(100,0,0),
   CV_RGB(0,255,255),
   CV_RGB(0,100,255),
@@ -119,8 +113,8 @@ cv::Mat GetColoredLabel(cv::Mat mask, bool put_text){
       cv::Scalar bgr;
       if( idx == 0)
         bgr = CV_RGB(100,100,100);
-      else if (idx == 1)
-        bgr = CV_RGB(255,255,255);
+      //else if (idx == 1)
+      //  bgr = CV_RGB(255,255,255);
       else
         bgr = colors.at( idx % colors.size() );
 

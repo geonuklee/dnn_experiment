@@ -446,6 +446,8 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   std::map<int,float> seed_areas;
   std::map<int,int> seed_levels;
   std::map<int,int> seed_dists;
+    
+  std::vector<std::vector<cv::Point> > vis_contours;
   {
     int idx = 1; // Assign 1 for edge. Ref) utils.cpp, GetColoredLabel
     for(int lv = 0; lv < n; lv++){
@@ -457,6 +459,13 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       std::vector<std::vector<cv::Point> > contours;
       std::vector<cv::Vec4i> hierarchy;
       cv::findContours(local_seed, contours, hierarchy, mode, method);
+      if(verbose){
+        if(lv%3==0){
+          vis_contours.reserve(vis_contours.size()+contours.size());
+          for(const auto& cnt : contours)
+            vis_contours.push_back(cnt);
+        }
+      }
       int n_insertion=0;
       for(size_t j=0; j < contours.size(); j++){
         const std::vector<cv::Point>& cnt = contours.at(j);
@@ -602,34 +611,145 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
 
   seedmap = cv::max(seedmap,0);
   marker = Unify(seedmap);
-  DistanceWatershed(dist_fromoutline, marker);
+
+  cv::Mat vis_arealimitedflood, vis_rangelimitedflood, vis_onedgesflood;
+  cv::Mat vis_heightmap, vis_seed;
+  if(verbose){
+    vis_arealimitedflood  = cv::Mat::zeros(depth.rows,depth.cols, CV_8UC3);
+    vis_rangelimitedflood = cv::Mat::zeros(depth.rows,depth.cols, CV_8UC3);
+    vis_onedgesflood      = cv::Mat::zeros(depth.rows,depth.cols, CV_8UC3);
+    cv::normalize(-dist_fromoutline, vis_heightmap, 255, 0, cv::NORM_MINMAX, CV_8UC1);
+    cv::cvtColor(vis_heightmap,vis_heightmap, CV_GRAY2BGR);
+    for(int r=0; r<vis_heightmap.rows; r++){
+      for(int c=0; c<vis_heightmap.cols; c++){
+        if(outline_edge.at<unsigned char>(r,c) <1)
+          continue;
+        vis_heightmap.at<cv::Vec3b>(r,c)[0] 
+          = vis_heightmap.at<cv::Vec3b>(r,c)[1] = 0;
+      }
+    }
+    cv::Mat fg = marker > 0;
+    const int mode   = cv::RETR_EXTERNAL;
+    const int method = cv::CHAIN_APPROX_SIMPLE;
+    std::vector<std::vector<cv::Point> > contours;
+    std::vector<cv::Vec4i> hierarchy;
+    cv::findContours(fg,contours,hierarchy,mode,method);
+    for(int i = 0; i < contours.size(); i++){
+      const std::vector<cv::Point>& contour = contours.at(i);
+      float min_ed = 99999.;
+      for(const cv::Point& pt :  contours.at(i) ){
+        const float& ed = dist_fromoutline.at<float>(pt.y,pt.x);
+        min_ed = std::min(min_ed, ed);
+      }
+      const int thick = 1+2*min_ed;
+      cv::drawContours(fg, contours, i, 1, thick);
+    }
+
+    vis_seed = cv::Mat::zeros(depth.rows,depth.cols, CV_8UC3);
+    cv::Mat weights = cv::Mat::zeros(depth.rows,depth.cols, CV_32F);
+    for(int i = 0; i < vis_contours.size(); i++){
+      const std::vector<cv::Point>& contour = vis_contours.at(i);
+      const auto pt = contour.at(0);
+      float w = float(vis_heightmap.at<cv::Vec3b>(pt.y, pt.x)[0]) / 255.;
+      w = std::min<float>(1.,w);
+      w = std::max<float>(0.,w);
+      cv::drawContours(weights, vis_contours, i, w, -1);
+    }
+
+    for(int r=0; r<marker.rows; r++){
+      for(int c=0; c<marker.cols; c++){
+        auto& cs = vis_seed.at<cv::Vec3b>(r,c);
+        auto& ca = vis_arealimitedflood.at<cv::Vec3b>(r,c);
+        auto& w = weights.at<float>(r,c);
+        const int& m = marker.at<int>(r,c);
+        if(m > 0){
+          cs[0] = w * colors.at(m%colors.size())[0];
+          cs[1] = w * colors.at(m%colors.size())[1];
+          cs[2] = w * colors.at(m%colors.size())[2];
+          ca[0] = .5 * colors.at(m%colors.size())[0];
+          ca[1] = .5 * colors.at(m%colors.size())[1];
+          ca[2] = .5 * colors.at(m%colors.size())[2];
+          //ca[0] = ca[1] = ca[2] = 0;
+          continue;
+        }
+        else
+          ca[0] = ca[1] = ca[2] = 255;
+        const float& ed = dist_fromoutline.at<float>(r,c);
+        if(ed > 0){
+          if(fg.at<uchar>(r,c) > 0)
+            cs[0] = cs[1] = cs[2] = 100;
+          else
+            cs[0] = cs[1] = cs[2] = 255;
+          continue;
+        }
+        else{
+          // ca[0] = ca[1] = 0; ca[2] = 255; // Draw edges as red later.
+          vis_seed.at<cv::Vec3b>(r,c)[2] = 255;
+          vis_seed.at<cv::Vec3b>(r,c)[0] = vis_seed.at<cv::Vec3b>(r,c)[1] = 0;
+        }
+      }
+    }
+    for(int i = 0; i < vis_contours.size(); i++){
+      const std::vector<cv::Point>& contour = vis_contours.at(i);
+      const auto pt = contour.at(0);
+      uchar w = 255. * weights.at<float>(pt.y,pt.x);
+      //cv::drawContours(vis_seed, vis_contours, i, CV_RGB(w,w,w), 1);
+    }
+
+  } // if(verbose)
+  DistanceWatershed(dist_fromoutline, marker,
+                    vis_arealimitedflood,
+                    vis_rangelimitedflood,
+                    vis_onedgesflood);
   marker = cv::max(marker, 0);
 
   if(verbose){
-    cv::imshow(name_+"marker", GetColoredLabel(marker,true) );
-    //cv::imshow(name_+"dist", .01*dist_fromoutline);
-    cv::imshow(name_+"outline", outline_edge*255);
-    //cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
-    cv::imshow(name_+"seed", Overlap(rgb,seedmap) );
-    cv::Mat dst_marker = Overlap(rgb,marker);
-    //HighlightBoundary(marker,dst_marker);
-    cv::imshow(name_+"final_marker", dst_marker );
-    //cv::imshow(name_+"overlaped", dst );
-    // cv::imshow(name_+"groove", 255*groove );
-    //cv::flip(dst,dst,0);
-    //cv::flip(dst,dst,1);
-    //cv::imshow(name_+"dst", dst);
+    {
+      cv::Mat fg = seedmap > 0;
+      const int mode   = cv::RETR_EXTERNAL;
+      const int method = cv::CHAIN_APPROX_SIMPLE;
+      std::vector<std::vector<cv::Point> > contours;
+      std::vector<cv::Vec4i> hierarchy;
+      cv::findContours(fg,contours,hierarchy,mode,method);
+      for(int i = 0; i < contours.size(); i++)
+        cv::drawContours(vis_arealimitedflood, contours, i, CV_RGB(0,0,0), 2);
+      for(int r=0; r<marker.rows; r++){
+        for(int c=0; c<marker.cols; c++){
+          auto& ca = vis_arealimitedflood.at<cv::Vec3b>(r,c);
+          if(outline_edge.at<uchar>(r,c) < 1)
+            continue;
+          ca[0] = ca[1] = 0; ca[2] = 255;
+        }
+      }
+    }
 
-    cv::Mat norm_depth, norm_dist;
-    cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
-    cv::normalize(dist_fromoutline, norm_dist, 0, 255, cv::NORM_MINMAX, CV_8UC1);
-    cv::imwrite(name_+"depth.png", norm_depth);
-    cv::imwrite(name_+"rgb.png", rgb);
-    cv::imwrite(name_+"outline_edge.png", 255*outline_edge);
-    cv::imwrite(name_+"dist.png", dist_fromoutline);
-    cv::imwrite(name_+"norm_dist.png", norm_dist);
-    cv::imwrite(name_+"seed_contour.png", GetColoredLabel(seed_contours));
-    cv::imwrite(name_+"seed.png", GetColoredLabel(seedmap));
+    //cv::imshow(name_+"marker", GetColoredLabel(marker,true) );
+    //cv::imshow(name_+"outline", outline_edge*255);
+    //cv::imshow(name_+"seed contour", GetColoredLabel(seed_contours));
+    //cv::imshow(name_+"seed", Overlap(rgb,seedmap) );
+    //cv::Mat dst_marker = Overlap(rgb,marker);
+    //cv::imshow(name_+"final_marker", dst_marker );
+
+    cv::imshow("vis_heightmap", vis_heightmap);
+    cv::imwrite("vis_heightmap.png", vis_heightmap);
+
+    cv::imshow("vis_seed", vis_seed);
+    cv::imwrite("vis_seed.png", vis_seed);
+
+    cv::imshow("vis_arealimitedflood", vis_arealimitedflood);
+    cv::imwrite("vis_arealimitedflood.png", vis_arealimitedflood);
+
+    cv::imshow("vis_rangelimitedflood", vis_rangelimitedflood);
+    cv::imwrite("vis_rangelimitedflood.png", vis_rangelimitedflood);
+    cv::imshow("vis_onedgesflood", vis_onedgesflood);
+    cv::imwrite("vis_onedgesflood.png", vis_onedgesflood);
+
+    //cv::Mat norm_depth, norm_dist;
+    //cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
+    //cv::imwrite(name_+"depth.png", norm_depth);
+    //cv::imwrite(name_+"rgb.png", rgb);
+    //cv::imwrite(name_+"heightmap.png", vis_heightmap);
+    //cv::imwrite(name_+"seed.png", GetColoredLabel(seedmap));
     //cv::imwrite(name_+"marker.png", GetColoredLabel(marker));
   }
   return true;
