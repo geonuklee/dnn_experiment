@@ -167,7 +167,7 @@ public:
       pub_filteredoutline.at(cam_id).publish(msg.toImageMsg());
     }
     if(pub_vis_mask_.at(cam_id).getNumSubscribers() > 0) {
-      cv::Mat dst = Overlap(rgb, instance_marker);
+      cv::Mat dst = Overlap(rgb, instance_marker,.5);
       cv_bridge::CvImage msg;
       msg.encoding = sensor_msgs::image_encodings::TYPE_8UC3;
       msg.image    = dst;

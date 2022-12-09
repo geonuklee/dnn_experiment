@@ -18,7 +18,8 @@ from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as rotation_util
 from collections import OrderedDict as Od
 
-from evaluator import get_pkg_dir, get_pick
+from myadjust_text import myadjust_text
+from evaluator import get_pkg_dir, get_pick, GetMarkerCenters
 from ros_client import *
 from unet.gen_obblabeling import GetInitFloorMask
 from os import makedirs
@@ -454,6 +455,97 @@ def PlotObliqueAp(eval_data, picks, oblique, valid, fig, ax, min_iou,
         ax.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
     return 
 
+def PlotEachScens(eval_data, picks, eval_dir):
+    min_iou = .6
+    bbox=dict(boxstyle="square", ec=(0., 1., 0., 0.), fc=(1., 1., 1.,.8) )
+
+    for scene_idx, (base, pick) in enumerate(picks.items()):
+        fig = plt.figure(figsize=(10,6), dpi=100)
+        plt.subplots_adjust(wspace=0, hspace=0)
+        ax = fig.add_subplot(111)
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.set_xticks([]) 
+        ax.set_yticks([]) 
+        plt.axis('off')
+        valid = eval_data['base']==base
+        scene_data = eval_data[valid]
+        rgb, gt_marker = pick['rgb'], pick['marker']
+        dst = np.zeros_like(rgb)
+        gt_indices = np.unique(gt_marker)
+        headers = ('AP', '','')
+        scores = {}
+        for gidx in gt_indices:
+            if gidx==0:
+                continue
+            data = scene_data[scene_data['gidx']==gidx]
+            n = len(data)
+            n_underseg = data['underseg'].sum()
+            n_overseg = data['overseg'].sum()
+            n_ap = (data['iou']> min_iou).sum()
+            prob_underseg = float(n_underseg) / float(n)
+            prob_overseg  = float(n_overseg) / float(n)
+            ap = float(n_ap) / float(n)
+            scores[gidx] = (ap, prob_overseg, prob_underseg)
+            part = gt_marker == gidx
+            if n_overseg > 0:
+                dst[part,0] = 255
+            if n_underseg > 0:
+                dst[part,-1] = 255
+            if not prob_overseg and not prob_underseg:
+                if ap < 1.:
+                    dst[part,1] = 255
+                else:
+                    dst[part,:] = rgb[part,:]
+
+        boundary = GetBoundary(gt_marker, 2)
+        dst_rgb = rgb.copy()
+        dst_rgb[boundary>0,:] = dst[boundary>0,:] = 0
+        dst = cv2.addWeighted(dst_rgb, .3, dst, .7, 0.)
+        height, width = dst.shape[:2]
+        height, width = float(height), float(width)
+        ax.imshow(cv2.cvtColor(dst, cv2.COLOR_BGR2RGB), extent = [0,1,0,1],
+                    aspect=height/width )
+        r = 0.
+        ax.set_xlim(-r,1.+r)
+        ax.set_ylim(-r,1.+r)
+        centers = GetMarkerCenters(gt_marker)
+        objs = []
+        texts = []
+        for gidx, cp in centers.items():
+            (ap, prob_overseg, prob_underseg) = scores[gidx]
+            #msg = '\n#%d'%(gidx)
+            msg = ''
+            if ap < 1. :
+                msg += '\nAP: %.2f'%ap
+            if prob_overseg > 0. :
+                msg += '\np(Over): %.2f'%prob_overseg
+            if prob_underseg > 0.:
+                msg += '\np(Under): %.2f'%prob_underseg
+            if len(msg) == 0:
+                continue
+            msg = msg[1:]
+            txt = ax.text(float(cp[0])/width, 1.-float(cp[1])/height, msg, fontsize=15, bbox=bbox,
+                    ha='left', va='center')
+            texts.append(txt)
+        myadjust_text(texts,
+                only_move={'points':'xy', 'text':'xy', 'objects':'xy'},
+                ha='center',va='center',
+                autoalign=True,
+                precision = .001,
+                expand_text = (1.4,1.4),
+                expand_points = (1.4,1.4),
+                force_text = (.4, .4), force_points=(.4,.4),
+                text_from_text=True,
+                text_from_points=False,
+                on_basemap = False,
+                arrowprops=dict(arrowstyle="->", color=(1.,1.,0.), lw=2.),
+                lim=1000
+                )
+        fig.savefig(osp.join(eval_dir,'scene%d.svg'%(scene_idx+1) ),
+                bbox_inches='tight', transparent=True, pad_inches=0)
+    return
+
 def PlotTagAp(eval_data, tags, fig, min_iou, show_underseg=False, show_overseg=False):
     la = np.logical_and
     def f_have(arr, word):
@@ -700,24 +792,24 @@ def test_evaluation():
     tags   = GetTags(eval_data, picks, tags)
     show = True
 
-    N, axes, figs = 4, {}, {}
-    for i in range(N):
-        figs[i] = plt.figure(i+1, figsize=(12,3), dpi=100)
-        axes[i] = figs[i].add_subplot(111)
-        #fig.subplots_adjust(wspace=.1, hspace=.4)
-    valid = tags==''
-    PlotMarginAp(  eval_data, picks, margin,  valid, figs[0], axes[0], min_iou=.6, show_underseg=show)
-    PlotMinwidthAp(eval_data, picks, minwidth,valid, figs[1], axes[1], min_iou=.6, show_underseg=show)
-    PlotObliqueAp( eval_data, picks, oblique, valid, figs[2], axes[2], min_iou=.6, show_underseg=show)
-    PlotDistanceAp(eval_data, picks, distance,valid, figs[3], axes[3], min_iou=.6, show_underseg=show)
-
-    figs[0].savefig(osp.join(eval_dir,'test_margin_ap.svg'))
-    figs[1].savefig(osp.join(eval_dir,'test_minwidth_ap.svg'))
-    figs[2].savefig(osp.join(eval_dir,'test_oblique_ap.svg'))
-    figs[3].savefig(osp.join(eval_dir,'test_distance_ap.svg'))
-
-    fig = plt.figure(figsize=(4,3), dpi=100)
-    PlotTagAp(eval_data, tags, fig, min_iou=.6, show_overseg=True, show_underseg=True)
+    if False:
+        N, axes, figs = 4, {}, {}
+        for i in range(N):
+            figs[i] = plt.figure(i+1, figsize=(12,3), dpi=100)
+            axes[i] = figs[i].add_subplot(111)
+            #fig.subplots_adjust(wspace=.1, hspace=.4)
+        valid = tags==''
+        PlotMarginAp(  eval_data, picks, margin,  valid, figs[0], axes[0], min_iou=.6, show_underseg=show)
+        PlotMinwidthAp(eval_data, picks, minwidth,valid, figs[1], axes[1], min_iou=.6, show_underseg=show)
+        PlotObliqueAp( eval_data, picks, oblique, valid, figs[2], axes[2], min_iou=.6, show_underseg=show)
+        PlotDistanceAp(eval_data, picks, distance,valid, figs[3], axes[3], min_iou=.6, show_underseg=show)
+        figs[0].savefig(osp.join(eval_dir,'test_margin_ap.svg'))
+        figs[1].savefig(osp.join(eval_dir,'test_minwidth_ap.svg'))
+        figs[2].savefig(osp.join(eval_dir,'test_oblique_ap.svg'))
+        figs[3].savefig(osp.join(eval_dir,'test_distance_ap.svg'))
+        fig = plt.figure(figsize=(4,3), dpi=100)
+        PlotTagAp(eval_data, tags, fig, min_iou=.6, show_overseg=True, show_underseg=True)
+    PlotEachScens(eval_data, picks, eval_dir)
     return
 
 def dist_evaluation():

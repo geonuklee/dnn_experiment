@@ -159,7 +159,8 @@ void DistanceWatershed(const cv::Mat _dist_fromedge,
     ws_check(mstep);
 
     int& area = remain_expand_areas[*k.m];
-    if(*k.ed < 20. && area < 1){
+    //if(*k.ed < 20. && area < 1){
+    if(area < 1){
       *k.m = IN_QUEUE;
       q2.push(k);
       continue;

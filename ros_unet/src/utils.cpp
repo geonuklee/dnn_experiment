@@ -30,7 +30,7 @@ uint64_t GetMilliSec(){
   return tm;
 }
 
-cv::Mat Overlap(cv::Mat bg, cv::Mat mask, bool put_text) {
+cv::Mat Overlap(cv::Mat bg, cv::Mat mask, float alpha, bool put_text) {
   cv::Mat colored_bg;
   if(bg.channels() > 1)
     colored_bg = bg;
@@ -44,7 +44,7 @@ cv::Mat Overlap(cv::Mat bg, cv::Mat mask, bool put_text) {
     colored_mask = GetColoredLabel(mask, put_text);
   HighlightBoundary(mask,colored_mask);
   cv::Mat dst;
-  cv::addWeighted(bg, 0.5, colored_mask, 0.5, 0., dst);
+  cv::addWeighted(bg, alpha, colored_mask, 1.-alpha, 0., dst);
   return dst;
 }
 

@@ -59,6 +59,7 @@ def GetCenter(marker):
     return centers
 
 def GetMarkerCenters(given_marker):
+    centers0 = GetCenter(given_marker)
     marker = given_marker.copy()
     marker[:,0] = 0
     marker[:,-1] = 0
@@ -74,7 +75,15 @@ def GetMarkerCenters(given_marker):
                 distanceType=cv2.DIST_L2, maskSize=5)
 
         loc = np.unravel_index( np.argmax(dist_part,axis=None), marker.shape)
-        centers[marker_id] = (loc[1],loc[0])
+        cp = (loc[1],loc[0])
+        if marker_id in centers0:
+            cp0 = centers0[marker_id]
+            d0 = dist_part[cp0[1],cp0[0]]
+            d1 = dist_part[loc]
+            #import pdb; pdb.set_trace()
+            if d0 > .5 * d1:
+                cp = cp0
+        centers[marker_id] = cp
 
     #dst = GetColoredLabel(marker)
     #for marker_id, cp in centers.items():

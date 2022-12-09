@@ -436,7 +436,9 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   int bg_idx = -1;
   const int mode   = cv::RETR_TREE; // RETR_CCOMP -> RETR_EXTERNAL
   const int method = cv::CHAIN_APPROX_SIMPLE;
-  double dth = depth.cols * 0.006;
+  double dth = 4.; 
+  //if(verbose)
+  //  dth = 8.; // For readability of figure
   int n = 100./dth; // max level should be limitted.
   //int n = 1;
   float min_width = 10.;
@@ -447,7 +449,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
   std::map<int,int> seed_levels;
   std::map<int,int> seed_dists;
     
-  std::vector<std::vector<cv::Point> > vis_contours;
+  std::vector<std::vector<cv::Point> > vis_contours, vis_invalid_contours;
   {
     int idx = 1; // Assign 1 for edge. Ref) utils.cpp, GetColoredLabel
     for(int lv = 0; lv < n; lv++){
@@ -459,13 +461,6 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       std::vector<std::vector<cv::Point> > contours;
       std::vector<cv::Vec4i> hierarchy;
       cv::findContours(local_seed, contours, hierarchy, mode, method);
-      if(verbose){
-        if(lv%3==0){
-          vis_contours.reserve(vis_contours.size()+contours.size());
-          for(const auto& cnt : contours)
-            vis_contours.push_back(cnt);
-        }
-      }
       int n_insertion=0;
       for(size_t j=0; j < contours.size(); j++){
         const std::vector<cv::Point>& cnt = contours.at(j);
@@ -474,11 +469,15 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
           continue;
         const int& x = cnt.at(0).x;
         const int& y = cnt.at(0).y;
-        const int& exist_idx = seedmap.at<int>(y,x);
+        const int exist_idx = seedmap.at<int>(y,x);
         const cv::RotatedRect ar = cv::minAreaRect(cnt);
-        if(std::min(ar.size.width,ar.size.height) < min_width)
+        if(std::min(ar.size.width,ar.size.height) < min_width){
+          if(verbose)
+            vis_invalid_contours.push_back(cnt);
           continue;
+        }
         idx += 1;
+        assert(exist_idx!=idx);
         n_insertion++;
         seed_childs[exist_idx].insert(idx);
         seed_parents[idx] = exist_idx;
@@ -489,6 +488,8 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
         std::vector<std::vector<cv::Point> > cnts = { cnt, };
         cv::drawContours(seedmap, cnts, 0, idx,-1);
         seed_childs[idx];
+        if(verbose)
+          vis_contours.push_back(cnt);
       }
       if(n_insertion < 1)
         break;
@@ -692,8 +693,12 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     for(int i = 0; i < vis_contours.size(); i++){
       const std::vector<cv::Point>& contour = vis_contours.at(i);
       const auto pt = contour.at(0);
-      uchar w = 255. * weights.at<float>(pt.y,pt.x);
-      //cv::drawContours(vis_seed, vis_contours, i, CV_RGB(w,w,w), 1);
+      //uchar w = 255. * weights.at<float>(pt.y,pt.x);
+      uchar w = 200;
+      cv::drawContours(vis_seed, vis_contours, i, CV_RGB(w,w,w), 1);
+    }
+    for(int i = 0; i < vis_invalid_contours.size(); i++){
+      cv::drawContours(vis_seed, vis_invalid_contours, i, CV_RGB(0,0,0), 1);
     }
 
   } // if(verbose)
@@ -729,6 +734,19 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     //cv::imshow(name_+"seed", Overlap(rgb,seedmap) );
     //cv::Mat dst_marker = Overlap(rgb,marker);
     //cv::imshow(name_+"final_marker", dst_marker );
+    {
+      cv::Mat dst = rgb.clone();
+      for(int r=0; r<dst.rows; r++){
+        for(int c=0; c<dst.cols; c++){
+          auto& cd = dst.at<cv::Vec3b>(r,c);
+          if(outline_edge.at<uchar>(r,c) < 1)
+            continue;
+          cd[0] = cd[1] = 0; cd[2] = 255;
+        }
+      }
+      cv::imshow("vis_rgb",      dst );
+      cv::imwrite("vis_rgb.png", dst );
+    }
 
     cv::imshow("vis_heightmap", vis_heightmap);
     cv::imwrite("vis_heightmap.png", vis_heightmap);
@@ -744,6 +762,7 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
     cv::imshow("vis_onedgesflood", vis_onedgesflood);
     cv::imwrite("vis_onedgesflood.png", vis_onedgesflood);
 
+    cv::imshow("after merge", GetColoredLabel(marker));
     //cv::Mat norm_depth, norm_dist;
     //cv::normalize(depth, norm_depth, 0, 255, cv::NORM_MINMAX, CV_8UC1);
     //cv::imwrite(name_+"depth.png", norm_depth);
