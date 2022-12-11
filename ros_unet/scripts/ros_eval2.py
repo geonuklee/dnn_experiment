@@ -19,20 +19,29 @@ from scipy.spatial.transform import Rotation as rotation_util
 from collections import OrderedDict as Od
 
 from myadjust_text import myadjust_text
+from adjustText import adjust_text
 from evaluator import get_pkg_dir, get_pick, GetMarkerCenters
 from ros_client import *
 from unet.gen_obblabeling import GetInitFloorMask
 from os import makedirs
 import matplotlib.pyplot as plt
+from matplotlib.transforms import Bbox
+from matplotlib.ticker import MultipleLocator
+
 import pyautogui
 import shutil
 from unet.util import GetColoredLabel, Evaluate2D
 from unet_ext import GetBoundary
 
-FIG_SIZE = (12,4)
+DPI = 90
+FIG_SIZE = (10,12)
+FIG_SUBPLOT_ADJUST = {'wspace':.5, 'hspace':1.5} # 'top':FIG_TOP
+N_SUB = 5
 FIG_TOP  = .95
-FONT_SIZE = 10
-DPI = 100
+FONT_SIZE = 14
+NSAMPLE='n(Sample)'
+XLABEL_COORD = {'x':1.05, 'y':-0.08}
+LEGNED_ARGS={'fontsize':FONT_SIZE, 'bbox_to_anchor':(0.5, 1.3),'loc':'center'}
 
 def get_topicnames(bagfn, bag, given_camid='cam0'):
     depth = '/%s/helios2/depth/image_raw'%given_camid
@@ -273,7 +282,21 @@ def GetTags(eval_data, picks, tags):
     #            valid[indicies] = False
     #return valid
 
-def PlotMarginAp(eval_data, picks, margin, valid, fig, ax, min_iou,
+def LabelHeight(ax, rects):
+    texts = []
+    for rect in rects:
+        value = rect.get_height()
+        y = value
+        va = 'bottom'
+        if value > .75:
+            y -= .1
+            va = 'top'
+        txt = ax.text(rect.get_x()+.5*rect.get_width(), y, '%.2f'%value,
+                fontsize=FONT_SIZE, ha='center', va=va) #, bbox=dict(boxstyle='square,pad=.3'))
+        texts.append(txt)
+    return
+
+def PlotMarginAp(eval_data, picks, margin, valid, ax, min_iou,
         num_bins=5, min_max=(0., 100.),
         show_underseg=False, show_overseg=False):
     la = np.logical_and
@@ -302,31 +325,44 @@ def PlotMarginAp(eval_data, picks, margin, valid, fig, ax, min_iou,
     x = np.arange(num_bins)
     offset = float(nbar-1)*width/2.
     ap_label = 'AP (IoU >%.1f)'%min_iou
-    ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    LabelHeight(ax, rects)
     offset -= width
+    ncol = 1
     if show_underseg:
-        ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        LabelHeight(ax, rects)
         offset -= width
+        ncol += 1
     if show_overseg:
-        ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        LabelHeight(ax, rects)
         offset -= width
+        ncol += 1
     xlabels = []
     for i in range(num_bins):
-        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
-        msg += '\nn(instace)=%d'%n_hist[i]
+        msg = '%.f~%.f'%(bound[i],bound[i+1])
+        msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('Margin [pixel]',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('[pixel],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.xaxis.set_label_coords(1.05, -0.02)
+    ax.tick_params(axis='y', labelsize=FONT_SIZE)
+    ax.xaxis.set_label_coords(**XLABEL_COORD)
     ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
+
     if nbar > 1:
-        ax.legend(loc='upper left', fontsize=FONT_SIZE)
+        ax.legend(ncol=ncol,**LEGNED_ARGS)
     else:
         ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+
+    #import pdb; pdb.set_trace()
+    #fig = ax.get_figure()
+    #extent = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+    #ext2 = ax.xaxis.label.get_window_extent()
     return
 
-def PlotMinwidthAp(eval_data, picks, minwidth, valid, fig, ax, min_iou,
+def PlotMinwidthAp(eval_data, picks, minwidth, valid, ax, min_iou,
         num_bins=9, min_max=(10., 100.),
         show_underseg=False, show_overseg=False):
     la = np.logical_and
@@ -355,26 +391,33 @@ def PlotMinwidthAp(eval_data, picks, minwidth, valid, fig, ax, min_iou,
     x = np.arange(num_bins)
     offset = float(nbar-1)*width/2.
     ap_label = 'AP (IoU >%.1f)'%min_iou
-    ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    LabelHeight(ax, rects)
     offset -= width
+    ncol = 1
     if show_underseg:
-        ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        LabelHeight(ax, rects)
         offset -= width
+        ncol += 1
     if show_overseg:
-        ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        LabelHeight(ax, rects)
         offset -= width
+        ncol += 1
     xlabels = []
     for i in range(num_bins):
-        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
-        msg += '\nn(instace)=%d'%n_hist[i]
+        msg = '%.f~%.f'%(bound[i],bound[i+1])
+        msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('Min width [pixel]',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('[pixel],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.xaxis.set_label_coords(1.05, -0.02)
+    ax.tick_params(axis='y', labelsize=FONT_SIZE)
+    ax.xaxis.set_label_coords(**XLABEL_COORD)
     ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     if nbar > 1:
-        ax.legend(loc='upper left', fontsize=FONT_SIZE)
+        ax.legend(ncol=ncol,**LEGNED_ARGS)
     else:
         ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     return
@@ -391,23 +434,24 @@ def PlotIncircleRadius(eval_data, picks, margin, valid, fig, ax, min_iou):
     n_hist[no_samples] = 0
     x = np.arange(num_bins)
 
-    ax.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
+    rects = ax.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
+    LabelHeight(ax, rects)
     xlabels = []
     for i in range(num_bins):
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
-        msg += '\nn(instace)=%d'%n_hist[i]
+        msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('Margin [pixel]',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('[pixel],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.xaxis.set_label_coords(1.05, -0.02)
+    ax.tick_params(axis='y', labelsize=FONT_SIZE)
+    ax.xaxis.set_label_coords(**XLABEL_COORD)
     ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
-    #ax.legend(loc='lower right', fontsize=7)
     return 
 
 
-def PlotObliqueAp(eval_data, picks, oblique, valid, fig, ax, min_iou,
+def PlotObliqueAp(eval_data, picks, oblique, valid, ax, min_iou,
         num_bins=5, min_max=(0., 50.),
         show_underseg=False, show_overseg=False):
     la = np.logical_and
@@ -436,26 +480,33 @@ def PlotObliqueAp(eval_data, picks, oblique, valid, fig, ax, min_iou,
     x = np.arange(num_bins)
     offset = float(nbar-1)*width/2.
     ap_label = 'AP (IoU >%.1f)'%min_iou
-    ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    LabelHeight(ax, rects)
     offset -= width
+    ncol = 1
     if show_underseg:
-        ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        LabelHeight(ax, rects)
         offset -= width
+        ncol += 1
     if show_overseg:
-        ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        LabelHeight(ax, rects)
         offset -= width
+        ncol += 1
     xlabels = []
     for i in range(num_bins):
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
-        msg += '\nn(instace)=%d'%n_hist[i]
+        msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('Oblique [deg]',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('[deg],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.xaxis.set_label_coords(1.05, -0.02)
+    ax.tick_params(axis='y', labelsize=FONT_SIZE)
+    ax.xaxis.set_label_coords(**XLABEL_COORD)
     ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     if nbar > 1:
-        ax.legend(loc='upper right', fontsize=FONT_SIZE)
+        ax.legend(ncol=ncol,**LEGNED_ARGS)
     else:
         ax.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
     return 
@@ -560,7 +611,7 @@ def PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection'):
                 bbox_inches='tight', transparent=True, pad_inches=0)
     return
 
-def PlotTagAp(eval_data, tags, fig, min_iou, show_underseg=False, show_overseg=False):
+def PlotTagAp(eval_data, tags, ax, min_iou, show_underseg=False, show_overseg=False):
     la = np.logical_and
     def f_have(arr, word):
         return word in arr.split(';')
@@ -573,7 +624,6 @@ def PlotTagAp(eval_data, tags, fig, min_iou, show_underseg=False, show_overseg=F
         nbar+=1
     width = 1. / float(nbar) - .1
     offset = float(nbar-1)*width/2.
-    ax = fig.add_subplot(111)
 
     params = Od()
     params['AP (IoU >%.1f)'%min_iou] = eval_data['iou']>min_iou
@@ -586,27 +636,30 @@ def PlotTagAp(eval_data, tags, fig, min_iou, show_underseg=False, show_overseg=F
         case_nhist = Od()
         valid = tags==''
         nsample = valid.sum()
-        case_nhist['No specifics\nn(instance)=%d'%nsample]\
+        case_nhist['No specifics\n%d'%nsample]\
                 = float( la(inliers, valid).sum() ) / float(nsample)
 
         valid = have(tags,'tape')
         nsample = valid.sum()
-        case_nhist['With tape\nn(instance)=%d'%nsample]\
+        case_nhist['With tape\n%d'%nsample]\
                 = float( la(inliers, valid).sum() ) / float(nsample)
         x = np.array(range(len(case_nhist))).astype(float) - offset
         rects = ax.bar(x,width=width,height=case_nhist.values(), alpha=.5, label=name)
-        for rect in rects:
-            height = rect.get_height()
-            ax.text(rect.get_x()+.5*rect.get_width(), height,
-                '%.2f'%height, ha='center', va='bottom')
+        LabelHeight(ax, rects)
+        #for rect in rects:
+        #    height = rect.get_height()
+        #    ax.text(rect.get_x()+.5*rect.get_width(), height,
+        #        '%.2f'%height, ha='center', va='bottom')
         offset -= width
 
+    ax.set_xlabel('Case,\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.set_xticklabels(case_nhist.keys(), rotation=0.,fontsize=FONT_SIZE)
+    ax.tick_params(axis='y', labelsize=FONT_SIZE)
     ax.set_xticks(range(len(case_nhist)))
-    plt.tight_layout(rect=(.1, 0.,.95,.95)) # left,bottom,right,top
+    #plt.tight_layout(rect=(.1, 0.,.95,.95)) # left,bottom,right,top
     plt.xticks(fontsize=FONT_SIZE)
     plt.yticks(fontsize=FONT_SIZE)
-    ax.legend(loc='best', fontsize=FONT_SIZE)
+    ax.legend(ncol=3,**LEGNED_ARGS)
 
     #ax.set_ylabel('[-]'%min_iou,rotation=0, fontweight='bold')
     ax.set_ylim(0.,1.)
@@ -614,7 +667,7 @@ def PlotTagAp(eval_data, tags, fig, min_iou, show_underseg=False, show_overseg=F
     ax.yaxis.set_label_coords(-0.08, 1.05)
     return
 
-def PlotDistanceAp(eval_data, picks, distance, valid, fig, ax, min_iou,
+def PlotDistanceAp(eval_data, picks, distance, valid, ax, min_iou,
         num_bins=4, min_max=(.5, 3.),
         show_underseg=False, show_overseg=False):
     la = np.logical_and
@@ -643,28 +696,34 @@ def PlotDistanceAp(eval_data, picks, distance, valid, fig, ax, min_iou,
     x = np.arange(num_bins)
     offset = float(nbar-1)*width/2.
     ap_label = 'AP (IoU >%.1f)'%min_iou
-    ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
+    LabelHeight(ax, rects)
     offset -= width
+    ncol = 1
     if show_underseg:
-        ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        LabelHeight(ax, rects)
         offset -= width
+        ncol += 1
     if show_overseg:
-        ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        LabelHeight(ax, rects)
         offset -= width
+        ncol += 1
 
     xlabels = []
     for i in range(num_bins):
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
-        msg += '\nn(instace)=%d'%n_hist[i]
+        msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('Distance [m]',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
-    ax.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('[m],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.xaxis.set_label_coords(1.05, -0.02)
+    ax.tick_params(axis='y', labelsize=FONT_SIZE)
+    ax.xaxis.set_label_coords(**XLABEL_COORD)
     ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     if nbar > 1:
-        ax.legend(loc='upper right', fontsize=FONT_SIZE)
+        ax.legend(ncol=ncol,**LEGNED_ARGS)
     else:
         ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     return
@@ -759,6 +818,28 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
 
     return eval_data
 
+def full_extent(ax, pad=0.0):
+    """
+        Get the full extent of an axes, including axes labels, tick labels, and
+        titles.
+    https://stackoverflow.com/questions/4325733/save-a-subplot-in-matplotlib
+     -> https://stackoverflow.com/a/26432947
+    """
+    # For text objects, we need to draw the figure first, otherwise the extents
+    # are undefined.
+    ax.figure.canvas.draw()
+    items = []
+    items += ax.get_xticklabels()
+    #items += ax.get_yticklabels()
+    #items.append(ax)
+    items.append(ax.xaxis.label)
+    items.append(ax.yaxis.label)
+    items.append(ax.get_legend())
+    fig = ax.get_figure()
+    bbox = Bbox.union([item.get_window_extent().transformed(fig.dpi_scale_trans.inverted()) \
+            for item in items])
+    return bbox.expanded(1.0 + pad, 1.0 + pad)
+
 def test_evaluation():
     pkg_dir = get_pkg_dir()
     eval_dir = osp.join(pkg_dir, 'eval_test0523')
@@ -807,23 +888,30 @@ def test_evaluation():
     show = True
 
     if True:
-        N, axes, figs = 4, {}, {}
-        for i in range(N):
-            figs[i] = plt.figure(i+1, figsize=FIG_SIZE, dpi=DPI)
-            figs[i].subplots_adjust(top=FIG_TOP)
-            axes[i] = figs[i].add_subplot(111)
-            #fig.subplots_adjust(wspace=.1, hspace=.4)
+        axes = {}
+        fig = plt.figure(figsize=FIG_SIZE, dpi=DPI)
+        for i in range(N_SUB):
+            if i == 4:
+                axes[i] = fig.add_subplot(515)
+                #axes[i] = fig.add_subplot(529
+            else:
+                k = int( '%d1%d'%(N_SUB,i+1) )
+                axes[i] = fig.add_subplot(k)
+            axes[i].yaxis.set_major_locator(MultipleLocator(.5))
+
+        fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
         valid = tags==''
-        PlotMarginAp(  eval_data, picks, margin,  valid, figs[0], axes[0], min_iou=.6, show_underseg=show)
-        PlotMinwidthAp(eval_data, picks, minwidth,valid, figs[1], axes[1], min_iou=.6, show_underseg=show)
-        PlotObliqueAp( eval_data, picks, oblique, valid, figs[2], axes[2], min_iou=.6, show_underseg=show)
-        PlotDistanceAp(eval_data, picks, distance,valid, figs[3], axes[3], min_iou=.6, show_underseg=show)
-        figs[0].savefig(osp.join(eval_dir,'test_margin_ap.svg'))
-        figs[1].savefig(osp.join(eval_dir,'test_minwidth_ap.svg'))
-        figs[2].savefig(osp.join(eval_dir,'test_oblique_ap.svg'))
-        figs[3].savefig(osp.join(eval_dir,'test_distance_ap.svg'))
-        fig = plt.figure(figsize=(4,3), dpi=100)
-        PlotTagAp(eval_data, tags, fig, min_iou=.6, show_overseg=True, show_underseg=True)
+        PlotMarginAp(  eval_data, picks, margin,  valid, axes[0], min_iou=.6, show_underseg=show)
+        PlotMinwidthAp(eval_data, picks, minwidth,valid, axes[1], min_iou=.6, show_underseg=show)
+        PlotObliqueAp( eval_data, picks, oblique, valid, axes[2], min_iou=.6, show_underseg=show)
+        PlotDistanceAp(eval_data, picks, distance,valid, axes[3], min_iou=.6, show_underseg=show)
+        PlotTagAp(eval_data, tags, axes[4], min_iou=.6, show_overseg=True, show_underseg=True)
+        fig.savefig(osp.join(eval_dir,'test_margin_ap.svg'), bbox_inches=full_extent(axes[0]))
+        fig.savefig(osp.join(eval_dir,'test_minwidth_ap.svg'), bbox_inches=full_extent(axes[1]))
+        fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(axes[2]))
+        fig.savefig(osp.join(eval_dir,'test_distance_ap.svg'), bbox_inches=full_extent(axes[3]))
+        fig.savefig(osp.join(eval_dir,'test_tags_ap.svg'), bbox_inches=full_extent(axes[4]))
+
     #PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection')
     return
 
@@ -855,11 +943,13 @@ def dist_evaluation():
     margin, minwidth = GetMargin(eval_data, picks)
     valid    = margin>40.
     fig = plt.figure(1, figsize=FIG_SIZE, dpi=DPI)
-    fig.subplots_adjust(top=FIG_TOP)
-    ax = fig.add_subplot(111)
-    PlotDistanceAp(eval_data, picks, distance, valid, fig, ax, min_iou=.5,
+    fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
+    k = int( '%d1%d'%(N_SUB,1) )
+    ax = fig.add_subplot(k)
+    ax.yaxis.set_major_locator(MultipleLocator(.5))
+    PlotDistanceAp(eval_data, picks, distance, valid, ax, min_iou=.5,
             num_bins=5,min_max=(1.,2.5), show_underseg=True, show_overseg=True)
-    fig.savefig(osp.join(eval_dir,'dist_ap.svg') )
+    fig.savefig(osp.join(eval_dir,'test_dist_ap.svg'), bbox_inches=full_extent(ax))
     PlotEachScens(eval_data, picks, eval_dir, infotype='')
     return
 
@@ -891,10 +981,12 @@ def oblique_evaluation():
     oblique = GetOblique(eval_data, picks)
     valid   = margin>40.
     fig = plt.figure(1, figsize=FIG_SIZE, dpi=DPI)
-    fig.subplots_adjust(top=FIG_TOP)
-    ax = fig.add_subplot(111)
-    PlotObliqueAp(eval_data,picks,oblique,valid,fig,ax,min_iou=.5, show_underseg=True)
-    fig.savefig(osp.join(eval_dir,'oblique_ap.svg'))
+    fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
+    k = int( '%d1%d'%(N_SUB,1) )
+    ax = fig.add_subplot(k)
+    ax.yaxis.set_major_locator(MultipleLocator(.5))
+    PlotObliqueAp(eval_data,picks,oblique,valid,ax,min_iou=.5, show_underseg=True)
+    fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(ax))
     PlotEachScens(eval_data, picks, eval_dir, infotype='')
     return
 
