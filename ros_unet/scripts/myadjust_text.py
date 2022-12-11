@@ -6,6 +6,56 @@ from adjustText import *
     adjustText.adjust_text() -> myadjust_text()
     차이점 : arrowprops 의 화살표끝이 bounding box 안에 있을 경우 생략하는 기능 추가.
 """
+
+# intersection between line(p1, p2) and line(p3, p4)
+def intersect(p1, p2, p3, p4):
+    x1,y1 = p1
+    x2,y2 = p2
+    x3,y3 = p3
+    x4,y4 = p4
+    denom = (y4-y3)*(x2-x1) - (x4-x3)*(y2-y1)
+    if denom == 0: # parallel
+        return None
+    ua = ((x4-x3)*(y1-y3) - (y4-y3)*(x1-x3)) / denom
+    if ua < 0 or ua > 1: # out of range
+        return None
+    ub = ((x2-x1)*(y1-y3) - (y2-y1)*(x1-x3)) / denom
+    if ub < 0 or ub > 1: # out of range
+        return None
+    x = x1 + ua * (x2-x1)
+    y = y1 + ua * (y2-y1)
+    return (x,y)
+
+def get_boundpoint(bbox, xy):
+    cx = (bbox.x0+bbox.x1)/2.
+    cy = (bbox.y0+bbox.y1)/2.
+    dx = xy[0]-cx
+    dy = xy[1]-cy
+    dxy = (dx,dy)
+    rad = np.arctan2(dy,dx)
+    r = 20.
+    ddxy = (r*np.cos(rad), r*np.sin(rad) )
+    l0 = np.linalg.norm(dxy)
+
+    assert(bbox.x0 < bbox.x1)
+    assert(bbox.y0 < bbox.y1)
+    bb = []
+    bb.append( (bbox.x0-cx,bbox.y1-cy) )
+    bb.append( (bbox.x1-cx,bbox.y1-cy) )
+    bb.append( (bbox.x1-cx,bbox.y0-cy) )
+    bb.append( (bbox.x0-cx,bbox.y0-cy) )
+
+    for i in range(4):
+        b0, b1 = bb[i], bb[(i+1)%4]
+        ipt = intersect((0,0), ddxy, b0,b1)
+        if ipt is None:
+            continue
+        l1 = 1.05*np.linalg.norm(ipt)
+        l = max(l0,l1)
+        return (ipt[0]+cx, ipt[1]+cy), (l*np.cos(rad)+cx, l*np.sin(rad)+cy )
+
+    return None, None
+
 def myadjust_text(texts, x=None, y=None, add_objects=None, ax=None,
                 expand_text=(1.05, 1.2), expand_points=(1.05, 1.2),
                 expand_objects=(1.05, 1.2), expand_align=(1.05, 1.2),
@@ -161,19 +211,23 @@ def myadjust_text(texts, x=None, y=None, add_objects=None, ax=None,
             break
         # Now adding arrows from texts to their original locations if required
     if 'arrowprops' in kwargs:
-        o = .05 # Margin in text box
+        mx = .02 # Margin in text box
+        my = .02
         bboxes = get_bboxes(texts, r, (1, 1), ax)
         kwap = kwargs.pop('arrowprops')
         for j, (bbox, text) in enumerate(zip(bboxes, texts)):
             cpx, cpy =  orig_xy[j]
-            if cpx > bbox.xmin-o and cpx < bbox.xmax+o and cpy > bbox.ymin-o and cpy < bbox.ymax+o:
+            xy = (orig_xy[j])
+            xytext, xy = get_boundpoint(bbox, xy) # TODO midpoint가 아니라 bound point
+            if xy is None:
                 continue
-            #import pdb; pdb.set_trace()
+            if xy[0] > bbox.x0-mx and xy[0] < bbox.x1+mx and xy[1] > bbox.y0-my and xy[1] < bbox.y1+my:
+                continue
             ap = {'patchA':text} # Ensure arrow is clipped by the text
             ap.update(kwap) # Add arrowprops from kwargs
             ax.annotate("", # Add an arrow from the text to the point
-                        xy = (orig_xy[j]),
-                        xytext=get_midpoint(bbox),
+                        xy = xy,
+                        xytext=xytext,
                         arrowprops=ap,
                         *args, **kwargs)
 

@@ -72,18 +72,18 @@ def ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scen_eval):
     return
 
 if __name__=="__main__":
+    rospy.init_node('labeling', anonymous=True)
+
     script_fn = osp.abspath(__file__)
     pkg_dir = str('/').join(script_fn.split('/')[:-2])
-    usage='test0523'
+    usage = rospy.get_param('~target')
     dataset_name = 'obb_dataset_%s'%usage
-    #output_path = osp.join(pkg_dir, name)
     obbdatasetpath = osp.join(pkg_dir,dataset_name)
     output_path, exist_labels = make_dataset_dir(obbdatasetpath)
 
     rosbag_path = '/home/geo/catkin_ws/src/ros_unet/rosbag_%s/**/*.bag'%usage
     rosbagfiles = glob2.glob(rosbag_path,recursive=True)
 
-    rospy.init_node('labeling', anonymous=True)
     cam_id = 0
 
     rospy.wait_for_service('~FloorDetector/SetCamera')

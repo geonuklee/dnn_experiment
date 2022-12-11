@@ -1,10 +1,14 @@
 <launch>
 <arg name="rviz_name" default="labeling.rviz"/>
+<arg name="target" default="test"/>
 
 <node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/>
 <node name="labeling" pkg="ros_unet" type="labeling.py" output="screen" required="true">
     <remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
     <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" />
+    <rosparam subst_value="True">
+      target: "$(arg target)"
+    </rosparam>
 </node>
 
 <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>

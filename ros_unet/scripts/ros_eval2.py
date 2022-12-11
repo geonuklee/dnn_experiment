@@ -29,6 +29,11 @@ import shutil
 from unet.util import GetColoredLabel, Evaluate2D
 from unet_ext import GetBoundary
 
+FIG_SIZE = (12,4)
+FIG_TOP  = .95
+FONT_SIZE = 10
+DPI = 100
+
 def get_topicnames(bagfn, bag, given_camid='cam0'):
     depth = '/%s/helios2/depth/image_raw'%given_camid
     info  = '/%s/helios2/camera_info'%given_camid
@@ -310,15 +315,15 @@ def PlotMarginAp(eval_data, picks, margin, valid, fig, ax, min_iou,
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
         msg += '\nn(instace)=%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('Margin [pixel]',rotation=0, fontsize=7, fontweight='bold')
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax.set_xlabel('Margin [pixel]',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.xaxis.set_label_coords(1.05, -0.02)
     ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     if nbar > 1:
-        ax.legend(loc='upper left', fontsize=7)
+        ax.legend(loc='upper left', fontsize=FONT_SIZE)
     else:
-        ax.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
+        ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     return
 
 def PlotMinwidthAp(eval_data, picks, minwidth, valid, fig, ax, min_iou,
@@ -363,15 +368,15 @@ def PlotMinwidthAp(eval_data, picks, minwidth, valid, fig, ax, min_iou,
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
         msg += '\nn(instace)=%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('Min width [pixel]',rotation=0, fontsize=7, fontweight='bold')
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax.set_xlabel('Min width [pixel]',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.xaxis.set_label_coords(1.05, -0.02)
     ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     if nbar > 1:
-        ax.legend(loc='upper left', fontsize=7)
+        ax.legend(loc='upper left', fontsize=FONT_SIZE)
     else:
-        ax.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
+        ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     return
 
 def PlotIncircleRadius(eval_data, picks, margin, valid, fig, ax, min_iou):
@@ -392,9 +397,9 @@ def PlotIncircleRadius(eval_data, picks, margin, valid, fig, ax, min_iou):
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
         msg += '\nn(instace)=%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('Margin [pixel]',rotation=0, fontsize=7, fontweight='bold')
-    ax.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=7, fontweight='bold')
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax.set_xlabel('Margin [pixel]',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.xaxis.set_label_coords(1.05, -0.02)
     ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
@@ -444,18 +449,18 @@ def PlotObliqueAp(eval_data, picks, oblique, valid, fig, ax, min_iou,
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
         msg += '\nn(instace)=%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('Oblique [deg]',rotation=0, fontsize=7, fontweight='bold')
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax.set_xlabel('Oblique [deg]',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.xaxis.set_label_coords(1.05, -0.02)
     ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     if nbar > 1:
-        ax.legend(loc='upper right', fontsize=7)
+        ax.legend(loc='upper right', fontsize=FONT_SIZE)
     else:
         ax.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
     return 
 
-def PlotEachScens(eval_data, picks, eval_dir):
+def PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection'):
     min_iou = .6
     bbox=dict(boxstyle="square", ec=(0., 1., 0., 0.), fc=(1., 1., 1.,.8) )
 
@@ -488,15 +493,20 @@ def PlotEachScens(eval_data, picks, eval_dir):
             ap = float(n_ap) / float(n)
             scores[gidx] = (ap, prob_overseg, prob_underseg)
             part = gt_marker == gidx
-            if n_overseg > 0:
-                dst[part,0] = 255
-            if n_underseg > 0:
-                dst[part,-1] = 255
-            if not prob_overseg and not prob_underseg:
-                if ap < 1.:
-                    dst[part,1] = 255
-                else:
-                    dst[part,:] = rgb[part,:]
+            if infotype=='':
+                dst[part,:] = rgb[part,:]
+            else:
+                if n_overseg > 0:
+                    dst[part,0] = 255
+                if n_underseg > 0:
+                    dst[part,0] = 255
+                    #dst[part,-1] = 255
+                if not prob_overseg and not prob_underseg:
+                    if ap < 1.:
+                        dst[part,0] = 255
+                        #dst[part,1] = 255
+                    else:
+                        dst[part,:] = rgb[part,:]
 
         boundary = GetBoundary(gt_marker, 2)
         dst_rgb = rgb.copy()
@@ -514,34 +524,38 @@ def PlotEachScens(eval_data, picks, eval_dir):
         texts = []
         for gidx, cp in centers.items():
             (ap, prob_overseg, prob_underseg) = scores[gidx]
-            #msg = '\n#%d'%(gidx)
             msg = ''
-            if ap < 1. :
-                msg += '\nAP: %.2f'%ap
-            if prob_overseg > 0. :
-                msg += '\np(Over): %.2f'%prob_overseg
-            if prob_underseg > 0.:
-                msg += '\np(Under): %.2f'%prob_underseg
-            if len(msg) == 0:
-                continue
-            msg = msg[1:]
-            txt = ax.text(float(cp[0])/width, 1.-float(cp[1])/height, msg, fontsize=15, bbox=bbox,
-                    ha='left', va='center')
-            texts.append(txt)
-        myadjust_text(texts,
-                only_move={'points':'xy', 'text':'xy', 'objects':'xy'},
-                ha='center',va='center',
-                autoalign=True,
-                precision = .001,
-                expand_text = (1.4,1.4),
-                expand_points = (1.4,1.4),
-                force_text = (.4, .4), force_points=(.4,.4),
-                text_from_text=True,
-                text_from_points=False,
-                on_basemap = False,
-                arrowprops=dict(arrowstyle="->", color=(1.,1.,0.), lw=2.),
-                lim=1000
-                )
+            if infotype == 'false_detection':
+                if ap < 1. :
+                    msg += '\nAP: %.2f'%ap
+                if prob_overseg > 0. :
+                    msg += '\np(Over): %.2f'%prob_overseg
+                if prob_underseg > 0.:
+                    msg += '\np(Under): %.2f'%prob_underseg
+                if len(msg) == 0:
+                    continue
+                msg = msg[1:]
+            elif infotype=='id':
+                msg = '#%d'% gidx
+            if len(msg) > 0:
+                txt = ax.text(float(cp[0])/width, 1.-float(cp[1])/height, msg, fontsize=15, bbox=bbox,
+                        ha='left', va='center')
+                texts.append(txt)
+        if infotype == 'false_detection':
+            myadjust_text(texts,
+                    only_move={'points':'xy', 'text':'xy', 'objects':'xy'},
+                    ha='center',va='center',
+                    autoalign=True,
+                    precision = .001,
+                    expand_text = (1.4,1.4),
+                    expand_points = (1.4,1.4),
+                    force_text = (.4, .4), force_points=(.4,.4),
+                    text_from_text=True,
+                    text_from_points=False,
+                    on_basemap = False,
+                    arrowprops=dict(arrowstyle="->", color=(1.,1.,0.), lw=2.),
+                    lim=1000
+                    )
         fig.savefig(osp.join(eval_dir,'scene%d.svg'%(scene_idx+1) ),
                 bbox_inches='tight', transparent=True, pad_inches=0)
     return
@@ -587,12 +601,12 @@ def PlotTagAp(eval_data, tags, fig, min_iou, show_underseg=False, show_overseg=F
                 '%.2f'%height, ha='center', va='bottom')
         offset -= width
 
-    ax.set_xticklabels(case_nhist.keys(), rotation=0.,fontsize=7)
+    ax.set_xticklabels(case_nhist.keys(), rotation=0.,fontsize=FONT_SIZE)
     ax.set_xticks(range(len(case_nhist)))
     plt.tight_layout(rect=(.1, 0.,.95,.95)) # left,bottom,right,top
-    plt.xticks(fontsize=7)
-    plt.yticks(fontsize=7)
-    ax.legend(loc='best', fontsize=7)
+    plt.xticks(fontsize=FONT_SIZE)
+    plt.yticks(fontsize=FONT_SIZE)
+    ax.legend(loc='best', fontsize=FONT_SIZE)
 
     #ax.set_ylabel('[-]'%min_iou,rotation=0, fontweight='bold')
     ax.set_ylim(0.,1.)
@@ -643,16 +657,16 @@ def PlotDistanceAp(eval_data, picks, distance, valid, fig, ax, min_iou,
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
         msg += '\nn(instace)=%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('Distance [m]',rotation=0, fontsize=7, fontweight='bold')
-    ax.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=7, fontweight='bold')
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=7)
+    ax.set_xlabel('Distance [m]',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.xaxis.set_label_coords(1.05, -0.02)
     ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     if nbar > 1:
-        ax.legend(loc='upper right', fontsize=7)
+        ax.legend(loc='upper right', fontsize=FONT_SIZE)
     else:
-        ax.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
+        ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     return
 
 def perform_test(eval_dir, gt_files,fn_evaldata):
@@ -792,10 +806,11 @@ def test_evaluation():
     tags   = GetTags(eval_data, picks, tags)
     show = True
 
-    if False:
+    if True:
         N, axes, figs = 4, {}, {}
         for i in range(N):
-            figs[i] = plt.figure(i+1, figsize=(12,3), dpi=100)
+            figs[i] = plt.figure(i+1, figsize=FIG_SIZE, dpi=DPI)
+            figs[i].subplots_adjust(top=FIG_TOP)
             axes[i] = figs[i].add_subplot(111)
             #fig.subplots_adjust(wspace=.1, hspace=.4)
         valid = tags==''
@@ -809,7 +824,7 @@ def test_evaluation():
         figs[3].savefig(osp.join(eval_dir,'test_distance_ap.svg'))
         fig = plt.figure(figsize=(4,3), dpi=100)
         PlotTagAp(eval_data, tags, fig, min_iou=.6, show_overseg=True, show_underseg=True)
-    PlotEachScens(eval_data, picks, eval_dir)
+    #PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection')
     return
 
 def dist_evaluation():
@@ -839,11 +854,13 @@ def dist_evaluation():
     distance = GetDistance(eval_data, picks)
     margin, minwidth = GetMargin(eval_data, picks)
     valid    = margin>40.
-    fig = plt.figure(1, figsize=(12,4), dpi=100)
+    fig = plt.figure(1, figsize=FIG_SIZE, dpi=DPI)
+    fig.subplots_adjust(top=FIG_TOP)
     ax = fig.add_subplot(111)
     PlotDistanceAp(eval_data, picks, distance, valid, fig, ax, min_iou=.5,
             num_bins=5,min_max=(1.,2.5), show_underseg=True, show_overseg=True)
     fig.savefig(osp.join(eval_dir,'dist_ap.svg') )
+    PlotEachScens(eval_data, picks, eval_dir, infotype='')
     return
 
 def oblique_evaluation():
@@ -873,10 +890,12 @@ def oblique_evaluation():
     margin, minwidth = GetMargin(eval_data, picks)
     oblique = GetOblique(eval_data, picks)
     valid   = margin>40.
-    fig = plt.figure(1, figsize=(12,4), dpi=100)
+    fig = plt.figure(1, figsize=FIG_SIZE, dpi=DPI)
+    fig.subplots_adjust(top=FIG_TOP)
     ax = fig.add_subplot(111)
     PlotObliqueAp(eval_data,picks,oblique,valid,fig,ax,min_iou=.5, show_underseg=True)
     fig.savefig(osp.join(eval_dir,'oblique_ap.svg'))
+    PlotEachScens(eval_data, picks, eval_dir, infotype='')
     return
 
 if __name__=="__main__":
