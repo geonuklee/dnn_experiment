@@ -98,10 +98,6 @@ def GetBoundaryBetweenInstance(marker, m0, m1):
     boundary = np.logical_and(dist0<w, dist1<w)
     return boundary
 
-def VisualizeMarker(rgb, marker):
-    dst = rgb.copy()
-    pass
-
 def FitAxis(b0, b1):
     rwb0 = rotation_util.from_dcm(b0.rotation)
     rwb1 = rotation_util.from_dcm(b1.rotation)
@@ -1176,9 +1172,9 @@ def VisualizeGt(gt_obbs, posename='pose_wb'):
         marker.action = Marker.ADD
         marker.header.frame_id = poses.header.frame_id
         marker.id = i
-        marker.pose.position.x = obj['pose_wb'][0]
-        marker.pose.position.y = obj['pose_wb'][1]
-        marker.pose.position.z = obj['pose_wb'][2]
+        marker.pose.position.x = obj[posename][0]
+        marker.pose.position.y = obj[posename][1]
+        marker.pose.position.z = obj[posename][2]
         marker.scale.x         = obj['scale'][0]
         marker.scale.y         = obj['scale'][1]
         marker.scale.z         = obj['scale'][2]

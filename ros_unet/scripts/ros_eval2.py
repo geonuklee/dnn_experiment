@@ -15,12 +15,18 @@ import sensor_msgs, std_msgs
 import geometry_msgs
 import cv2
 from cv_bridge import CvBridge
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import PoseArray, Pose
+
 from scipy.spatial.transform import Rotation as rotation_util
 from collections import OrderedDict as Od
 
 from myadjust_text import myadjust_text
 from adjustText import adjust_text
-from evaluator import get_pkg_dir, get_pick, GetMarkerCenters
+
+from evaluator import get_pkg_dir, get_pick, GetMarkerCenters, VisualizeGt, marker2box, FitAxis, GetSurfCenterPoint
+from Objectron import box, iou
+
 from ros_client import *
 from unet.gen_obblabeling import GetInitFloorMask
 from os import makedirs
@@ -33,7 +39,7 @@ import shutil
 from unet.util import GetColoredLabel, Evaluate2D
 from unet_ext import GetBoundary
 
-DPI = 90
+DPI = 45
 FIG_SIZE = (10,12)
 FIG_SUBPLOT_ADJUST = {'wspace':.5, 'hspace':1.5} # 'top':FIG_TOP
 N_SUB = 5
@@ -194,6 +200,117 @@ def visualize_scene(pick, eval_scene):
 
     dst = np.hstack((dst,dst_score))
     return dst
+
+def Evaluate3D(pick, gt_obb_markers, obb_resp, output2dlist):
+    gt_obbs, pred_obbs = {}, {}
+    for gt_marker in gt_obb_markers.markers:
+        gt_obbs[gt_marker.id] = gt_marker
+    for pred_marker in obb_resp.output.markers:
+        pred_obbs[pred_marker.id] = pred_marker
+
+    gt_marker, rgb = pick['marker'], pick['rgb']
+    dst = np.zeros((gt_marker.shape[0],gt_marker.shape[1],3), dtype=np.uint8)
+    gt_indices, tmp = np.unique(gt_marker, return_counts=True)
+    boundary = GetBoundary(gt_marker, 2)
+    centers = GetMarkerCenters(gt_marker)
+
+    msg = '#g/ #p/IoU2D/Recall2D/  t_err / '
+    font_face, font_scale, font_thick = cv2.FONT_HERSHEY_PLAIN, 1., 1
+    w,h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+    hoffset = 5
+    w,h = w+2,h+hoffset
+    dst_score = np.zeros((dst.shape[0],w,3),dst.dtype)
+    pt = [0,h]
+    cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, (255,255,255), font_thick)
+    pt[1] += h+hoffset
+
+    for output in output2dlist:
+        gidx, iou, recall, overseg, underseg, pidx, precision = output
+        #print(gidx, pidx)
+        gt_obb = gt_obbs[gidx]
+        # Visualize
+        part = gt_marker == gidx
+        cp = centers[gidx]
+        if overseg:
+            dst[part,0] = 255
+        if underseg:
+            dst[part,2] = 255
+        if not overseg and not underseg:
+            dst[part,:] = rgb[part,:]
+
+        msg = '%d'%gidx
+        w,h = cv2.getTextSize(msg, cv2.FONT_HERSHEY_PLAIN,1.5,2)[0]
+        cv2.rectangle(dst,(cp[0]-2,cp[1]+5),(cp[0]+w+2,cp[1]-h-5),(255,255,255),-1)
+        cv2.rectangle(dst,(cp[0]-2,cp[1]+5),(cp[0]+w+2,cp[1]-h-5),(100,100,100),1)
+        cv2.putText(dst, msg, (cp[0],cp[1]), cv2.FONT_HERSHEY_PLAIN,1.5,(0,0,0),2)
+
+        pt[0] = 0
+        msg = '%2d' % gidx
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, (255,255,255), font_thick)
+        pt[0] += w
+        msg = ' %3d' % pidx
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, (255,255,255), font_thick)
+        pt[0] += w
+        if pidx in pred_obbs:
+            pred_obb = pred_obbs[pidx]
+            b0 = marker2box(gt_obb)
+            b1 = marker2box(pred_obb)
+            b1 = FitAxis(b0, b1)
+            rwb0 = rotation_util.from_dcm(b0.rotation)
+            rwb1 = rotation_util.from_dcm(b1.rotation)
+            daxis = 0
+            cp_surf0, _ = GetSurfCenterPoint(gt_obb,daxis)
+            cp_surf1, _ = GetSurfCenterPoint(pred_obb,daxis)
+            dr = rwb1.inv()* rwb0
+            deg_err = np.rad2deg( np.linalg.norm(dr.as_rotvec()) )
+
+            # surf_cp is twp for cente 'p'ointr of front plane on 'w'orld frame.
+            t_err = cp_surf1 - cp_surf0
+            t_err = np.linalg.norm(t_err)
+
+            # Denote that x-axis is assigned to normal of front plane.
+            s_err = (b1.scale-b0.scale)[1:]
+            s_err = np.abs(s_err)
+            max_wh_err = max( s_err ) # [meter]
+        else:
+            msg = '   Failed to compute OBB'%iou
+            cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, (0,0,255), font_thick)
+            pt[1] += h+hoffset
+            continue
+
+        if  iou < .6:
+            color = (0,0,255)
+        else:
+            color = (255,255,255)
+        msg = '   %.3f'%iou
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, color, font_thick)
+        if  recall < .5:
+            color = (0,0,255)
+        else:
+            color = (255,255,255)
+        pt[0] += w
+        msg = '   %.3f'%recall
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, color, font_thick)
+
+        color = (255,255,255)
+        pt[0] += w
+        msg = '   %.3f'%t_err
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, color, font_thick)
+
+        pt[1] += h+hoffset
+
+
+    dst_rgb = rgb.copy()
+    dst_rgb[boundary>0,:] = dst[boundary>0,:] = 0
+    dst = cv2.addWeighted(dst_rgb, .3, dst, .7, 0.)
+    dst = np.hstack((dst,dst_score))
+    return dst
+
 
 def GetOblique(eval_data, picks):
     oblique_array = np.repeat(-1.,eval_data.shape)
@@ -743,8 +860,19 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
     floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
-    rate = rospy.Rate(hz=50)
+    pub_gt_obb = rospy.Publisher("~gt_obb", MarkerArray, queue_size=-1)
+    pub_gt_pose = rospy.Publisher("~gt_pose", PoseArray, queue_size=1)
+
     pkg_dir = get_pkg_dir()
+
+    dtype = [('base',object),
+            ('sidx',int), # Scene index
+            ('fidx',int), # Frame index
+            ('gidx',int), # Ground truth object index
+            ('iou',float), ('recall',float), ('overseg',bool),('underseg',bool),
+            ('pidx',int), # Prediction object index
+            ('precision',float)
+            ]
 
     eval_data = None
     for i_file, gt_fn in enumerate(gt_files):
@@ -754,6 +882,16 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
         bag, set_depth, set_rgb, topic2cam, rgb_topics, depth_topics, rgb_msgs, depth_msgs,\
                 rect_info_msgs, mx, my, fx, fy, Twc, plane_c, floor = \
                 get_topics(bridge,pkg_dir,gt_fn, pick, set_camera,floordetector_set_camera, compute_floor)
+
+        gt_obbs = {}
+        for obb in pick['obbs']:
+            gt_obbs[obb['id']] = obb
+        gt_obb_poses, gt_obb_markers = VisualizeGt(gt_obbs)
+        a = Marker()
+        a.action = Marker.DELETEALL
+        for arr in [gt_obb_markers]: # ,gt_infos
+            arr.markers.append(a)
+            arr.markers.reverse()
 
         eval_scene, nframe = [], 0
         for topic, msg, t in bag.read_messages(topics=rgb_topics.values()+depth_topics.values()):
@@ -778,11 +916,16 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
             t1 = time.time()
 
             #obb_resp.filtered_outline, obb_resp.marker, obb_resp.output
-            eval_frame, pred_marker, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
-            # TODO Evaluate3D obb_respoutput.markers <-> {obbs[k]['id']:obbs[k]['pose','scale']}
+            eval_frame, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
+            cv2.imshow("frame", dst);
+            dst3d = Evaluate3D(pick, gt_obb_markers, obb_resp, eval_frame)
             for each in eval_frame:
                 eval_scene.append( (base,i_file,nframe)+ each)
+
+            pub_gt_obb.publish(gt_obb_markers)
+
             cv2.imshow("frame", dst)
+            cv2.imshow("dst3d", dst3d)
             if ord('q') == cv2.waitKey(1):
                 exit(1)
             fn = osp.join(eval_dir, 'frame_%d_%s_%04d.png'%(i_file,base,nframe) )
@@ -792,14 +935,6 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
             if nframe >= 20:
                 break
 
-        dtype = [('base',object),
-                ('sidx',int), # Scene index
-                ('fidx',int), # Frame index
-                ('gidx',int), # Ground truth object index
-                ('iou',float), ('recall',float), ('overseg',bool),('underseg',bool),
-                ('pidx',int), # Prediction object index
-                ('precision',float)
-                ]
         eval_scene = np.array(eval_scene, dtype)
         if eval_data is None:
             eval_data = eval_scene

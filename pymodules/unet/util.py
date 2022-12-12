@@ -4,6 +4,8 @@
 import torch
 import numpy as np
 import unet_ext as cpp_ext
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import PoseArray, Pose
 import cv2
 
 colors = (
@@ -338,17 +340,17 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
             precision = intersection/pred_areas[pidx]
             iou       = intersection/float(np.logical_or(gt_marker==gidx,pred_marker==pidx).sum())
             overlap_pred = []
-            for pidx, intersection in matches[['pidx','count']]:
-                if pidx < 1:
+            for _pidx, intersection in matches[['pidx','count']]:
+                if _pidx < 1:
                     continue
-                if intersection/pred_areas[pidx] > .8:
-                    overlap_pred.append(pidx)
+                if intersection/pred_areas[_pidx] > .8:
+                    overlap_pred.append(_pidx)
             # TODO recall대신 gidx boundary중, overlap_pred 로부터 20pixel 이상 떨어진 원소가 있는경우.
             if len(overlap_pred) > 1:
                 overseg = False
                 gt_mask = gt_marker==gidx
-                for pidx in overlap_pred:
-                    part = pred_marker==pidx
+                for _pidx in overlap_pred:
+                    part = pred_marker==_pidx
                     part[0,:] = part[:,0] = part[-1,:] = part[:,-1] = 0
                     dist_part = cv2.distanceTransform( (~part).astype(np.uint8),
                             distanceType=cv2.DIST_L2, maskSize=5)
@@ -365,7 +367,6 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
         ious[gidx] = iou
         g2maxpidx[gidx] = pidx
         max_precisions[gidx] = precision 
-
     pred_indices, pred_areas = np.unique(pred_marker, return_counts=True)
     for (pidx, ps) in zip(pred_indices, pred_areas.astype(np.float) ):
         if pidx == 0:
@@ -442,7 +443,7 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
             cv2.putText(dst, msg, (pt[0],pt[1]), cv2.FONT_HERSHEY_PLAIN,1.5,(0,0,0),2)
     dst = np.hstack((dst_pred,dst))
 
-    msg = ' # /  IoU / Recall/ '
+    msg = ' #g/ #p/  IoU / Recall/ '
     font_face, font_scale, font_thick = cv2.FONT_HERSHEY_PLAIN, 1., 1
     w,h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
     hoffset = 5
@@ -454,7 +455,11 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
     for output in outputlist:
         gidx, iou, recall, overseg, underseg, pidx, precision = output
         cp[0] = 0
-        msg = '%2d' % gidx
+        msg = '%2d'% gidx
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(cp), font_face, font_scale, (255,255,255), font_thick)
+        cp[0] += w
+        msg = '  %2d' % pidx
         w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
         cv2.putText(dst_score, msg, tuple(cp), font_face, font_scale, (255,255,255), font_thick)
         if  iou < .6:
@@ -481,7 +486,7 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
     #if ord('q') == cv2.waitKey(len(oversegs)==0):
     #    exit(1)
 
-    return outputlist, pred_marker, dst
+    return outputlist, dst
 
 
 def GetNormalizedDepth(depth):
