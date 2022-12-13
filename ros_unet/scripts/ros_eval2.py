@@ -39,14 +39,15 @@ import shutil
 from unet.util import GetColoredLabel, Evaluate2D
 from unet_ext import GetBoundary
 
-DPI = 45
-FIG_SIZE = (10,12)
+DPI = 90
+FIG_SIZE = (20,12)
 FIG_SUBPLOT_ADJUST = {'wspace':.5, 'hspace':1.5} # 'top':FIG_TOP
-N_SUB = 5
+N_FIG = (5,2)
 FIG_TOP  = .95
 FONT_SIZE = 14
 NSAMPLE='n(Sample)'
 XLABEL_COORD = {'x':1.05, 'y':-0.08}
+XLABEL_COORD2 = {'x':1.1, 'y':-0.08}
 LEGNED_ARGS={'fontsize':FONT_SIZE, 'bbox_to_anchor':(0.5, 1.3),'loc':'center'}
 
 def get_topicnames(bagfn, bag, given_camid='cam0'):
@@ -214,7 +215,7 @@ def Evaluate3D(pick, gt_obb_markers, obb_resp, output2dlist):
     boundary = GetBoundary(gt_marker, 2)
     centers = GetMarkerCenters(gt_marker)
 
-    msg = '#g/ #p/IoU2D/Recall2D/  t_err / '
+    msg = '#g/ #p/IoU2D/Recall2D/  t_err /  deg_e / s_err '
     font_face, font_scale, font_thick = cv2.FONT_HERSHEY_PLAIN, 1., 1
     w,h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
     hoffset = 5
@@ -224,6 +225,7 @@ def Evaluate3D(pick, gt_obb_markers, obb_resp, output2dlist):
     cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, (255,255,255), font_thick)
     pt[1] += h+hoffset
 
+    output23dlist = []
     for output in output2dlist:
         gidx, iou, recall, overseg, underseg, pidx, precision = output
         #print(gidx, pidx)
@@ -278,6 +280,7 @@ def Evaluate3D(pick, gt_obb_markers, obb_resp, output2dlist):
             msg = '   Failed to compute OBB'%iou
             cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, (0,0,255), font_thick)
             pt[1] += h+hoffset
+            output23dlist.append( output+(False, 999., 999., 999.) )
             continue
 
         if  iou < .6:
@@ -296,20 +299,39 @@ def Evaluate3D(pick, gt_obb_markers, obb_resp, output2dlist):
         w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
         cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, color, font_thick)
 
-        color = (255,255,255)
+        if  t_err > .05:
+            color = (0,0,255)
+        else:
+            color = (255,255,255)
         pt[0] += w
         msg = '   %.3f'%t_err
         w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
         cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, color, font_thick)
+        if  deg_err > 5.:
+            color = (0,0,255)
+        else:
+            color = (255,255,255)
+        pt[0] += w
+        msg = '   %.3f'%deg_err
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, color, font_thick)
+        if  max_wh_err > .05:
+            color = (0,0,255)
+        else:
+            color = (255,255,255)
+        pt[0] += w
+        msg = '   %.3f'%max_wh_err
+        w, h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, color, font_thick)
 
         pt[1] += h+hoffset
-
+        output23dlist.append( output+(True, t_err, deg_err, max_wh_err) )
 
     dst_rgb = rgb.copy()
     dst_rgb[boundary>0,:] = dst[boundary>0,:] = 0
     dst = cv2.addWeighted(dst_rgb, .3, dst, .7, 0.)
     dst = np.hstack((dst,dst_score))
-    return dst
+    return output23dlist, dst
 
 
 def GetOblique(eval_data, picks):
@@ -399,18 +421,22 @@ def GetTags(eval_data, picks, tags):
     #            valid[indicies] = False
     #return valid
 
-def LabelHeight(ax, rects):
+def LabelHeight(ax, rects, form='%.2f'):
+    fig = ax.get_figure()
     texts = []
     for rect in rects:
         value = rect.get_height()
         y = value
         va = 'bottom'
-        if value > .75:
-            y -= .1
-            va = 'top'
-        txt = ax.text(rect.get_x()+.5*rect.get_width(), y, '%.2f'%value,
+        txt = ax.text(rect.get_x()+.5*rect.get_width(), y, form%value,
                 fontsize=FONT_SIZE, ha='center', va=va) #, bbox=dict(boxstyle='square,pad=.3'))
         texts.append(txt)
+    ren = fig.canvas.get_renderer()
+    #fig.canvas.draw()
+    bbox = ax.get_window_extent(renderer=ren)
+    for txt in texts:
+        if txt.get_window_extent(renderer=ren).ymax > bbox.ymax:
+            txt.set_verticalalignment('top')
     return
 
 def PlotMarginAp(eval_data, picks, margin, valid, ax, min_iou,
@@ -462,10 +488,10 @@ def PlotMarginAp(eval_data, picks, margin, valid, ax, min_iou,
         msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
     ax.set_xlabel('[pixel],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
     ax.xaxis.set_label_coords(**XLABEL_COORD)
-    ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
 
     if nbar > 1:
@@ -528,10 +554,10 @@ def PlotMinwidthAp(eval_data, picks, minwidth, valid, ax, min_iou,
         msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
     ax.set_xlabel('[pixel],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
     ax.xaxis.set_label_coords(**XLABEL_COORD)
-    ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     if nbar > 1:
         ax.legend(ncol=ncol,**LEGNED_ARGS)
@@ -560,10 +586,10 @@ def PlotIncircleRadius(eval_data, picks, margin, valid, fig, ax, min_iou):
         xlabels.append(msg)
     ax.set_xlabel('[pixel],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
     ax.xaxis.set_label_coords(**XLABEL_COORD)
-    ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     return 
 
@@ -617,10 +643,10 @@ def PlotObliqueAp(eval_data, picks, oblique, valid, ax, min_iou,
         msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
     ax.set_xlabel('[deg],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
     ax.xaxis.set_label_coords(**XLABEL_COORD)
-    ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     if nbar > 1:
         ax.legend(ncol=ncol,**LEGNED_ARGS)
@@ -728,6 +754,86 @@ def PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection'):
                 bbox_inches='tight', transparent=True, pad_inches=0)
     return
 
+def PlotDistance3Deval(eval_data, distance, tags, ax, min_iou,
+        num_bins=3, min_max=(.5, 3.) ):
+    '''
+    * 'Bar' Median error
+    * 상자 물리적크기,이미지크기, 2D IoU, 이미지 위치. ->  t_err, deg_err, s_err
+    * ref : https://matplotlib.org/stable/gallery/axes_grid1/parasite_simple.html#sphx-glr-gallery-axes-grid1-parasite-simple-py
+    '''
+    la = np.logical_and
+    ax_deg = ax.twinx()
+    ax.set_ylabel('[cm]', fontsize=FONT_SIZE)
+    ax_deg.set_ylabel('[deg]', fontsize=FONT_SIZE)
+    ax.tick_params(axis='y', labelsize=FONT_SIZE)
+    ax_deg.tick_params(axis='y', labelsize=FONT_SIZE)
+    valid = la(eval_data['iou']>min_iou,tags=='')
+    n_hist , bound    = np.histogram(distance[valid], num_bins,min_max)
+    medians = {'trans_err':[],
+            'deg_err':[],
+            'max_wh_err':[],
+            }
+    for i in range(len(bound)-1):
+        vmin, vmax = bound[i:i+2]
+        vdiff = vmax-vmin
+        in_bound = valid
+        in_bound = la( distance>vmin, in_bound)
+        in_bound = la( distance<=vmax, in_bound)
+        in_bound = la( eval_data['valid_obb'], in_bound)
+        in_bound = la( ~eval_data['underseg'], in_bound)
+        in_bound = la( ~eval_data['overseg'], in_bound)
+        for k in medians.keys():
+            median = np.median(eval_data[k][in_bound])
+            if np.isnan(median):
+                median=0.
+            if k != 'deg_err':
+                median *= 100.
+            medians[k].append(median)
+
+    nbar= 3
+    width = 1. / float(nbar) - .1
+    offset = float(nbar-1)*width/2.
+    x = np.arange(num_bins).astype(float)
+    #xlim = ax.get_xlim()
+    ax.set_xlim(x[0]-2.*offset,x[-1]+2.*offset)
+
+
+    rects = ax.bar(x-offset, width=width, height=medians['trans_err'],
+            alpha=.5, label='trans error')
+    LabelHeight(ax, rects, form='%.2f')
+    offset -= width
+
+    rects = ax.bar(x-offset, width=width, height=medians['max_wh_err'],
+            alpha=.5, label='size error')
+    LabelHeight(ax, rects, form='%.2f')
+    offset -= width
+
+    rects = ax_deg.bar(x-offset, width=width, height=medians['deg_err'],
+            alpha=.5, label='rotation error', color='green')
+    LabelHeight(ax_deg, rects, form='%.2f')
+    offset -= width
+
+    xlabels = []
+    for i in range(num_bins):
+        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
+        msg += '\n%d'%n_hist[i]
+        xlabels.append(msg)
+    ax.set_xticks(x)
+    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
+    ax.set_xlabel('[m],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.xaxis.set_label_coords(**XLABEL_COORD2)
+
+    legend_args={'fontsize':FONT_SIZE,
+            'bbox_to_anchor':(0., 1.3),
+            'loc':'center left'}
+    ax.legend(ncol=2,**legend_args)
+    legend_args={'fontsize':FONT_SIZE,
+            'bbox_to_anchor':(1., 1.3),
+            'loc':'center right'}
+    ax_deg.legend(**legend_args)
+
+    return
+
 def PlotTagAp(eval_data, tags, ax, min_iou, show_underseg=False, show_overseg=False):
     la = np.logical_and
     def f_have(arr, word):
@@ -770,9 +876,9 @@ def PlotTagAp(eval_data, tags, ax, min_iou, show_underseg=False, show_overseg=Fa
         offset -= width
 
     ax.set_xlabel('Case,\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticks(range(len(case_nhist)))
     ax.set_xticklabels(case_nhist.keys(), rotation=0.,fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
-    ax.set_xticks(range(len(case_nhist)))
     #plt.tight_layout(rect=(.1, 0.,.95,.95)) # left,bottom,right,top
     plt.xticks(fontsize=FONT_SIZE)
     plt.yticks(fontsize=FONT_SIZE)
@@ -834,10 +940,10 @@ def PlotDistanceAp(eval_data, picks, distance, valid, ax, min_iou,
         msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
     ax.set_xlabel('[m],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
     ax.xaxis.set_label_coords(**XLABEL_COORD)
-    ax.set_xticks(x)
     ax.yaxis.set_label_coords(-0.08, 1.)
     if nbar > 1:
         ax.legend(ncol=ncol,**LEGNED_ARGS)
@@ -871,7 +977,11 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
             ('gidx',int), # Ground truth object index
             ('iou',float), ('recall',float), ('overseg',bool),('underseg',bool),
             ('pidx',int), # Prediction object index
-            ('precision',float)
+            ('precision',float),
+            ('valid_obb',bool),
+            ('trans_err',float),
+            ('deg_err', float),
+            ('max_wh_err', float),
             ]
 
     eval_data = None
@@ -916,10 +1026,10 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
             t1 = time.time()
 
             #obb_resp.filtered_outline, obb_resp.marker, obb_resp.output
-            eval_frame, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
-            cv2.imshow("frame", dst);
-            dst3d = Evaluate3D(pick, gt_obb_markers, obb_resp, eval_frame)
-            for each in eval_frame:
+            eval_2d, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
+            eval_23d, dst3d = Evaluate3D(pick, gt_obb_markers, obb_resp, eval_2d)
+            #for each in eval_2d:
+            for each in eval_23d:
                 eval_scene.append( (base,i_file,nframe)+ each)
 
             pub_gt_obb.publish(gt_obb_markers)
@@ -1025,14 +1135,14 @@ def test_evaluation():
     if True:
         axes = {}
         fig = plt.figure(figsize=FIG_SIZE, dpi=DPI)
-        for i in range(N_SUB):
-            if i == 4:
-                axes[i] = fig.add_subplot(515)
-                #axes[i] = fig.add_subplot(529
-            else:
-                k = int( '%d1%d'%(N_SUB,i+1) )
-                axes[i] = fig.add_subplot(k)
-            axes[i].yaxis.set_major_locator(MultipleLocator(.5))
+        n = 0
+        for j in range(N_FIG[1]):
+            for i in range(N_FIG[0]):
+                k = i*N_FIG[1]+j+1
+                axes[n] = fig.add_subplot(N_FIG[0],N_FIG[1],k)
+                if n < 5:
+                    axes[n].yaxis.set_major_locator(MultipleLocator(.5))
+                n+=1
 
         fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
         valid = tags==''
@@ -1041,6 +1151,7 @@ def test_evaluation():
         PlotObliqueAp( eval_data, picks, oblique, valid, axes[2], min_iou=.6, show_underseg=show)
         PlotDistanceAp(eval_data, picks, distance,valid, axes[3], min_iou=.6, show_underseg=show)
         PlotTagAp(eval_data, tags, axes[4], min_iou=.6, show_overseg=True, show_underseg=True)
+        PlotDistance3Deval(eval_data, distance, tags, axes[5], min_iou=.6)
         fig.savefig(osp.join(eval_dir,'test_margin_ap.svg'), bbox_inches=full_extent(axes[0]))
         fig.savefig(osp.join(eval_dir,'test_minwidth_ap.svg'), bbox_inches=full_extent(axes[1]))
         fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(axes[2]))
