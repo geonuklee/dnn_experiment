@@ -41,10 +41,10 @@ from unet_ext import GetBoundary
 
 DPI = 90
 FIG_SIZE = (20,12)
-FIG_SUBPLOT_ADJUST = {'wspace':.5, 'hspace':1.5} # 'top':FIG_TOP
+FIG_SUBPLOT_ADJUST = {'wspace':0.2, 'hspace':1.2} # 'top':FIG_TOP
 N_FIG = (5,2)
 FIG_TOP  = .95
-FONT_SIZE = 14
+FONT_SIZE = 10
 NSAMPLE='n(Sample)'
 XLABEL_COORD = {'x':1.05, 'y':-0.08}
 XLABEL_COORD2 = {'x':1.1, 'y':-0.08}
@@ -435,7 +435,8 @@ def LabelHeight(ax, rects, form='%.2f'):
     #fig.canvas.draw()
     bbox = ax.get_window_extent(renderer=ren)
     for txt in texts:
-        if txt.get_window_extent(renderer=ren).ymax > bbox.ymax:
+        tbbox = txt.get_window_extent(renderer=ren)
+        if tbbox.ymax - bbox.ymax > -10.:
             txt.set_verticalalignment('top')
     return
 
@@ -506,7 +507,7 @@ def PlotMarginAp(eval_data, picks, margin, valid, ax, min_iou,
     return
 
 def PlotMinwidthAp(eval_data, picks, minwidth, valid, ax, min_iou,
-        num_bins=9, min_max=(10., 100.),
+        num_bins=7, min_max=(10., 70.),
         show_underseg=False, show_overseg=False):
     la = np.logical_and
     n_hist , bound    = np.histogram(minwidth[valid], num_bins,min_max)
@@ -754,7 +755,8 @@ def PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection'):
                 bbox_inches='tight', transparent=True, pad_inches=0)
     return
 
-def PlotDistance3Deval(eval_data, distance, tags, ax, min_iou,
+def Plot3dEval(eval_data, distance, tags, ax, min_iou,
+        unit_str,
         num_bins=3, min_max=(.5, 3.) ):
     '''
     * 'Bar' Median error
@@ -769,10 +771,14 @@ def PlotDistance3Deval(eval_data, distance, tags, ax, min_iou,
     ax_deg.tick_params(axis='y', labelsize=FONT_SIZE)
     valid = la(eval_data['iou']>min_iou,tags=='')
     n_hist , bound    = np.histogram(distance[valid], num_bins,min_max)
+    # TODO https://stackoverflow.com/questions/11774822/matplotlib-histogram-with-errorbars
     medians = {'trans_err':[],
             'deg_err':[],
             'max_wh_err':[],
             }
+    stddevs = {}
+    for k in medians.keys():
+        stddevs[k] = []
     for i in range(len(bound)-1):
         vmin, vmax = bound[i:i+2]
         vdiff = vmax-vmin
@@ -783,12 +789,17 @@ def PlotDistance3Deval(eval_data, distance, tags, ax, min_iou,
         in_bound = la( ~eval_data['underseg'], in_bound)
         in_bound = la( ~eval_data['overseg'], in_bound)
         for k in medians.keys():
-            median = np.median(eval_data[k][in_bound])
+            data = eval_data[k][in_bound]
+            median = np.median(data)
+            stddev = np.std(data)
             if np.isnan(median):
                 median=0.
+                stddev=0.
             if k != 'deg_err':
                 median *= 100.
+                stddev *= 100.
             medians[k].append(median)
+            stddevs[k].append(stddev)
 
     nbar= 3
     width = 1. / float(nbar) - .1
@@ -810,7 +821,7 @@ def PlotDistance3Deval(eval_data, distance, tags, ax, min_iou,
 
     rects = ax_deg.bar(x-offset, width=width, height=medians['deg_err'],
             alpha=.5, label='rotation error', color='green')
-    LabelHeight(ax_deg, rects, form='%.2f')
+    LabelHeight(ax_deg, rects, form='%.1f')
     offset -= width
 
     xlabels = []
@@ -820,8 +831,12 @@ def PlotDistance3Deval(eval_data, distance, tags, ax, min_iou,
         xlabels.append(msg)
     ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.set_xlabel('[m],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('%s\n%s'%(unit_str,NSAMPLE),rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.xaxis.set_label_coords(**XLABEL_COORD2)
+
+    #miny,maxy = ax.get_ylim()
+    #ax.set_ylim(0,maxy)
+    #ax_deg.set_ylim(0,maxy)
 
     legend_args={'fontsize':FONT_SIZE,
             'bbox_to_anchor':(0., 1.3),
@@ -1151,7 +1166,19 @@ def test_evaluation():
         PlotObliqueAp( eval_data, picks, oblique, valid, axes[2], min_iou=.6, show_underseg=show)
         PlotDistanceAp(eval_data, picks, distance,valid, axes[3], min_iou=.6, show_underseg=show)
         PlotTagAp(eval_data, tags, axes[4], min_iou=.6, show_overseg=True, show_underseg=True)
-        PlotDistance3Deval(eval_data, distance, tags, axes[5], min_iou=.6)
+
+        min_iou = .7
+        Plot3dEval(eval_data, margin, tags, axes[5], min_iou=min_iou,
+                unit_str ='[pixel]', num_bins=5, min_max=(0., 100.) )
+        # 의미있는 경향은 안보임.
+        Plot3dEval(eval_data, minwidth, tags, axes[6], min_iou=min_iou,
+                unit_str ='[pixel]', num_bins=7, min_max=(10, 70.) )
+        Plot3dEval(eval_data, oblique, tags, axes[7], min_iou=min_iou,
+                unit_str ='[deg]', num_bins=5, min_max=(0, 50.) )
+
+        Plot3dEval(eval_data, distance, tags, axes[8], min_iou=min_iou,
+                unit_str ='[m]', num_bins=3, min_max=(.5, 3.) )
+
         fig.savefig(osp.join(eval_dir,'test_margin_ap.svg'), bbox_inches=full_extent(axes[0]))
         fig.savefig(osp.join(eval_dir,'test_minwidth_ap.svg'), bbox_inches=full_extent(axes[1]))
         fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(axes[2]))
