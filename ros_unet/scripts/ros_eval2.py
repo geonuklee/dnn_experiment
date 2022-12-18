@@ -33,22 +33,30 @@ from os import makedirs
 import matplotlib.pyplot as plt
 from matplotlib.transforms import Bbox
 from matplotlib.ticker import MultipleLocator
+from tabulate import tabulate
 
 import pyautogui
 import shutil
 from unet.util import GetColoredLabel, Evaluate2D
 from unet_ext import GetBoundary
 
-DPI = 90
-FIG_SIZE = (20,12)
-FIG_SUBPLOT_ADJUST = {'wspace':0.2, 'hspace':1.2} # 'top':FIG_TOP
-N_FIG = (5,2)
+DPI = 75
+FIG_SIZE = (24,10)
+FIG_SUBPLOT_ADJUST = {'wspace':0.3, 'hspace':1.2} # 'top':FIG_TOP
+N_FIG = (5,3)
 FIG_TOP  = .95
 FONT_SIZE = 10
-NSAMPLE='n(Sample)'
 XLABEL_COORD = {'x':1.05, 'y':-0.08}
 XLABEL_COORD2 = {'x':1.1, 'y':-0.08}
 LEGNED_ARGS={'fontsize':FONT_SIZE, 'bbox_to_anchor':(0.5, 1.3),'loc':'center'}
+
+import matplotlib
+# https://stackoverflow.com/questions/11367736/matplotlib-consistent-font-using-latex
+matplotlib.rcParams['mathtext.fontset'] = 'custom'
+matplotlib.rcParams['mathtext.rm'] = 'Bitstream Vera Sans'
+matplotlib.rcParams['mathtext.it'] = 'Bitstream Vera Sans:italic'
+matplotlib.rcParams['mathtext.bf'] = 'Bitstream Vera Sans:bold'
+# https://stackoverflow.com/questions/23824687/text-does-not-work-in-a-matplotlib-label
 
 def get_topicnames(bagfn, bag, given_camid='cam0'):
     depth = '/%s/helios2/depth/image_raw'%given_camid
@@ -380,6 +388,8 @@ def GetMargin(eval_data, picks):
     for base, pick in picks.items():
         gt_marker = pick['marker']
         w,h = float(gt_marker.shape[1]), float(gt_marker.shape[0])
+        K = pick['K']
+        fx, fy, cx, cy = K[0,0], K[1,1], K[0,2], K[1,2]
         for gidx in np.unique(gt_marker):
             if gidx == 0:
                 continue
@@ -389,9 +399,11 @@ def GetMargin(eval_data, picks):
             dist_part = cv2.distanceTransform( part.astype(np.uint8),
                     distanceType=cv2.DIST_L2, maskSize=5)
             loc = np.unravel_index( np.argmax(dist_part,axis=None), gt_marker.shape)
-            a = min(loc[0], h-loc[0])
-            b = min(loc[1], w-loc[1])
-            d = min( float(a), float(b) )
+            dy = float(min(loc[0], h-loc[0]))
+            dx = float(min(loc[1], w-loc[1]))
+            #dx /= fx
+            #dy /= fy
+            d = min(dx, dy)
             margin_array[indicies] = d
             minwidth_array[indicies] = dist_part[loc]
     assert( (margin_array<0).sum() == 0)
@@ -424,28 +436,50 @@ def GetTags(eval_data, picks, tags):
 def LabelHeight(ax, rects, form='%.2f'):
     fig = ax.get_figure()
     texts = []
+    xs, ys = [],[]
     for rect in rects:
         value = rect.get_height()
         y = value
+        if y == 0.:
+            continue
+        x = rect.get_x()+.5*rect.get_width()
         va = 'bottom'
-        txt = ax.text(rect.get_x()+.5*rect.get_width(), y, form%value,
+        txt = ax.text(x, y, form%value,
                 fontsize=FONT_SIZE, ha='center', va=va) #, bbox=dict(boxstyle='square,pad=.3'))
+        xs.append(x)
+        ys.append(y)
         texts.append(txt)
     ren = fig.canvas.get_renderer()
-    #fig.canvas.draw()
     bbox = ax.get_window_extent(renderer=ren)
     for txt in texts:
         tbbox = txt.get_window_extent(renderer=ren)
         if tbbox.ymax - bbox.ymax > -10.:
             txt.set_verticalalignment('top')
+    #myadjust_text(texts,
+    #        x = xs, y = ys,
+    #        ax = ax,
+    #        autoalign=False,
+    #        precision = .001,
+    #        ha = 'center',
+    #        va = 'center',
+    #        on_basemap=False,
+    #        only_move={'text':'xy','points':'y'},
+    #        text_from_points=False,
+    #        force_text = (.4, .4), force_points=(.4,.4),
+    #        expand_text=(2.,2.),
+    #        lim=1000)
     return
 
-def PlotMarginAp(eval_data, picks, margin, valid, ax, min_iou,
-        num_bins=5, min_max=(0., 100.),
-        show_underseg=False, show_overseg=False):
+def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
+        unit_str, _format,
+        show_underseg=False, show_overseg=False, show_sample=False):
     la = np.logical_and
     n_hist , bound    = np.histogram(margin[valid], num_bins,min_max)
-    tp_hist , _       = np.histogram(margin[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
+    tp_hist , _       = np.histogram(margin[
+        logical_ands([eval_data['iou']>min_iou,
+                      valid,
+                      ~eval_data['overseg'],
+                      ~eval_data['underseg'] ])], num_bins,min_max)
     underseg_hist , _ = np.histogram(margin[la(eval_data['underseg'],valid)], num_bins,min_max)
     overseg_hist , _  = np.histogram(margin[la(eval_data['overseg'],valid)], num_bins,min_max)
     no_samples = n_hist==0
@@ -465,30 +499,32 @@ def PlotMarginAp(eval_data, picks, margin, valid, ax, min_iou,
     underseg_hist = underseg_hist.astype(float) / n_hist.astype(float)
     overseg_hist  = overseg_hist.astype(float) / n_hist.astype(float)
     n_hist[no_samples] = 0
-    width = 1. / float(nbar) - .1
+    width = 1. / float(nbar) - .05
     x = np.arange(num_bins)
     offset = float(nbar-1)*width/2.
-    ap_label = 'AP (IoU >%.1f)'%min_iou
+    ap_label = 'AP(IoU >%.1f)'%min_iou
     rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
     LabelHeight(ax, rects)
     offset -= width
     ncol = 1
     if show_underseg:
-        rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
+        rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='$p(\mathrm{under})$')
         LabelHeight(ax, rects)
         offset -= width
         ncol += 1
     if show_overseg:
-        rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
+        rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='$p(\mathrm{over})$')
         LabelHeight(ax, rects)
         offset -= width
         ncol += 1
     xlabels = []
     for i in range(num_bins):
-        msg = '%.f~%.f'%(bound[i],bound[i+1])
-        msg += '\n%d'%n_hist[i]
+        #msg = '%.f~%.f'%(bound[i],bound[i+1])
+        msg = _format%(bound[i],bound[i+1])
+        if show_sample:
+            msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('[pixel],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('%s'%unit_str,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
@@ -506,154 +542,6 @@ def PlotMarginAp(eval_data, picks, margin, valid, ax, min_iou,
     #ext2 = ax.xaxis.label.get_window_extent()
     return
 
-def PlotMinwidthAp(eval_data, picks, minwidth, valid, ax, min_iou,
-        num_bins=7, min_max=(10., 70.),
-        show_underseg=False, show_overseg=False):
-    la = np.logical_and
-    n_hist , bound    = np.histogram(minwidth[valid], num_bins,min_max)
-    tp_hist , _       = np.histogram(minwidth[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
-    underseg_hist , _ = np.histogram(minwidth[la(eval_data['underseg'],valid)], num_bins,min_max)
-    overseg_hist , _  = np.histogram(minwidth[la(eval_data['overseg'],valid)], num_bins,min_max)
-    no_samples = n_hist==0
-    n_hist[no_samples] = 1 # To prevent divide by zero
-    nbar= 1
-    if show_underseg:
-        if underseg_hist.sum()==0:
-            show_underseg = False
-        else:
-            nbar+=1
-    if show_overseg:
-        if overseg_hist.sum()==0:
-            show_overseg = False
-        else:
-            nbar+=1
-    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
-    underseg_hist = underseg_hist.astype(float) / n_hist.astype(float)
-    overseg_hist  = overseg_hist.astype(float) / n_hist.astype(float)
-    n_hist[no_samples] = 0
-    width = 1. / float(nbar) - .1
-    x = np.arange(num_bins)
-    offset = float(nbar-1)*width/2.
-    ap_label = 'AP (IoU >%.1f)'%min_iou
-    rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
-    LabelHeight(ax, rects)
-    offset -= width
-    ncol = 1
-    if show_underseg:
-        rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
-        LabelHeight(ax, rects)
-        offset -= width
-        ncol += 1
-    if show_overseg:
-        rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
-        LabelHeight(ax, rects)
-        offset -= width
-        ncol += 1
-    xlabels = []
-    for i in range(num_bins):
-        msg = '%.f~%.f'%(bound[i],bound[i+1])
-        msg += '\n%d'%n_hist[i]
-        xlabels.append(msg)
-    ax.set_xlabel('[pixel],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
-    ax.set_xticks(x)
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.tick_params(axis='y', labelsize=FONT_SIZE)
-    ax.xaxis.set_label_coords(**XLABEL_COORD)
-    ax.yaxis.set_label_coords(-0.08, 1.)
-    if nbar > 1:
-        ax.legend(ncol=ncol,**LEGNED_ARGS)
-    else:
-        ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
-    return
-
-def PlotIncircleRadius(eval_data, picks, margin, valid, fig, ax, min_iou):
-    la = np.logical_and
-    num_bins = 5
-    min_max = (0., 100.)
-    n_hist , bound  = np.histogram(margin[valid], num_bins,min_max)
-    tp_hist , bound = np.histogram(margin[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
-    no_samples = n_hist==0
-    n_hist[no_samples] = 1 # To prevent divide by zero
-    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
-    n_hist[no_samples] = 0
-    x = np.arange(num_bins)
-
-    rects = ax.bar(x, width=.9, height=tp_hist, alpha=.5, label='TP segment')
-    LabelHeight(ax, rects)
-    xlabels = []
-    for i in range(num_bins):
-        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
-        msg += '\n%d'%n_hist[i]
-        xlabels.append(msg)
-    ax.set_xlabel('[pixel],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
-    ax.set_ylabel('AP(IoU > %.1f)'%min_iou,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
-    ax.set_xticks(x)
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.tick_params(axis='y', labelsize=FONT_SIZE)
-    ax.xaxis.set_label_coords(**XLABEL_COORD)
-    ax.yaxis.set_label_coords(-0.08, 1.)
-    return 
-
-
-def PlotObliqueAp(eval_data, picks, oblique, valid, ax, min_iou,
-        num_bins=5, min_max=(0., 50.),
-        show_underseg=False, show_overseg=False):
-    la = np.logical_and
-    n_hist , bound  = np.histogram(oblique[valid], num_bins,min_max)
-    tp_hist , _       = np.histogram(oblique[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
-    underseg_hist , _ = np.histogram(oblique[la(eval_data['underseg'],valid)], num_bins,min_max)
-    overseg_hist , _  = np.histogram(oblique[la(eval_data['overseg'],valid)], num_bins,min_max)
-    no_samples = n_hist==0
-    n_hist[no_samples] = 1 # To prevent divide by zero
-    nbar= 1
-    if show_underseg:
-        if underseg_hist.sum()==0:
-            show_underseg = False
-        else:
-            nbar+=1
-    if show_overseg:
-        if overseg_hist.sum()==0:
-            show_overseg = False
-        else:
-            nbar+=1
-    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
-    underseg_hist = underseg_hist.astype(float) / n_hist.astype(float)
-    overseg_hist  = overseg_hist.astype(float) / n_hist.astype(float)
-    n_hist[no_samples] = 0
-    width = 1. / float(nbar) - .1
-    x = np.arange(num_bins)
-    offset = float(nbar-1)*width/2.
-    ap_label = 'AP (IoU >%.1f)'%min_iou
-    rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
-    LabelHeight(ax, rects)
-    offset -= width
-    ncol = 1
-    if show_underseg:
-        rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
-        LabelHeight(ax, rects)
-        offset -= width
-        ncol += 1
-    if show_overseg:
-        rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
-        LabelHeight(ax, rects)
-        offset -= width
-        ncol += 1
-    xlabels = []
-    for i in range(num_bins):
-        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
-        msg += '\n%d'%n_hist[i]
-        xlabels.append(msg)
-    ax.set_xlabel('[deg],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
-    ax.set_xticks(x)
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.tick_params(axis='y', labelsize=FONT_SIZE)
-    ax.xaxis.set_label_coords(**XLABEL_COORD)
-    ax.yaxis.set_label_coords(-0.08, 1.)
-    if nbar > 1:
-        ax.legend(ncol=ncol,**LEGNED_ARGS)
-    else:
-        ax.set_ylabel(ap_label,rotation=0, fontsize=7, fontweight='bold')
-    return 
 
 def PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection'):
     min_iou = .6
@@ -755,8 +643,8 @@ def PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection'):
                 bbox_inches='tight', transparent=True, pad_inches=0)
     return
 
-def Plot3dEval(eval_data, distance, tags, ax, min_iou,
-        unit_str,
+def Plot3dEval(eval_data, ax, ytype,
+        xdata, valid, unit_str, show_sample=True,
         num_bins=3, min_max=(.5, 3.) ):
     '''
     * 'Bar' Median error
@@ -769,57 +657,63 @@ def Plot3dEval(eval_data, distance, tags, ax, min_iou,
     ax_deg.set_ylabel('[deg]', fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
     ax_deg.tick_params(axis='y', labelsize=FONT_SIZE)
-    valid = la(eval_data['iou']>min_iou,tags=='')
-    n_hist , bound    = np.histogram(distance[valid], num_bins,min_max)
-    # TODO https://stackoverflow.com/questions/11774822/matplotlib-histogram-with-errorbars
-    medians = {'trans_err':[],
-            'deg_err':[],
-            'max_wh_err':[],
-            }
+    n_hist , bound    = np.histogram(xdata[valid], num_bins,min_max)
+    medians = {}
     stddevs = {}
-    for k in medians.keys():
+    maes = {}
+    for k in ['trans_err', 'max_wh_err', 'deg_err']:
+        medians[k] = []
         stddevs[k] = []
+        maes[k] = []
+
     for i in range(len(bound)-1):
         vmin, vmax = bound[i:i+2]
         vdiff = vmax-vmin
         in_bound = valid
-        in_bound = la( distance>vmin, in_bound)
-        in_bound = la( distance<=vmax, in_bound)
-        in_bound = la( eval_data['valid_obb'], in_bound)
-        in_bound = la( ~eval_data['underseg'], in_bound)
-        in_bound = la( ~eval_data['overseg'], in_bound)
+        in_bound = la( xdata>vmin, in_bound)
+        in_bound = la( xdata<=vmax, in_bound)
         for k in medians.keys():
             data = eval_data[k][in_bound]
-            median = np.median(data)
-            stddev = np.std(data)
-            if np.isnan(median):
+            if len(data) == 0:
                 median=0.
                 stddev=0.
+                mae = 0.
+            else:
+                median = np.median(data)
+                stddev = np.std(data)
+                mae = np.sum(np.abs(data)) / float(len(data))
             if k != 'deg_err':
                 median *= 100.
                 stddev *= 100.
+                mae    *= 100.
             medians[k].append(median)
             stddevs[k].append(stddev)
+            maes[k].append(mae)
 
     nbar= 3
-    width = 1. / float(nbar) - .1
+    width = 1. / float(nbar) - .02
     offset = float(nbar-1)*width/2.
     x = np.arange(num_bins).astype(float)
     #xlim = ax.get_xlim()
     ax.set_xlim(x[0]-2.*offset,x[-1]+2.*offset)
 
-
-    rects = ax.bar(x-offset, width=width, height=medians['trans_err'],
+    # https://stackoverflow.com/questions/11774822/matplotlib-histogram-with-errorbars
+    #yvalues = rmses
+    if ytype.lower() == 'median':
+        yvalues = medians
+    elif ytype.lower() == 'mae':
+        yvalues = maes
+    rects = ax.bar(x-offset, width=width, height=yvalues['trans_err'],
             alpha=.5, label='trans error')
     LabelHeight(ax, rects, form='%.2f')
     offset -= width
 
-    rects = ax.bar(x-offset, width=width, height=medians['max_wh_err'],
+    rects = ax.bar(x-offset, width=width, height=yvalues['max_wh_err'],
             alpha=.5, label='size error')
     LabelHeight(ax, rects, form='%.2f')
     offset -= width
 
-    rects = ax_deg.bar(x-offset, width=width, height=medians['deg_err'],
+    rects = ax_deg.bar(x-offset, width=width, height=yvalues['deg_err'],
             alpha=.5, label='rotation error', color='green')
     LabelHeight(ax_deg, rects, form='%.1f')
     offset -= width
@@ -827,16 +721,18 @@ def Plot3dEval(eval_data, distance, tags, ax, min_iou,
     xlabels = []
     for i in range(num_bins):
         msg = '%.1f~%.1f'%(bound[i],bound[i+1])
-        msg += '\n%d'%n_hist[i]
+        if show_sample:
+            msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
     ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.set_xlabel('%s\n%s'%(unit_str,NSAMPLE),rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('%s'%unit_str,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.xaxis.set_label_coords(**XLABEL_COORD2)
 
-    #miny,maxy = ax.get_ylim()
-    #ax.set_ylim(0,maxy)
-    #ax_deg.set_ylim(0,maxy)
+    miny0,maxy0 = ax.get_ylim()
+    miny1,maxy1 = ax_deg.get_ylim()
+    ax.set_ylim(0, max(maxy0,maxy1) )
+    ax_deg.set_ylim(0, max(maxy0,maxy1) )
 
     legend_args={'fontsize':FONT_SIZE,
             'bbox_to_anchor':(0., 1.3),
@@ -864,7 +760,9 @@ def PlotTagAp(eval_data, tags, ax, min_iou, show_underseg=False, show_overseg=Fa
     offset = float(nbar-1)*width/2.
 
     params = Od()
-    params['AP (IoU >%.1f)'%min_iou] = eval_data['iou']>min_iou
+    params['AP (IoU >%.1f)'%min_iou] = logical_ands([eval_data['iou']>min_iou,
+                                                     ~eval_data['overseg'],
+                                                     ~eval_data['underseg']])
     if show_underseg:
         params['underseg'] = eval_data['underseg']
     if show_overseg:
@@ -884,13 +782,9 @@ def PlotTagAp(eval_data, tags, ax, min_iou, show_underseg=False, show_overseg=Fa
         x = np.array(range(len(case_nhist))).astype(float) - offset
         rects = ax.bar(x,width=width,height=case_nhist.values(), alpha=.5, label=name)
         LabelHeight(ax, rects)
-        #for rect in rects:
-        #    height = rect.get_height()
-        #    ax.text(rect.get_x()+.5*rect.get_width(), height,
-        #        '%.2f'%height, ha='center', va='bottom')
         offset -= width
 
-    ax.set_xlabel('Case,\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('Case',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     ax.set_xticks(range(len(case_nhist)))
     ax.set_xticklabels(case_nhist.keys(), rotation=0.,fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
@@ -903,67 +797,6 @@ def PlotTagAp(eval_data, tags, ax, min_iou, show_underseg=False, show_overseg=Fa
     ax.set_ylim(0.,1.)
     ax.xaxis.set_label_coords(1.05, -0.02)
     ax.yaxis.set_label_coords(-0.08, 1.05)
-    return
-
-def PlotDistanceAp(eval_data, picks, distance, valid, ax, min_iou,
-        num_bins=4, min_max=(.5, 3.),
-        show_underseg=False, show_overseg=False):
-    la = np.logical_and
-    n_hist , bound    = np.histogram(distance[valid], num_bins,min_max)
-    tp_hist , _       = np.histogram(distance[la(eval_data['iou']>min_iou,valid)], num_bins,min_max)
-    underseg_hist , _ = np.histogram(distance[la(eval_data['underseg'],valid)], num_bins,min_max)
-    overseg_hist , _  = np.histogram(distance[la(eval_data['overseg'],valid)], num_bins,min_max)
-    no_samples = n_hist==0
-    n_hist[no_samples] = 1 # To prevent divide by zero
-    nbar= 1
-    if show_underseg:
-        if underseg_hist.sum()==0:
-            show_underseg = False
-        else:
-            nbar+=1
-    if show_overseg:
-        if overseg_hist.sum()==0:
-            show_overseg = False
-        else:
-            nbar+=1
-    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
-    underseg_hist = underseg_hist.astype(float) / n_hist.astype(float)
-    overseg_hist  = overseg_hist.astype(float) / n_hist.astype(float)
-    n_hist[no_samples] = 0
-    width = 1. / float(nbar) - .1
-    x = np.arange(num_bins)
-    offset = float(nbar-1)*width/2.
-    ap_label = 'AP (IoU >%.1f)'%min_iou
-    rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
-    LabelHeight(ax, rects)
-    offset -= width
-    ncol = 1
-    if show_underseg:
-        rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='Under-segment')
-        LabelHeight(ax, rects)
-        offset -= width
-        ncol += 1
-    if show_overseg:
-        rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='Over-segment')
-        LabelHeight(ax, rects)
-        offset -= width
-        ncol += 1
-
-    xlabels = []
-    for i in range(num_bins):
-        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
-        msg += '\n%d'%n_hist[i]
-        xlabels.append(msg)
-    ax.set_xlabel('[m],\n%s'%NSAMPLE,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
-    ax.set_xticks(x)
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.tick_params(axis='y', labelsize=FONT_SIZE)
-    ax.xaxis.set_label_coords(**XLABEL_COORD)
-    ax.yaxis.set_label_coords(-0.08, 1.)
-    if nbar > 1:
-        ax.legend(ncol=ncol,**LEGNED_ARGS)
-    else:
-        ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
     return
 
 def perform_test(eval_dir, gt_files,fn_evaldata):
@@ -1100,7 +933,15 @@ def full_extent(ax, pad=0.0):
             for item in items])
     return bbox.expanded(1.0 + pad, 1.0 + pad)
 
-def test_evaluation():
+def logical_ands(list_of_arrays):
+    valid = list_of_arrays[0]
+    for i, arr in enumerate(list_of_arrays):
+        if i == 0:
+            continue
+        valid = np.logical_and(valid, arr)
+    return valid
+
+def test_evaluation(show_sample):
     pkg_dir = get_pkg_dir()
     eval_dir = osp.join(pkg_dir, 'eval_test0523')
     if not osp.exists(eval_dir):
@@ -1161,29 +1002,85 @@ def test_evaluation():
 
         fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
         valid = tags==''
-        PlotMarginAp(  eval_data, picks, margin,  valid, axes[0], min_iou=.6, show_underseg=show)
-        PlotMinwidthAp(eval_data, picks, minwidth,valid, axes[1], min_iou=.6, show_underseg=show)
-        PlotObliqueAp( eval_data, picks, oblique, valid, axes[2], min_iou=.6, show_underseg=show)
-        PlotDistanceAp(eval_data, picks, distance,valid, axes[3], min_iou=.6, show_underseg=show)
-        PlotTagAp(eval_data, tags, axes[4], min_iou=.6, show_overseg=True, show_underseg=True)
+        vdistance = distance < 2.
+        vminwidth = minwidth > 10.
+        vmargin = margin > 20.
+        min_iou = .6
+        Plot2dEval(eval_data, picks, margin, logical_ands([valid,vminwidth,vdistance]),
+                axes[0], num_bins=5, min_max=(0., 100.), unit_str='', _format='%.f~%.f',
+                min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
+        Plot2dEval(eval_data, picks, minwidth,  logical_ands([valid,vmargin,vdistance]),
+                axes[1], num_bins=5, min_max=(10., 60.), unit_str='', _format='%.f~%.f',
+                min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
+        Plot2dEval(eval_data, picks, oblique, logical_ands([valid,vminwidth,vmargin,vdistance]),
+                axes[2], num_bins=5, min_max=(0., 50.), unit_str='[deg]', _format='%.f~%.f',
+                min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
+        Plot2dEval(eval_data, picks, distance, logical_ands([valid,vminwidth,vmargin]),
+                axes[3], num_bins=4, min_max=(.5, 3.), unit_str='[m]', _format='%.2f~%.2f',
+                min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
+        axes[0].set_title('Margin-AP',fontsize=7).set_position( (.5, 1.42))
+        axes[1].set_title('min(w,h)-AP',fontsize=7).set_position( (.5, 1.42))
+        axes[2].set_title('Oblique-AP',fontsize=7).set_position( (.5, 1.42))
+        axes[3].set_title('Distance-AP',fontsize=7).set_position( (.5, 1.42))
+        if not show_sample:
+            fig.savefig(osp.join(eval_dir,'test_margin_ap.svg'), bbox_inches=full_extent(axes[0]))
+            fig.savefig(osp.join(eval_dir,'test_minwidth_ap.svg'), bbox_inches=full_extent(axes[1]))
+            fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(axes[2]))
+            fig.savefig(osp.join(eval_dir,'test_distance_ap.svg'), bbox_inches=full_extent(axes[3]))
 
-        min_iou = .7
-        Plot3dEval(eval_data, margin, tags, axes[5], min_iou=min_iou,
-                unit_str ='[pixel]', num_bins=5, min_max=(0., 100.) )
-        # 의미있는 경향은 안보임.
-        Plot3dEval(eval_data, minwidth, tags, axes[6], min_iou=min_iou,
-                unit_str ='[pixel]', num_bins=7, min_max=(10, 70.) )
-        Plot3dEval(eval_data, oblique, tags, axes[7], min_iou=min_iou,
-                unit_str ='[deg]', num_bins=5, min_max=(0, 50.) )
+        min_iou=.6
+        valid = tags==''
+        valid = la(valid, eval_data['iou']>min_iou)
+        valid = la(valid, ~eval_data['underseg'])
+        valid = la(valid, ~eval_data['overseg'])
+        for i, ytype in enumerate(['Median', 'MAE']):
+            n0 = 5*i
+            Plot3dEval(eval_data, axes[n0+5], ytype,
+                    margin, logical_ands([valid,vminwidth,vdistance]), show_sample=show_sample,
+                    unit_str ='[pixel]', num_bins=5, min_max=(0., 100.) )
+            # 의미있는 경향은 안보임.
+            Plot3dEval(eval_data, axes[n0+6], ytype,
+                    minwidth, logical_ands([valid,vmargin,vdistance]), show_sample=show_sample,
+                    unit_str ='[pixel]', num_bins=7, min_max=(10, 70.) )
+            Plot3dEval(eval_data, axes[n0+7], ytype,
+                    oblique, logical_ands([valid,vmargin,vminwidth,vdistance]), show_sample=show_sample,
+                    unit_str ='[deg]', num_bins=5, min_max=(0, 50.) )
+            Plot3dEval(eval_data, axes[n0+8], ytype,
+                    distance, logical_ands([valid,vmargin,vminwidth]), show_sample=show_sample,
+                    unit_str ='[m]', num_bins=3, min_max=(.5, 3.) )
+            axes[n0+5].set_title('Margin - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
+            axes[n0+6].set_title('min(w,h) - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
+            axes[n0+7].set_title('Oblique - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
+            axes[n0+8].set_title('Distance - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
 
-        Plot3dEval(eval_data, distance, tags, axes[8], min_iou=min_iou,
-                unit_str ='[m]', num_bins=3, min_max=(.5, 3.) )
 
-        fig.savefig(osp.join(eval_dir,'test_margin_ap.svg'), bbox_inches=full_extent(axes[0]))
-        fig.savefig(osp.join(eval_dir,'test_minwidth_ap.svg'), bbox_inches=full_extent(axes[1]))
-        fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(axes[2]))
-        fig.savefig(osp.join(eval_dir,'test_distance_ap.svg'), bbox_inches=full_extent(axes[3]))
-        fig.savefig(osp.join(eval_dir,'test_tags_ap.svg'), bbox_inches=full_extent(axes[4]))
+        validobb_data = eval_data[logical_ands([valid,vmargin,vminwidth,vdistance,eval_data['valid_obb']])]
+        N = valid.sum()
+        n = logical_ands([valid,eval_data['valid_obb']]).sum()
+        r = float(n)/float(N)
+        print("p(OBB | valid 2D seg) = %d / %d = %.f"%(n,N,r) )
+
+        #table_data = [ ['Median', 'MAE'] ]
+        table_data = [ ['trans_err', 'max_wh_err', 'deg_err'] ]
+        for eval_type in ['Median', 'MAE']:
+            values = [eval_type]
+            for err_type in table_data[0]:
+                data = validobb_data[err_type]
+                if eval_type == 'Median':
+                    val = np.median(data)
+                else:
+                    val = np.sum(np.abs(data)) / float(len(data))
+                values.append(val)
+            table_data.append( values )
+
+        # ref : https://pyhdust.readthedocs.io/tabulate.html
+        table = tabulate(table_data, headers="firstrow")
+        print(table)
+        table = tabulate(table_data, headers="firstrow", tablefmt="latex",
+                floatfmt=(None,'.3f', '.3f', '.2f') )
+        print(table)
+
+        #print("3D perofrmance error
 
     #PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection')
     return
@@ -1217,11 +1114,13 @@ def dist_evaluation():
     valid    = margin>40.
     fig = plt.figure(1, figsize=FIG_SIZE, dpi=DPI)
     fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
-    k = int( '%d1%d'%(N_SUB,1) )
-    ax = fig.add_subplot(k)
+    ax = fig.add_subplot(N_FIG[0],N_FIG[1],1)
     ax.yaxis.set_major_locator(MultipleLocator(.5))
-    PlotDistanceAp(eval_data, picks, distance, valid, ax, min_iou=.5,
-            num_bins=5,min_max=(1.,2.5), show_underseg=True, show_overseg=True)
+    #PlotDistanceAp(eval_data, picks, distance, valid, ax, min_iou=.5,
+    #        num_bins=5,min_max=(1.,2.5), show_underseg=True, show_overseg=True)
+    Plot2dEval(eval_data, picks, distance,  valid, ax,
+            num_bins=5, min_max=(1., 2.5), unit_str='[m]', _format='%.2f~%.2f',
+            min_iou=.5, show_underseg=True,show_overseg=True)
     fig.savefig(osp.join(eval_dir,'test_dist_ap.svg'), bbox_inches=full_extent(ax))
     PlotEachScens(eval_data, picks, eval_dir, infotype='')
     return
@@ -1255,10 +1154,12 @@ def oblique_evaluation():
     valid   = margin>40.
     fig = plt.figure(1, figsize=FIG_SIZE, dpi=DPI)
     fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
-    k = int( '%d1%d'%(N_SUB,1) )
-    ax = fig.add_subplot(k)
+    ax = fig.add_subplot(N_FIG[0],N_FIG[1],1)
     ax.yaxis.set_major_locator(MultipleLocator(.5))
-    PlotObliqueAp(eval_data,picks,oblique,valid,ax,min_iou=.5, show_underseg=True)
+    Plot2dEval(eval_data, picks, oblique,  valid, ax,
+            num_bins=5, min_max=(0., 50.), unit_str='[deg]', _format='%.f~%.f',
+            min_iou=.5, show_underseg=True,show_overseg=True)
+
     fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(ax))
     PlotEachScens(eval_data, picks, eval_dir, infotype='')
     return
@@ -1268,7 +1169,7 @@ if __name__=="__main__":
     target = rospy.get_param('~target')
     show = int(rospy.get_param('~show'))
     if target=='test':
-        test_evaluation()
+        test_evaluation(show_sample=show)
     elif target=='dist':
         dist_evaluation()
     elif target=='oblique':

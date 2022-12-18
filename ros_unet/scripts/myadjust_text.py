@@ -4,7 +4,9 @@ from adjustText import *
 
 """
     adjustText.adjust_text() -> myadjust_text()
-    차이점 : arrowprops 의 화살표끝이 bounding box 안에 있을 경우 생략하는 기능 추가.
+    차이점 :
+    1) arrowprops 의 화살표끝이 bounding box 안에 있을 경우 생략하는 기능 추가.
+    2) ha, va 가 None으로 주어질 경우 변경 안하는 기능 추가.
 """
 
 # intersection between line(p1, p2) and line(p3, p4)
@@ -112,9 +114,12 @@ def myadjust_text(texts, x=None, y=None, add_objects=None, ax=None,
                              it a flat list of matplotlib objects?")
             return
         text_from_objects = True
-    for text in texts:
-        text.set_va(va)
-        text.set_ha(ha)
+    if va is not None:
+        for text in texts:
+            text.set_va(va)
+    if ha is not None:
+        for text in texts:
+            text.set_ha(ha)
     if save_steps:
         if add_step_numbers:
             plt.title('Before')
