@@ -4,12 +4,21 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_EXPORT_COMPILE_COMMANDS On)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-#add_compile_options(-std=c++11)
+#add_compile_options(-std=c++14)
 
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules)
 
 find_package(OpenCV 3 REQUIRED )
 find_package(G2O REQUIRED) # Find /opt/ros/melodic/lib/g2o
+
+#CGAL
+find_package(CGAL REQUIRED)
+find_package(Eigen3 3.1.0 REQUIRED) #(3.1.0 or greater)
+include(CGAL_Eigen3_support)
+if(NOT TARGET CGAL::Eigen3_support)
+  message(SEND_ERROR "This project requires the Eigen library, and will not be compiled.")
+endif()
+
 
 find_package(catkin REQUIRED
   cv_bridge
@@ -76,3 +85,11 @@ target_link_libraries(obb_server unetsegment ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
 add_executable(floor_detector src/floor_detector.cpp)
 target_link_libraries(floor_detector ${catkin_LIBRARIES} ${OpenCV_LIBS})
+
+add_executable(mvbb src/mvbb_test.cpp)
+target_link_libraries(mvbb PUBLIC CGAL::Eigen3_support ${catkin_LIBRARIES})
+
+foreach(target obb_server mvbb)
+    add_dependencies(${target} ${${PROJECT_NAME}_EXPORTED_TARGETS})
+endforeach()
+

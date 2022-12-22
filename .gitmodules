@@ -14,3 +14,6 @@
 	path = thirdparty/opencv
 	url = https://github.com/opencv/opencv
 	branch = 3.4
+[submodule "thirdparty/cgal"]
+	path = thirdparty/cgal
+	url = https://github.com/CGAL/cgal
