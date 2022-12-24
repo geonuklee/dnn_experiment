@@ -4,6 +4,7 @@
 <arg name="cameras" default="[0,]" />
 <arg name="sensor_model" default="helios"/>
 <arg name="voxel_leaf" value="0.01" />
+<arg name="euc_tolerance" value="0.1" />
 <arg name="rviz_name" default="unet.rviz"/>
 <arg name="target" default="test"/>
 <arg name="show" default="1"/>
@@ -18,13 +19,23 @@
     </rosparam>
 </node>
 
-<node name="pipeline" pkg="ros_unet" type="obb_server" output="screen" required="true">
+<node name="obb_server" pkg="ros_unet" type="obb_server" output="screen" required="true">
     <rosparam subst_value="True">
       verbose: $(arg verbose)
       min_points_of_cluster: 1
       sensor_model: $(arg sensor_model)
       voxel_leaf: $(arg voxel_leaf)
+      euc_tolerance: $(arg euc_tolerance)
       generate_points: $(arg generate_points)
+    </rosparam>
+</node>
+<node name="cgal_server" pkg="ros_unet" type="cgal_server" output="screen" required="true">
+    <rosparam subst_value="True">
+      verbose: $(arg verbose)
+      min_points_of_cluster: 1
+      sensor_model: $(arg sensor_model)
+      voxel_leaf: $(arg voxel_leaf)
+      euc_tolerance: $(arg euc_tolerance)
     </rosparam>
 </node>
 
@@ -32,10 +43,13 @@
 
 <node name="evaluator"  pkg="ros_unet" type="ros_eval2.py" output="screen" required="true">
     <remap from="~PredictEdge" to="/unet_server/PredictEdge" />
-    <remap from="~SetCamera"   to="/pipeline/SetCamera" />
-    <remap from="~ComputeObb"  to="/pipeline/ComputeObb" />
+    <remap from="~SetCamera"   to="/obb_server/SetCamera" />
+    <remap from="~ComputeObb"  to="/obb_server/ComputeObb" />
     <remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
     <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" />
+    <remap from="~Cgal/SetCamera"   to="/cgal_server/SetCamera" />
+    <remap from="~Cgal/ComputeCgalObb"  to="/cgal_server/ComputeCgalObb" />
+
     <rosparam subst_value="True">
       target: "$(arg target)"
       show: "$(arg show)"

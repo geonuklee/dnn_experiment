@@ -69,7 +69,7 @@ def get_camid(fn):
     groups = re.findall("(.*)_(cam0|cam1)", base)[0]
     return groups[1]
 
-def get_topics(bridge, pkg_dir,gt_fn, pick, set_camera,floordetector_set_camera, compute_floor):
+def get_topics(bridge, pkg_dir,gt_fn, pick, set_cameras,floordetector_set_camera, compute_floor):
     rosbag_fn = osp.join(pkg_dir, pick['rosbag_fn'] )
     bag = rosbag.Bag(rosbag_fn)
     rgb_topics, depth_topics, info_topics = {},{},{}
@@ -87,7 +87,8 @@ def get_topics(bridge, pkg_dir,gt_fn, pick, set_camera,floordetector_set_camera,
             continue
         rect_info_msgs[cam_id], mx, my = get_rectification(info_msg)
         remap_maps[cam_id] = (mx, my)
-        set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
+        for set_camera in set_cameras:
+            set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
         floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
     rgb_msgs, depth_msgs  = {}, {}
     topic2cam = {}
@@ -285,7 +286,7 @@ def Evaluate3D(pick, gt_obb_markers, obb_resp, output2dlist):
             s_err = np.abs(s_err)
             max_wh_err = max( s_err ) # [meter]
         else:
-            msg = '   Failed to compute OBB'%iou
+            msg = '   Failed to compute OBB'
             cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, (0,0,255), font_thick)
             pt[1] += h+hoffset
             output23dlist.append( output+(False, 999., 999., 999.) )
@@ -341,6 +342,21 @@ def Evaluate3D(pick, gt_obb_markers, obb_resp, output2dlist):
     dst = np.hstack((dst,dst_score))
     return output23dlist, dst
 
+def GetMinLength(eval_data, picks):
+    length_array = np.repeat(-1.,eval_data.shape)
+    for base, pick in picks.items():
+        obbs = {}
+        for each in pick['obbs']:
+            obbs[each['id']] = each
+        gt_marker = pick['marker']
+        for gidx in np.unique(gt_marker):
+            if gidx == 0:
+                continue
+            indicies, = np.where(np.logical_and(eval_data['base']==base,eval_data['gidx']==gidx))
+            scale =  obbs[gidx]['scale']
+            min_length = min(scale)
+            length_array[indicies] = min_length
+    return length_array
 
 def GetOblique(eval_data, picks):
     oblique_array = np.repeat(-1.,eval_data.shape)
@@ -469,6 +485,56 @@ def LabelHeight(ax, rects, form='%.2f'):
     #        expand_text=(2.,2.),
     #        lim=1000)
     return
+
+def PlotLengthOblique(picks, mvbb_data, eval_data):
+    datas = Od()
+    datas['TODO(Naming)'] = eval_data
+    datas['mvbb'] = mvbb_data
+
+    min_length = .1
+
+    n_bins = 6
+    step = 10.
+    x = np.arange(n_bins)
+    min_max = [0., n_bins*step]
+    max_bound = 0.
+    nbar = 2
+    width = 1. / float(nbar) - .05
+    x = np.arange(n_bins)
+    offset = float(nbar-1)*width/2.
+
+    fig = plt.figure(figsize=(6,4), dpi=100)
+    ax = fig.add_subplot(1,1,1)
+    for i, (method, data) in enumerate(datas.items()):
+        lengths = GetMinLength(data, picks)
+        values = data[lengths > min_length]['deg_err']
+        if method=='mvbb':
+            print("~~~~~~~~~~~~~~~~~~~~~")
+            print("%s median(deg_err) = %f"%(method,np.median(values)) )
+            print("~~~~~~~~~~~~~~~~~~~~~")
+        tp_hist,  bins = np.histogram(values, n_bins, min_max)
+        tp_hist = tp_hist.astype(float) / np.sum(tp_hist).astype(float)
+        nbar = 1
+        rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5,label=method)
+        LabelHeight(ax,rects)
+        offset -=width
+        for bound, y in zip(np.flip(bins[1:]), np.flip(tp_hist)):
+            if y > 0.:
+                break
+            max_bound = max(bound/step,max_bound)
+    ax.set_xlim(-width, max_bound)
+    ax.set_xlabel('[deg]', fontsize=FONT_SIZE)
+    ax.set_ylabel('Probability', fontsize=FONT_SIZE)
+    ax.legend(loc='upper right', fontsize=FONT_SIZE)
+    xlabels = []
+    for i in range(n_bins):
+        #msg = '%.1f~%.1f'%(bins[i],bins[i+1])
+        msg = '~%.1f'%(bins[i+1])
+        xlabels.append(msg)
+    ax.set_xticks(x)
+    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
+    fig.tight_layout()
+    return fig
 
 def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
         unit_str, _format,
@@ -799,7 +865,41 @@ def PlotTagAp(eval_data, tags, ax, min_iou, show_underseg=False, show_overseg=Fa
     ax.yaxis.set_label_coords(-0.08, 1.05)
     return
 
-def perform_test(eval_dir, gt_files,fn_evaldata):
+def GetErrorOfMvbb(gt_obb_markers, mvbb_resp):
+    gt_obbs, pred_obbs = {}, {}
+    for gt_marker in gt_obb_markers.markers:
+        gt_obbs[gt_marker.id] = gt_marker
+
+    output23dlist = []
+    for pred_obb in mvbb_resp.output.markers:
+        gt_obb = gt_obbs[pred_obb.id]
+        b0 = marker2box(gt_obb)
+        b1 = marker2box(pred_obb)
+        b1 = FitAxis(b0, b1)
+        rwb0 = rotation_util.from_dcm(b0.rotation)
+        rwb1 = rotation_util.from_dcm(b1.rotation)
+        daxis = 0
+        cp_surf0, _ = GetSurfCenterPoint(gt_obb,daxis)
+        cp_surf1, _ = GetSurfCenterPoint(pred_obb,daxis)
+        dr = rwb1.inv()* rwb0
+        deg_err = np.rad2deg( np.linalg.norm(dr.as_rotvec()) )
+        # surf_cp is twp for cente 'p'ointr of front plane on 'w'orld frame.
+        t_err = cp_surf1 - cp_surf0
+        t_err = np.linalg.norm(t_err)
+        # Denote that x-axis is assigned to normal of front plane.
+        s_err = (b1.scale-b0.scale)[1:]
+        s_err = np.abs(s_err)
+        max_wh_err = max( s_err ) # [meter]
+
+        # Assume recall 1 because get from ground truth marker
+        pidx = gidx = gt_obb.id
+        iou = precision = recall = 1. 
+        overseg = underseg = False
+        output = gidx, iou, recall, overseg, underseg, pidx, precision 
+        output23dlist.append( output+(True, t_err, deg_err, max_wh_err) )
+    return output23dlist
+
+def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
     #if osp.exists(screenshot_dir):
     #    shutil.rmtree(screenshot_dir)
     #makedirs(screenshot_dir)
@@ -814,6 +914,12 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
     floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
+
+    rospy.wait_for_service('~Cgal/ComputeCgalObb')
+    compute_cgalobb = rospy.ServiceProxy('~Cgal/ComputeCgalObb', ros_unet.srv.ComputeCgalObb)
+    rospy.wait_for_service('~Cgal/SetCamera')
+    cgal_set_camera = rospy.ServiceProxy('~Cgal/SetCamera', ros_unet.srv.SetCamera)
+
     pub_gt_obb = rospy.Publisher("~gt_obb", MarkerArray, queue_size=-1)
     pub_gt_pose = rospy.Publisher("~gt_pose", PoseArray, queue_size=1)
 
@@ -822,6 +928,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
     dtype = [('base',object),
             ('sidx',int), # Scene index
             ('fidx',int), # Frame index
+            ('method',object), # 'myobb, mvbb, etc'
             ('gidx',int), # Ground truth object index
             ('iou',float), ('recall',float), ('overseg',bool),('underseg',bool),
             ('pidx',int), # Prediction object index
@@ -839,7 +946,9 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
         base = osp.splitext(osp.basename(pick['rosbag_fn']))[0]
         bag, set_depth, set_rgb, topic2cam, rgb_topics, depth_topics, rgb_msgs, depth_msgs,\
                 rect_info_msgs, mx, my, fx, fy, Twc, plane_c, floor = \
-                get_topics(bridge,pkg_dir,gt_fn, pick, set_camera,floordetector_set_camera, compute_floor)
+                get_topics(bridge,pkg_dir,gt_fn, pick,
+                        [set_camera, cgal_set_camera],
+                        floordetector_set_camera, compute_floor)
 
         gt_obbs = {}
         for obb in pick['obbs']:
@@ -873,13 +982,31 @@ def perform_test(eval_dir, gt_files,fn_evaldata):
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
             t1 = time.time()
 
-            #obb_resp.filtered_outline, obb_resp.marker, obb_resp.output
-            eval_2d, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
-            eval_23d, dst3d = Evaluate3D(pick, gt_obb_markers, obb_resp, eval_2d)
-            #for each in eval_2d:
-            for each in eval_23d:
-                eval_scene.append( (base,i_file,nframe)+ each)
+            if 'mvbb' in methods:
+                '''
+                # Comaprison for cgal obb
+                * [x] collecting cases
+                * [x] Cgal OBB marker array로 획득.
+                * [x] deg_err 계산해서 반영.
+                * [ ] 2면이 보이는 instance만 따로 골라내기 
+                    * Cgal OBB둘다 일정 크기 이상의 깊이를 가지면 orientation 문제가 감지됨.
+                        -> marker에 상자 두께가 관찰되는 상황이라 이야기하자.
+                * [ ] deg_err의 분포 (median?)만 이야기해도 되겠다.
+                '''
+                marker = pick['marker']
+                dist = cv2.distanceTransform( (~pick['outline']).astype(np.uint8), distanceType=cv2.DIST_L2, maskSize=5)
+                marker[dist < 5.] = 0
+                marker = bridge.cv2_to_imgmsg(marker,encoding='passthrough')
+                mvbb_resp = compute_cgalobb(rect_depth_msg, marker, Twc, std_msgs.msg.String(cam_id), fx, fy)
+                eval_23d = GetErrorOfMvbb(gt_obb_markers, mvbb_resp)
+                for each in eval_23d:
+                    eval_scene.append( (base,i_file,nframe,'mvbb')+ each)
 
+            if 'myobb' in methods:
+                eval_2d, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
+                eval_23d, dst3d = Evaluate3D(pick, gt_obb_markers, obb_resp, eval_2d)
+                for each in eval_23d:
+                    eval_scene.append( (base,i_file,nframe,'myobb')+ each)
             pub_gt_obb.publish(gt_obb_markers)
 
             cv2.imshow("frame", dst)
@@ -953,10 +1080,10 @@ def test_evaluation(show_sample):
         obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
         gt_files += glob2.glob(obbdatasetpath)
     if not osp.exists(fn_evaldata):
-        eval_data = perform_test(eval_dir, gt_files, fn_evaldata)
+        eval_data_allmethod = perform_test(eval_dir, gt_files, fn_evaldata, methods=['myobb','mvbb'])
     else:
         with open(fn_evaldata,'rb') as f: 
-            eval_data = np.load(f, allow_pickle=True)
+            eval_data_allmethod = np.load(f, allow_pickle=True)
     picks = {}
     for fn in gt_files:
         base = osp.splitext( osp.basename(fn) )[0]
@@ -982,6 +1109,14 @@ def test_evaluation(show_sample):
     tags = tmp_tags
     
     la = np.logical_and
+    mvbb_data = eval_data_allmethod[eval_data_allmethod['method']=='mvbb']
+    eval_data = eval_data_allmethod[eval_data_allmethod['method']=='myobb']
+    
+    # TODO mvbb_data, eval_data 둘 비교
+    fig = PlotLengthOblique(picks, mvbb_data, eval_data)
+    fig.savefig(osp.join(eval_dir,'test_mvbb_oblique.svg'),
+                    bbox_inches='tight', transparent=True, pad_inches=0)
+
     oblique = GetOblique(eval_data, picks)
     margin, minwidth = GetMargin(eval_data, picks)
     distance = GetDistance(eval_data, picks)

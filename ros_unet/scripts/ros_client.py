@@ -146,6 +146,11 @@ if __name__=="__main__":
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
 
+    rospy.wait_for_service('~Cgal/ComputeCgalObb')
+    cgal_compute_cgalobb = rospy.ServiceProxy('~Cgal/ComputeCgalObb', ros_unet.srv.ComputeCgalObb)
+    rospy.wait_for_service('~Cgal/SetCamera')
+    cgal_set_camera = rospy.ServiceProxy('~Cgal/SetCamera', ros_unet.srv.SetCamera)
+
     do_eval = rospy.get_param("~do_eval")=='true'
     if do_eval:
         rosbagfn = rospy.get_param("~filename")
@@ -165,6 +170,7 @@ if __name__=="__main__":
         rect_info_msgs[cam_id], mx, my = get_rectification(sub.info)
         remap_maps[cam_id] = (mx, my)
         set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
+        cgal_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
         floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
         break
 
@@ -188,6 +194,9 @@ if __name__=="__main__":
                 Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
         t1 = time.time()
 
+        cgal_compute_cgalobb(rect_depth_msg, obb_resp.marker,
+                Twc, std_msgs.msg.String(cam_id), fx, fy)
+
         if do_eval:
             eval_frame, pred_marker, dst = Evaluate2D(obb_resp, pick['marker'], rgb)
             cv2.imshow("dst", dst)
@@ -195,6 +204,5 @@ if __name__=="__main__":
                 exit(1)
 
         #print("etime = ", t1-t0)
-        # TODO obb_resp
         rate.sleep()
 

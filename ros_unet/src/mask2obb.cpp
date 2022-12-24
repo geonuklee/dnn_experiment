@@ -82,7 +82,8 @@ void LimitUVRange(const int& rows, const int& cols, cv::Point2i& uv){
   return;
 }
 
-void ColorizeSegmentation(const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& clouds,
+template<typename PointT>
+void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<PointT> > >& clouds,
                           sensor_msgs::PointCloud2& msg){
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr colorized_pointscloud(new pcl::PointCloud<pcl::PointXYZRGB>());
   //colors.at()
@@ -94,7 +95,7 @@ void ColorizeSegmentation(const std::map<int, pcl::PointCloud<pcl::PointXYZLNorm
   for(auto it : clouds){
     const int& idx = it.first;
     const auto& color = colors.at(idx % colors.size());
-    for(const pcl::PointXYZLNormal& xyz : *it.second){
+    for(const PointT& xyz : *it.second){
       pcl::PointXYZRGB pt;
       pt.x = xyz.x;
       pt.y = xyz.y;
@@ -111,17 +112,30 @@ void ColorizeSegmentation(const std::map<int, pcl::PointCloud<pcl::PointXYZLNorm
   return;
 }
 
-pcl::PointIndices::Ptr EuclideanFilterXYZ(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr given_cloud,
+void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZLNormal> > >& clouds,
+                          sensor_msgs::PointCloud2& msg){
+  ColorizeSegmentation<pcl::PointXYZLNormal>(clouds, msg);
+  return;
+}
+
+void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > >& clouds,
+                          sensor_msgs::PointCloud2& msg){
+  ColorizeSegmentation<pcl::PointXYZ>(clouds, msg);
+  return;
+}
+
+template<typename PointT>
+pcl::PointIndices::Ptr EuclideanFilter(const boost::shared_ptr<const pcl::PointCloud<PointT>> & given_cloud,
                   const ObbParam& param,
                   bool reserve_best_only
                   ){
   pcl::PointIndices::Ptr results(new pcl::PointIndices);
 
   // Creating the KdTree object for the search method of the extraction
-  pcl::search::KdTree<pcl::PointXYZLNormal>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZLNormal>);
-  tree->setInputCloud (given_cloud);
+  boost::shared_ptr<pcl::search::KdTree<PointT> > tree(new pcl::search::KdTree<PointT>());
+  tree->setInputCloud(given_cloud);
   std::vector<pcl::PointIndices> cluster_indices;
-  pcl::EuclideanClusterExtraction<pcl::PointXYZLNormal> ec;
+  pcl::EuclideanClusterExtraction<PointT> ec;
   ec.setClusterTolerance(param.euclidean_filter_tolerance);
   ec.setMinClusterSize(0);
   ec.setMaxClusterSize(given_cloud->size());
@@ -687,6 +701,55 @@ pcl::PointCloud<pcl::PointXYZLNormal>::Ptr FilterEuclideanOnPlane(pcl::PointClou
   return filtered_cloud;
 }
 
+// Twl : {l} coordinate is the final local coordinate of OBB,
+// which has aligned axis on OBB and origin is positioned at center of OBB.
+void FitAxis(g2o::SE3Quat& Twl, Eigen::Vector3d& whd){
+  // Fitting axis order similar to world coordinate
+  const Eigen::Matrix<double,3,3> Rwl0 = Twl.rotation().toRotationMatrix();
+  int c0, c1, c2;
+  double val_max0 = 0.;
+  for(int k = 0; k<3; k++){
+    const double& val = Rwl0(0,k);
+    if(std::abs(val) > std::abs(val_max0) ){
+      c0 = k;
+      val_max0 = val;
+    }
+  }
+  double val_max1 = 0.;
+  for(int k = 0; k<3; k++){
+    if(k==c0)
+      continue;
+    const double& val = Rwl0(2,k);
+    if(std::abs(val) > std::abs(val_max1) ){
+      c1 = k;
+      val_max1 = val;
+    }
+  }
+  for(int k=0; k <3; k++){
+    if(k==c0)
+      continue;
+    if(k==c1)
+      continue;
+    c2 = k;
+    break;
+  }
+
+  Eigen::Matrix<double,3,3> Rwl;
+  auto whd0 = whd;
+  Rwl.col(0) = Rwl0.col(c0);
+  if(val_max0 > 0.)  //  box detection 의 x축 방향 결정.
+    Rwl.col(0) = -Rwl.col(0);
+  Rwl.col(1) = Rwl0.col(c1);
+  if(val_max1 < 0.)
+    Rwl.col(1) = -Rwl.col(1);
+  whd[0] = whd0[c0];
+  whd[1] = whd0[c1];
+  whd[2] = whd0[c2];
+  Rwl.col(2) = Rwl.col(0).cross(Rwl.col(1));
+
+  Twl.setRotation(g2o::Quaternion(Rwl));
+  return;
+}
 
 bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
                 pcl::PointCloud<pcl::PointXYZLNormal>::Ptr boundary,
@@ -1046,52 +1109,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
     }
 
 #if 1
-    // Fitting axis order similar to world coordinate
-    const Eigen::Matrix<double,3,3> Rwl0 = Twl.rotation().toRotationMatrix();
-    int c0, c1, c2;
-    double val_max0 = 0.;
-    for(int k = 0; k<3; k++){
-      const double& val = Rwl0(0,k);
-      if(std::abs(val) > std::abs(val_max0) ){
-        c0 = k;
-        val_max0 = val;
-      }
-    }
-    double val_max1 = 0.;
-    for(int k = 0; k<3; k++){
-      if(k==c0)
-        continue;
-      const double& val = Rwl0(2,k);
-      if(std::abs(val) > std::abs(val_max1) ){
-        c1 = k;
-        val_max1 = val;
-      }
-    }
-    for(int k=0; k <3; k++){
-      if(k==c0)
-        continue;
-      if(k==c1)
-        continue;
-      c2 = k;
-      break;
-    }
-
-    Eigen::Matrix<double,3,3> Rwl;
-    auto whd0 = whd;
-    Rwl.col(0) = Rwl0.col(c0);
-    if(val_max0 > 0.)  //  box detection 의 x축 방향 결정.
-      Rwl.col(0) = -Rwl.col(0);
-    Rwl.col(1) = Rwl0.col(c1);
-    if(val_max1 < 0.)
-      Rwl.col(1) = -Rwl.col(1);
-    whd[0] = whd0[c0];
-    whd[1] = whd0[c1];
-    whd[2] = whd0[c2];
-    Rwl.col(2) = Rwl.col(0).cross(Rwl.col(1));
-
-    // Twl : {l} coordinate is the final local coordinate of OBB,
-    // which has aligned axis on OBB and origin is positioned at center of OBB.
-    Twl.setRotation(g2o::Quaternion(Rwl));
+    FitAxis(Twl,whd);
 #endif
 
     int n_inlier = GetBoxInlier(Twl, whd, cloud);
@@ -1252,4 +1270,17 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
   }
   return;
 }
+
+pcl::PointIndices::Ptr EuclideanFilterXYZ(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr given_cloud,
+                  const ObbParam& param,
+                  bool reserve_best_only){
+  return EuclideanFilter<pcl::PointXYZLNormal>(given_cloud, param, reserve_best_only);
+}
+
+pcl::PointIndices::Ptr EuclideanFilterXYZ(pcl::PointCloud<pcl::PointXYZ>::Ptr given_cloud,
+                  const ObbParam& param,
+                  bool reserve_best_only){
+  return EuclideanFilter<pcl::PointXYZ>(given_cloud, param, reserve_best_only);
+}
+
 

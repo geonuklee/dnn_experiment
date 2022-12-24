@@ -114,7 +114,9 @@ struct ObbParam{
   bool verbose;
 };
 
-void ColorizeSegmentation(const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& clouds,
+void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZLNormal> > >& clouds,
+                          sensor_msgs::PointCloud2& msg);
+void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > >& clouds,
                           sensor_msgs::PointCloud2& msg);
 
 class ObbProcessVisualizer{
@@ -245,6 +247,15 @@ protected:
   cv::Mat nu_, nv_;
 };
 
+pcl::PointIndices::Ptr EuclideanFilterXYZ(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr given_cloud,
+                  const ObbParam& param,
+                  bool reserve_best_only);
 
+pcl::PointIndices::Ptr EuclideanFilterXYZ(pcl::PointCloud<pcl::PointXYZ>::Ptr given_cloud,
+                  const ObbParam& param,
+                  bool reserve_best_only);
+
+std_msgs::ColorRGBA GetColor(int id);
+void FitAxis(g2o::SE3Quat& Twl, Eigen::Vector3d& whd);
 
 #endif

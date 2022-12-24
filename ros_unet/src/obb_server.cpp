@@ -252,8 +252,7 @@ int main(int argc, char **argv) {
   //std::vector<int> cameras = GetRequiredParamVector<int>(nh, "cameras");
   param.min_points_of_cluster = GetRequiredParam<double>(nh, "min_points_of_cluster");
   param.voxel_leaf = GetRequiredParam<double>(nh, "voxel_leaf");
-  //param.euclidean_filter_tolerance = 0.2; // [meter] Enough tolerance condisering empty unprojection on edge.
-  param.euclidean_filter_tolerance = 0.1; // [meter] small tolerance condisering bg invasion
+  param.euclidean_filter_tolerance = GetRequiredParam<double>(nh, "euc_tolerance"); // [meter] small tolerance condisering bg invasion
   param.verbose = GetRequiredParam<bool>(nh, "verbose");
   BoxDetector box_detector(nh, param);
 
@@ -262,7 +261,6 @@ int main(int argc, char **argv) {
 
   ros::ServiceServer s1
     = nh.advertiseService("ClearCamera", &BoxDetector::ClearCamera, &box_detector);
-
 
   ros::ServiceServer s2
     = nh.advertiseService("ComputeObb", &BoxDetector::ComputeObb, &box_detector);

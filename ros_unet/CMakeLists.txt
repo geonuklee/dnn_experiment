@@ -19,7 +19,6 @@ if(NOT TARGET CGAL::Eigen3_support)
   message(SEND_ERROR "This project requires the Eigen library, and will not be compiled.")
 endif()
 
-
 find_package(catkin REQUIRED
   cv_bridge
   sensor_msgs
@@ -31,10 +30,12 @@ find_package(catkin REQUIRED
 )
 
 add_service_files(DIRECTORY srv FILES
-  ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv ComputeFloor.srv)
+  ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv ComputeFloor.srv
+  ComputeCgalObb.srv
+  )
 
 #catkin_python_setup() # Call setup.py for catkin. ref for setup.py of catkin : http://docs.ros.org/en/jade/api/catkin/html/howto/format2/installing_python.html
-generate_messages(DEPENDENCIES sensor_msgs std_msgs geometry_msgs visualization_msgs ros_unet)
+generate_messages(DEPENDENCIES sensor_msgs std_msgs geometry_msgs visualization_msgs)
 
 catkin_package(
 #  INCLUDE_DIRS include
@@ -80,16 +81,22 @@ add_executable(obb_server
   src/obb_server.cpp
   src/ros_util.cpp
 )
-
 target_link_libraries(obb_server unetsegment ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
 add_executable(floor_detector src/floor_detector.cpp)
 target_link_libraries(floor_detector ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
-add_executable(mvbb src/mvbb_test.cpp)
-target_link_libraries(mvbb PUBLIC CGAL::Eigen3_support ${catkin_LIBRARIES})
+add_executable(cgal_server
+  src/cgal_server.cpp
+  src/mask2obb.cpp
+  src/ros_util.cpp
+)
+target_link_libraries(cgal_server
+  PUBLIC unetsegment CGAL::Eigen3_support ${catkin_LIBRARIES} ${OpenCV_LIBS}
+  ${GMP_LIBRARIES} # ref) https://doc.cgal.org/latest/Manual/configurationvariables.html
+)
 
-foreach(target obb_server mvbb)
+foreach(target obb_server cgal_server)
     add_dependencies(${target} ${${PROJECT_NAME}_EXPORTED_TARGETS})
 endforeach()
 
