@@ -398,14 +398,19 @@ def GetDistance(eval_data, picks):
     assert( (distance_array<0).sum() == 0)
     return distance_array 
 
-def GetMargin(eval_data, picks):
-    margin_array = np.repeat(-1,eval_data.shape)
-    minwidth_array = np.repeat(-1,eval_data.shape)
+def GetMargin(eval_data, picks, normalized):
+    margin_array = np.repeat(-1.,eval_data.shape)
+    minwidth_array = np.repeat(-1.,eval_data.shape)
     for base, pick in picks.items():
         gt_marker = pick['marker']
         w,h = float(gt_marker.shape[1]), float(gt_marker.shape[0])
         K = pick['K']
         fx, fy, cx, cy = K[0,0], K[1,1], K[0,2], K[1,2]
+        if normalized:
+            r = fx/fy
+            if fx != fy:
+                gt_marker = cv2.resize(gt_marker, (int(w), int(r*h)) )
+            fx = fy
         for gidx in np.unique(gt_marker):
             if gidx == 0:
                 continue
@@ -417,11 +422,15 @@ def GetMargin(eval_data, picks):
             loc = np.unravel_index( np.argmax(dist_part,axis=None), gt_marker.shape)
             dy = float(min(loc[0], h-loc[0]))
             dx = float(min(loc[1], w-loc[1]))
-            #dx /= fx
-            #dy /= fy
             d = min(dx, dy)
-            margin_array[indicies] = d
-            minwidth_array[indicies] = dist_part[loc]
+            if normalized:
+                assert(fx == fy)
+                margin_array[indicies] = d/fx
+                minwidth_array[indicies] = dist_part[loc]/fx
+            else:
+                margin_array[indicies] = d
+                minwidth_array[indicies] = dist_part[loc]
+
     assert( (margin_array<0).sum() == 0)
     return margin_array, minwidth_array
 
@@ -493,7 +502,7 @@ def PlotLengthOblique(picks, mvbb_data, eval_data):
 
     min_length = .1
 
-    n_bins = 6
+    n_bins = 5
     step = 10.
     x = np.arange(n_bins)
     min_max = [0., n_bins*step]
@@ -519,17 +528,17 @@ def PlotLengthOblique(picks, mvbb_data, eval_data):
         LabelHeight(ax,rects)
         offset -=width
         for bound, y in zip(np.flip(bins[1:]), np.flip(tp_hist)):
+            max_bound = max(bound/step,max_bound)
             if y > 0.:
                 break
-            max_bound = max(bound/step,max_bound)
-    ax.set_xlim(-width, max_bound)
+    ax.set_xlim(offset, max_bound)
     ax.set_xlabel('[deg]', fontsize=FONT_SIZE)
     ax.set_ylabel('Probability', fontsize=FONT_SIZE)
     ax.legend(loc='upper right', fontsize=FONT_SIZE)
     xlabels = []
     for i in range(n_bins):
         #msg = '%.1f~%.1f'%(bins[i],bins[i+1])
-        msg = '~%.1f'%(bins[i+1])
+        msg = '%.f~%.f'%(bins[i],bins[i+1])
         xlabels.append(msg)
     ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
@@ -710,7 +719,8 @@ def PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection'):
     return
 
 def Plot3dEval(eval_data, ax, ytype,
-        xdata, valid, unit_str, show_sample=True,
+        xdata, valid, unit_str, _format,
+        show_sample=True,
         num_bins=3, min_max=(.5, 3.) ):
     '''
     * 'Bar' Median error
@@ -786,7 +796,7 @@ def Plot3dEval(eval_data, ax, ytype,
 
     xlabels = []
     for i in range(num_bins):
-        msg = '%.1f~%.1f'%(bound[i],bound[i+1])
+        msg = _format%(bound[i],bound[i+1])
         if show_sample:
             msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
@@ -949,7 +959,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                 get_topics(bridge,pkg_dir,gt_fn, pick,
                         [set_camera, cgal_set_camera],
                         floordetector_set_camera, compute_floor)
-
+        # TODO assert(fx == pick['K'][0,0])
         gt_obbs = {}
         for obb in pick['obbs']:
             gt_obbs[obb['id']] = obb
@@ -988,10 +998,9 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                 * [x] collecting cases
                 * [x] Cgal OBB marker array로 획득.
                 * [x] deg_err 계산해서 반영.
-                * [ ] 2면이 보이는 instance만 따로 골라내기 
+                * [x] 2면이 보이는 instance만 따로 골라내기 
                     * Cgal OBB둘다 일정 크기 이상의 깊이를 가지면 orientation 문제가 감지됨.
                         -> marker에 상자 두께가 관찰되는 상황이라 이야기하자.
-                * [ ] deg_err의 분포 (median?)만 이야기해도 되겠다.
                 '''
                 marker = pick['marker']
                 dist = cv2.distanceTransform( (~pick['outline']).astype(np.uint8), distanceType=cv2.DIST_L2, maskSize=5)
@@ -1118,7 +1127,8 @@ def test_evaluation(show_sample):
                     bbox_inches='tight', transparent=True, pad_inches=0)
 
     oblique = GetOblique(eval_data, picks)
-    margin, minwidth = GetMargin(eval_data, picks)
+    normalized = True
+    margin, minwidth = GetMargin(eval_data, picks, normalized)
     distance = GetDistance(eval_data, picks)
     tags   = GetTags(eval_data, picks, tags)
     show = True
@@ -1137,15 +1147,30 @@ def test_evaluation(show_sample):
 
         fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
         valid = tags==''
+        if normalized:
+            vminwidth = minwidth > 10./500. # 0.02
+            vmargin = margin > 20./500. # 0.04
+            margin_minmax = (20./500., 120./500.)
+            n_margin = 5
+            width_minmax = (20./500., 70./500.)
+            n_width = 5
+            img_unit = ''
+            img_format = '%.2f~%.2f'
+        else:
+            vminwidth = minwidth > 10.
+            vmargin = margin > 20.
+            margin_minmax = (20., 100.)
+            width_minmax = (20., 70.)
+            img_unit = '[pixel]'
+            img_format = '%.f~%.f'
+
         vdistance = distance < 2.
-        vminwidth = minwidth > 10.
-        vmargin = margin > 20.
         min_iou = .6
         Plot2dEval(eval_data, picks, margin, logical_ands([valid,vminwidth,vdistance]),
-                axes[0], num_bins=5, min_max=(0., 100.), unit_str='', _format='%.f~%.f',
+                axes[0], num_bins=n_margin, min_max=margin_minmax, unit_str=img_unit, _format=img_format,
                 min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
         Plot2dEval(eval_data, picks, minwidth,  logical_ands([valid,vmargin,vdistance]),
-                axes[1], num_bins=5, min_max=(10., 60.), unit_str='', _format='%.f~%.f',
+                axes[1], num_bins=n_width, min_max=width_minmax, unit_str=img_unit, _format=img_format,
                 min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
         Plot2dEval(eval_data, picks, oblique, logical_ands([valid,vminwidth,vmargin,vdistance]),
                 axes[2], num_bins=5, min_max=(0., 50.), unit_str='[deg]', _format='%.f~%.f',
@@ -1157,11 +1182,11 @@ def test_evaluation(show_sample):
         axes[1].set_title('min(w,h)-AP',fontsize=7).set_position( (.5, 1.42))
         axes[2].set_title('Oblique-AP',fontsize=7).set_position( (.5, 1.42))
         axes[3].set_title('Distance-AP',fontsize=7).set_position( (.5, 1.42))
-        if not show_sample:
-            fig.savefig(osp.join(eval_dir,'test_margin_ap.svg'), bbox_inches=full_extent(axes[0]))
-            fig.savefig(osp.join(eval_dir,'test_minwidth_ap.svg'), bbox_inches=full_extent(axes[1]))
-            fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(axes[2]))
-            fig.savefig(osp.join(eval_dir,'test_distance_ap.svg'), bbox_inches=full_extent(axes[3]))
+        #if not show_sample:
+        fig.savefig(osp.join(eval_dir,'test_margin_ap.svg'), bbox_inches=full_extent(axes[0]))
+        fig.savefig(osp.join(eval_dir,'test_minwidth_ap.svg'), bbox_inches=full_extent(axes[1]))
+        fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(axes[2]))
+        fig.savefig(osp.join(eval_dir,'test_distance_ap.svg'), bbox_inches=full_extent(axes[3]))
 
         min_iou=.6
         valid = tags==''
@@ -1172,17 +1197,17 @@ def test_evaluation(show_sample):
             n0 = 5*i
             Plot3dEval(eval_data, axes[n0+5], ytype,
                     margin, logical_ands([valid,vminwidth,vdistance]), show_sample=show_sample,
-                    unit_str ='[pixel]', num_bins=5, min_max=(0., 100.) )
+                    unit_str=img_unit, _format=img_format, num_bins=5, min_max=margin_minmax )
             # 의미있는 경향은 안보임.
             Plot3dEval(eval_data, axes[n0+6], ytype,
                     minwidth, logical_ands([valid,vmargin,vdistance]), show_sample=show_sample,
-                    unit_str ='[pixel]', num_bins=7, min_max=(10, 70.) )
+                    unit_str=img_unit, _format=img_format, num_bins=7, min_max=width_minmax )
             Plot3dEval(eval_data, axes[n0+7], ytype,
                     oblique, logical_ands([valid,vmargin,vminwidth,vdistance]), show_sample=show_sample,
-                    unit_str ='[deg]', num_bins=5, min_max=(0, 50.) )
+                    unit_str ='[deg]', _format='%.1f~%.1f', num_bins=5, min_max=(0, 50.) )
             Plot3dEval(eval_data, axes[n0+8], ytype,
                     distance, logical_ands([valid,vmargin,vminwidth]), show_sample=show_sample,
-                    unit_str ='[m]', num_bins=3, min_max=(.5, 3.) )
+                    unit_str ='[m]', _format='%.1f~%.1f', num_bins=3, min_max=(.5, 3.) )
             axes[n0+5].set_title('Margin - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
             axes[n0+6].set_title('min(w,h) - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
             axes[n0+7].set_title('Oblique - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
