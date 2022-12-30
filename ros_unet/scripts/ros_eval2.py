@@ -46,8 +46,9 @@ FIG_SUBPLOT_ADJUST = {'wspace':0.3, 'hspace':1.2} # 'top':FIG_TOP
 N_FIG = (5,3)
 FIG_TOP  = .95
 FONT_SIZE = 10
-XLABEL_COORD = {'x':1.05, 'y':-0.08}
-XLABEL_COORD2 = {'x':1.1, 'y':-0.08}
+FONT_WEIGHT = None # 'bold', None
+XLABEL_COORD = {'x':1., 'y':-0.08}
+XLABEL_COORD2 = {'x':1., 'y':-0.08}
 LEGNED_ARGS={'fontsize':FONT_SIZE, 'bbox_to_anchor':(0.5, 1.3),'loc':'center'}
 
 import matplotlib
@@ -501,49 +502,71 @@ def PlotLengthOblique(picks, mvbb_data, eval_data):
     datas['mvbb'] = mvbb_data
 
     min_length = .1
+    fig = plt.figure(figsize=(8,6), dpi=DPI)
+    fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
+    axes = Od()
+    axes['deg_err']    = fig.add_subplot(3,1,3)
+    axes['trans_err']  = fig.add_subplot(3,1,1)
+    axes['max_wh_err'] = fig.add_subplot(3,1,2)
 
-    n_bins = 5
-    step = 10.
-    x = np.arange(n_bins)
-    min_max = [0., n_bins*step]
-    max_bound = 0.
-    nbar = 2
-    width = 1. / float(nbar) - .05
-    x = np.arange(n_bins)
-    offset = float(nbar-1)*width/2.
+    for err_name, ax in axes.items():
+        if err_name == 'deg_err':
+            n_bins, step = 5, 10.
+            unit, _format = '[deg]', '%.f~%.f'
+            ax.set_title('Oblique error-PDF',fontsize=7)#.set_position( (.5, 0.))
+        elif err_name == 'trans_err':
+            n_bins, step = 5, 0.05
+            unit, _format = '[m]', '%.3f~%.3f'
+            ax.set_title('Trans error-PDF',fontsize=7)#.set_position( (.5, 1.42))
+        elif err_name == 'max_wh_err':
+            n_bins, step = 5, 0.05
+            unit, _format = '[m]', '%.3f~%.3f'
+            ax.set_title('Size error-PDF',fontsize=7)#.set_position( (.5, 1.42))
 
-    fig = plt.figure(figsize=(6,4), dpi=100)
-    ax = fig.add_subplot(1,1,1)
-    for i, (method, data) in enumerate(datas.items()):
-        lengths = GetMinLength(data, picks)
-        values = data[lengths > min_length]['deg_err']
-        if method=='mvbb':
-            print("~~~~~~~~~~~~~~~~~~~~~")
-            print("%s median(deg_err) = %f"%(method,np.median(values)) )
-            print("~~~~~~~~~~~~~~~~~~~~~")
-        tp_hist,  bins = np.histogram(values, n_bins, min_max)
-        tp_hist = tp_hist.astype(float) / np.sum(tp_hist).astype(float)
-        nbar = 1
-        rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5,label=method)
-        LabelHeight(ax,rects)
-        offset -=width
-        for bound, y in zip(np.flip(bins[1:]), np.flip(tp_hist)):
-            max_bound = max(bound/step,max_bound)
-            if y > 0.:
-                break
-    ax.set_xlim(offset, max_bound)
-    ax.set_xlabel('[deg]', fontsize=FONT_SIZE)
-    ax.set_ylabel('Probability', fontsize=FONT_SIZE)
-    ax.legend(loc='upper right', fontsize=FONT_SIZE)
-    xlabels = []
-    for i in range(n_bins):
-        #msg = '%.1f~%.1f'%(bins[i],bins[i+1])
-        msg = '%.f~%.f'%(bins[i],bins[i+1])
-        xlabels.append(msg)
-    ax.set_xticks(x)
-    ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
+        n_bins = 0
+        for data in datas.values():
+            lengths = GetMinLength(data, picks)
+            n_bins = max(n_bins, int(np.ceil(data[lengths>min_length][err_name].max()/step)) )
+        
+        min_max = [0., n_bins*step]
+        x = np.arange(n_bins)
+        max_bound = 0.
+        nbar = 2
+        width = 1. / float(nbar) - .05
+        x = np.arange(n_bins)
+        offset = float(nbar-1)*width/2.
+
+        for i, (method, data) in enumerate(datas.items()):
+            lengths = GetMinLength(data, picks)
+            values = data[lengths > min_length][err_name]
+            #if method=='mvbb':
+            #    print("~~~~~~~~~~~~~~~~~~~~~")
+            #    print("%s median(%s) = %f"%(method,err_name,np.median(values)) )
+            #    print("~~~~~~~~~~~~~~~~~~~~~")
+            tp_hist,  bins = np.histogram(values, n_bins, min_max)
+            tp_hist = tp_hist.astype(float) / np.sum(tp_hist).astype(float)
+            tp_hist[tp_hist==0.] = 1e-10 # For no missing label
+            rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5,label=method)
+            LabelHeight(ax,rects)
+            offset -=width
+            for bound, y in zip(np.flip(bins[1:]), np.flip(tp_hist)):
+                max_bound = max(bound/step,max_bound)
+                if y > 0.:
+                    break
+        #ax.set_xlim(offset, max_bound)
+        #ax.set_xlim(m)
+        ax.set_xlabel(unit, fontsize=FONT_SIZE, fontweight=FONT_WEIGHT)
+        ax.xaxis.set_label_coords(**XLABEL_COORD)
+        ax.set_ylabel('Probability', fontsize=FONT_SIZE)
+        ax.legend(loc='upper right', fontsize=FONT_SIZE)
+        xlabels = []
+        for i in range(n_bins):
+            msg = _format%(bins[i],bins[i+1])
+            xlabels.append(msg)
+        ax.set_xticks(x)
+        ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     fig.tight_layout()
-    return fig
+    return fig, axes
 
 def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
         unit_str, _format,
@@ -578,16 +601,19 @@ def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
     x = np.arange(num_bins)
     offset = float(nbar-1)*width/2.
     ap_label = 'AP(IoU >%.1f)'%min_iou
+    tp_hist[tp_hist==0.] = 1e-10 # For no missing label
     rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
     LabelHeight(ax, rects)
     offset -= width
     ncol = 1
     if show_underseg:
+        underseg_hist[underseg_hist==0.] = 1e-10 # For no missing label
         rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='$p(\mathrm{under})$')
         LabelHeight(ax, rects)
         offset -= width
         ncol += 1
     if show_overseg:
+        overseg_hist[overseg_hist==0.] = 1e-10 # For no missing label
         rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='$p(\mathrm{over})$')
         LabelHeight(ax, rects)
         offset -= width
@@ -599,7 +625,7 @@ def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
         if show_sample:
             msg += '\n%d'%n_hist[i]
         xlabels.append(msg)
-    ax.set_xlabel('%s'%unit_str,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('%s'%unit_str,rotation=0, fontsize=FONT_SIZE, fontweight=FONT_WEIGHT)
     ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
@@ -609,7 +635,7 @@ def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
     if nbar > 1:
         ax.legend(ncol=ncol,**LEGNED_ARGS)
     else:
-        ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+        ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight=FONT_WEIGHT)
 
     #import pdb; pdb.set_trace()
     #fig = ax.get_figure()
@@ -729,8 +755,8 @@ def Plot3dEval(eval_data, ax, ytype,
     '''
     la = np.logical_and
     ax_deg = ax.twinx()
-    ax.set_ylabel('[cm]', fontsize=FONT_SIZE)
-    ax_deg.set_ylabel('[deg]', fontsize=FONT_SIZE)
+    ax.set_ylabel('[cm]', fontsize=FONT_SIZE, fontweight=FONT_WEIGHT)
+    ax_deg.set_ylabel('[deg]', fontsize=FONT_SIZE, fontweight=FONT_WEIGHT)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
     ax_deg.tick_params(axis='y', labelsize=FONT_SIZE)
     n_hist , bound    = np.histogram(xdata[valid], num_bins,min_max)
@@ -779,6 +805,10 @@ def Plot3dEval(eval_data, ax, ytype,
         yvalues = medians
     elif ytype.lower() == 'mae':
         yvalues = maes
+    for k, v in yvalues.items():
+        if v == 0.:
+            yvalues[k] = 1e-10
+    
     rects = ax.bar(x-offset, width=width, height=yvalues['trans_err'],
             alpha=.5, label='trans error')
     LabelHeight(ax, rects, form='%.2f')
@@ -802,7 +832,7 @@ def Plot3dEval(eval_data, ax, ytype,
         xlabels.append(msg)
     ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
-    ax.set_xlabel('%s'%unit_str,rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('%s'%unit_str,rotation=0, fontsize=FONT_SIZE, fontweight=FONT_WEIGHT)
     ax.xaxis.set_label_coords(**XLABEL_COORD2)
 
     miny0,maxy0 = ax.get_ylim()
@@ -860,7 +890,7 @@ def PlotTagAp(eval_data, tags, ax, min_iou, show_underseg=False, show_overseg=Fa
         LabelHeight(ax, rects)
         offset -= width
 
-    ax.set_xlabel('Case',rotation=0, fontsize=FONT_SIZE, fontweight='bold')
+    ax.set_xlabel('Case',rotation=0, fontsize=FONT_SIZE, fontweight=FONT_WEIGHT)
     ax.set_xticks(range(len(case_nhist)))
     ax.set_xticklabels(case_nhist.keys(), rotation=0.,fontsize=FONT_SIZE)
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
@@ -1057,15 +1087,16 @@ def full_extent(ax, pad=0.0):
     # For text objects, we need to draw the figure first, otherwise the extents
     # are undefined.
     ax.figure.canvas.draw()
-    items = []
+    fig = ax.get_figure()
+    ren = fig.canvas.get_renderer()
+    items = [ax] # ax.get_window_extent need renderer to prevent crush
     items += ax.get_xticklabels()
     #items += ax.get_yticklabels()
-    #items.append(ax)
     items.append(ax.xaxis.label)
     items.append(ax.yaxis.label)
     items.append(ax.get_legend())
     fig = ax.get_figure()
-    bbox = Bbox.union([item.get_window_extent().transformed(fig.dpi_scale_trans.inverted()) \
+    bbox = Bbox.union([item.get_window_extent(renderer=ren).transformed(fig.dpi_scale_trans.inverted()) \
             for item in items])
     return bbox.expanded(1.0 + pad, 1.0 + pad)
 
@@ -1118,14 +1149,7 @@ def test_evaluation(show_sample):
     tags = tmp_tags
     
     la = np.logical_and
-    mvbb_data = eval_data_allmethod[eval_data_allmethod['method']=='mvbb']
     eval_data = eval_data_allmethod[eval_data_allmethod['method']=='myobb']
-    
-    # TODO mvbb_data, eval_data 둘 비교
-    fig = PlotLengthOblique(picks, mvbb_data, eval_data)
-    fig.savefig(osp.join(eval_dir,'test_mvbb_oblique.svg'),
-                    bbox_inches='tight', transparent=True, pad_inches=0)
-
     oblique = GetOblique(eval_data, picks)
     normalized = True
     margin, minwidth = GetMargin(eval_data, picks, normalized)
@@ -1183,10 +1207,10 @@ def test_evaluation(show_sample):
         axes[2].set_title('Oblique-AP',fontsize=7).set_position( (.5, 1.42))
         axes[3].set_title('Distance-AP',fontsize=7).set_position( (.5, 1.42))
         #if not show_sample:
-        fig.savefig(osp.join(eval_dir,'test_margin_ap.svg'), bbox_inches=full_extent(axes[0]))
-        fig.savefig(osp.join(eval_dir,'test_minwidth_ap.svg'), bbox_inches=full_extent(axes[1]))
-        fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(axes[2]))
-        fig.savefig(osp.join(eval_dir,'test_distance_ap.svg'), bbox_inches=full_extent(axes[3]))
+        fig.savefig(osp.join(eval_dir,'test_margin_ap.svg'),   transparent=True, bbox_inches=full_extent(axes[0]))
+        fig.savefig(osp.join(eval_dir,'test_minwidth_ap.svg'), transparent=True, bbox_inches=full_extent(axes[1]))
+        fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'),  transparent=True, bbox_inches=full_extent(axes[2]))
+        fig.savefig(osp.join(eval_dir,'test_distance_ap.svg'), transparent=True, bbox_inches=full_extent(axes[3]))
 
         min_iou=.6
         valid = tags==''
@@ -1213,34 +1237,34 @@ def test_evaluation(show_sample):
             axes[n0+7].set_title('Oblique - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
             axes[n0+8].set_title('Distance - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
 
+        # Only valid 2D segmentations are counted for 3D evaluation
+        ourmethod_data = eval_data[valid]
+        mvbb_data = eval_data_allmethod[eval_data_allmethod['method']=='mvbb']
+        fig, axes = PlotLengthOblique(picks, mvbb_data, ourmethod_data)
+        for err_name, ax in axes.items():
+            fn = 'test_pdf_%s.svg'% err_name
+            fig.savefig(osp.join(eval_dir,fn), bbox_inches=full_extent(ax), transparent=True)
 
-        validobb_data = eval_data[logical_ands([valid,vmargin,vminwidth,vdistance,eval_data['valid_obb']])]
-        N = valid.sum()
-        n = logical_ands([valid,eval_data['valid_obb']]).sum()
-        r = float(n)/float(N)
-        print("p(OBB | valid 2D seg) = %d / %d = %.f"%(n,N,r) )
-
-        #table_data = [ ['Median', 'MAE'] ]
-        table_data = [ ['trans_err', 'max_wh_err', 'deg_err'] ]
-        for eval_type in ['Median', 'MAE']:
-            values = [eval_type]
-            for err_type in table_data[0]:
-                data = validobb_data[err_type]
-                if eval_type == 'Median':
-                    val = np.median(data)
-                else:
-                    val = np.sum(np.abs(data)) / float(len(data))
-                values.append(val)
-            table_data.append( values )
-
+        error_names = ['trans_err', 'max_wh_err', 'deg_err']
+        datas = Od()
+        datas['OurMethod'] = ourmethod_data
+        datas['MVBB'] = mvbb_data
+        rows = []
+        for data_name, data in datas.items():
+            row = [data_name]
+            for error_name in error_names:
+                errors = data[err_name]
+                for eval_type in ['Median', 'MAE']:
+                    if eval_type == 'Median':
+                        val = np.median(errors)
+                    else:
+                        val = np.sum(np.abs(errors)) / float(len(errors))
+                    row.append(val)
+            rows.append(row)
         # ref : https://pyhdust.readthedocs.io/tabulate.html
-        table = tabulate(table_data, headers="firstrow")
+        table = tabulate(rows, tablefmt="latex",
+                floatfmt=(None,'.3f', '.3f', '.3f','.3f','.2f','.2f') )
         print(table)
-        table = tabulate(table_data, headers="firstrow", tablefmt="latex",
-                floatfmt=(None,'.3f', '.3f', '.2f') )
-        print(table)
-
-        #print("3D perofrmance error
 
     #PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection')
     return
@@ -1270,7 +1294,7 @@ def dist_evaluation():
             picks[base] = pickle.load(f)
     tags = {}
     distance = GetDistance(eval_data, picks)
-    margin, minwidth = GetMargin(eval_data, picks)
+    margin, minwidth = GetMargin(eval_data, picks, normalized=False)
     valid    = margin>40.
     fig = plt.figure(1, figsize=FIG_SIZE, dpi=DPI)
     fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
@@ -1281,7 +1305,7 @@ def dist_evaluation():
     Plot2dEval(eval_data, picks, distance,  valid, ax,
             num_bins=5, min_max=(1., 2.5), unit_str='[m]', _format='%.2f~%.2f',
             min_iou=.5, show_underseg=True,show_overseg=True)
-    fig.savefig(osp.join(eval_dir,'test_dist_ap.svg'), bbox_inches=full_extent(ax))
+    fig.savefig(osp.join(eval_dir,'test_dist_ap.svg'), transparent=True, bbox_inches=full_extent(ax))
     PlotEachScens(eval_data, picks, eval_dir, infotype='')
     return
 
@@ -1309,7 +1333,7 @@ def oblique_evaluation():
         with open(fn,'r') as f:
             picks[base] = pickle.load(f)
     tags = {}
-    margin, minwidth = GetMargin(eval_data, picks)
+    margin, minwidth = GetMargin(eval_data, picks, normalized=False)
     oblique = GetOblique(eval_data, picks)
     valid   = margin>40.
     fig = plt.figure(1, figsize=FIG_SIZE, dpi=DPI)
