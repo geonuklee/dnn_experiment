@@ -38,7 +38,7 @@ from tabulate import tabulate
 import pyautogui
 import shutil
 from unet.util import GetColoredLabel, Evaluate2D
-from unet_ext import GetBoundary
+from unet_ext import GetBoundary, UnprojectPointscloud
 
 DPI = 75
 FIG_SIZE = (24,10)
@@ -405,7 +405,7 @@ def GetMargin(eval_data, picks, normalized):
     for base, pick in picks.items():
         gt_marker = pick['marker']
         w,h = float(gt_marker.shape[1]), float(gt_marker.shape[0])
-        K = pick['K']
+        K = pick['K'] # TODO K? newK?
         fx, fy, cx, cy = K[0,0], K[1,1], K[0,2], K[1,2]
         if normalized:
             r = fx/fy
@@ -523,11 +523,6 @@ def PlotLengthOblique(picks, mvbb_data, eval_data):
             unit, _format = '[m]', '%.3f~%.3f'
             ax.set_title('Size error-PDF',fontsize=7)#.set_position( (.5, 1.42))
 
-        n_bins = 0
-        for data in datas.values():
-            lengths = GetMinLength(data, picks)
-            n_bins = max(n_bins, int(np.ceil(data[lengths>min_length][err_name].max()/step)) )
-        
         min_max = [0., n_bins*step]
         x = np.arange(n_bins)
         max_bound = 0.
@@ -913,7 +908,10 @@ def GetErrorOfMvbb(gt_obb_markers, mvbb_resp):
     output23dlist = []
     for pred_obb in mvbb_resp.output.markers:
         gt_obb = gt_obbs[pred_obb.id]
-        b0 = marker2box(gt_obb)
+        try:
+            b0 = marker2box(gt_obb)
+        except:
+            import pdb; pdb.set_trace()
         b1 = marker2box(pred_obb)
         b1 = FitAxis(b0, b1)
         rwb0 = rotation_util.from_dcm(b0.rotation)
@@ -955,10 +953,11 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
 
-    rospy.wait_for_service('~Cgal/ComputeCgalObb')
-    compute_cgalobb = rospy.ServiceProxy('~Cgal/ComputeCgalObb', ros_unet.srv.ComputeCgalObb)
-    rospy.wait_for_service('~Cgal/SetCamera')
-    cgal_set_camera = rospy.ServiceProxy('~Cgal/SetCamera', ros_unet.srv.SetCamera)
+    rospy.wait_for_service('~Cgal/ComputeObb')
+    cgal_compute_obb = rospy.ServiceProxy('~Cgal/ComputeObb', ros_unet.srv.ComputePoints2Obb)
+    rospy.wait_for_service('~Ransac/ComputeObb')
+    ransac_compute_obb = rospy.ServiceProxy('~Ransac/ComputeObb', ros_unet.srv.ComputePoints2Obb)
+
 
     pub_gt_obb = rospy.Publisher("~gt_obb", MarkerArray, queue_size=-1)
     pub_gt_pose = rospy.Publisher("~gt_pose", PoseArray, queue_size=1)
@@ -987,9 +986,9 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
         bag, set_depth, set_rgb, topic2cam, rgb_topics, depth_topics, rgb_msgs, depth_msgs,\
                 rect_info_msgs, mx, my, fx, fy, Twc, plane_c, floor = \
                 get_topics(bridge,pkg_dir,gt_fn, pick,
-                        [set_camera, cgal_set_camera],
+                        [set_camera,],
                         floordetector_set_camera, compute_floor)
-        # TODO assert(fx == pick['K'][0,0])
+        Tfwc = convert2tf(Twc)
         gt_obbs = {}
         for obb in pick['obbs']:
             gt_obbs[obb['id']] = obb
@@ -1012,6 +1011,9 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
             if depth_msg is None or rgb_msg is None:
                 continue
             rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb = rectify(rgb_msg, depth_msg, mx, my, bridge)
+            rect_K = np.array(rect_info_msgs[cam_id].K,np.float).reshape((3,3))
+            rect_D = np.array(rect_info_msgs[cam_id].D,np.float).reshape((-1,))
+
             #rect_depth[floor>0] = 0.
             #rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
 
@@ -1022,7 +1024,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                     Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
             t1 = time.time()
 
-            if 'mvbb' in methods:
+            if 'mvbb' in methods or 'ransac' in methods:
                 '''
                 # Comaprison for cgal obb
                 * [x] collecting cases
@@ -1032,14 +1034,24 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                     * Cgal OBB둘다 일정 크기 이상의 깊이를 가지면 orientation 문제가 감지됨.
                         -> marker에 상자 두께가 관찰되는 상황이라 이야기하자.
                 '''
-                marker = pick['marker']
+                marker = pick['marker'].copy()
                 dist = cv2.distanceTransform( (~pick['outline']).astype(np.uint8), distanceType=cv2.DIST_L2, maskSize=5)
                 marker[dist < 5.] = 0
-                marker = bridge.cv2_to_imgmsg(marker,encoding='passthrough')
-                mvbb_resp = compute_cgalobb(rect_depth_msg, marker, Twc, std_msgs.msg.String(cam_id), fx, fy)
-                eval_23d = GetErrorOfMvbb(gt_obb_markers, mvbb_resp)
-                for each in eval_23d:
-                    eval_scene.append( (base,i_file,nframe,'mvbb')+ each)
+                xyzrgb, labels = UnprojectPointscloud(rect_rgb,rect_depth,marker,rect_K,rect_D,leaf_xy=0.02,leaf_z=0.01)
+                A = Tfwc.astype(xyzrgb.dtype)
+                B = np.hstack( (xyzrgb[:,:3], np.ones((xyzrgb.shape[0],1),xyzrgb.dtype))).T
+                xyzrgb[:,:3] = np.matmul(A,B).T
+                xyz = xyzrgb[:,:3].reshape(-1,).tolist()
+                labels = labels.reshape(-1,).tolist()
+                resps = {}
+                if 'mvbb' in methods:
+                    resps['mvbb'] = cgal_compute_obb(xyz, labels)
+                if 'ransac' in methods:
+                    resps['ransac'] = ransac_compute_obb(xyz, labels)
+                for method, resp in resps.items():
+                    eval_23d = GetErrorOfMvbb(gt_obb_markers, resp)
+                    for each in eval_23d:
+                        eval_scene.append( (base,i_file,nframe,method)+ each)
 
             if 'myobb' in methods:
                 eval_2d, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
@@ -1120,7 +1132,7 @@ def test_evaluation(show_sample):
         obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
         gt_files += glob2.glob(obbdatasetpath)
     if not osp.exists(fn_evaldata):
-        eval_data_allmethod = perform_test(eval_dir, gt_files, fn_evaldata, methods=['myobb','mvbb'])
+        eval_data_allmethod = perform_test(eval_dir, gt_files, fn_evaldata, methods=['myobb','mvbb','ransac'])
     else:
         with open(fn_evaldata,'rb') as f: 
             eval_data_allmethod = np.load(f, allow_pickle=True)

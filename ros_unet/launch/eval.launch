@@ -38,6 +38,11 @@
       euc_tolerance: $(arg euc_tolerance)
     </rosparam>
 </node>
+<node name="ransac_server" pkg="ros_unet" type="ros_ransacobb_server.py" output="screen" required="true">
+    <rosparam subst_value="True">
+      verbose: $(arg verbose)
+    </rosparam>
+</node>
 
 <node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/>
 
@@ -47,9 +52,8 @@
     <remap from="~ComputeObb"  to="/obb_server/ComputeObb" />
     <remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
     <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" />
-    <remap from="~Cgal/SetCamera"   to="/cgal_server/SetCamera" />
-    <remap from="~Cgal/ComputeCgalObb"  to="/cgal_server/ComputeCgalObb" />
-
+    <remap from="~Cgal/ComputeObb"  to="/cgal_server/ComputeObb" />
+    <remap from="~Ransac/ComputeObb"  to="/ransac_server/ComputeObb" />
     <rosparam subst_value="True">
       target: "$(arg target)"
       show: "$(arg show)"

@@ -1,0 +1,4 @@
+float32[] xyz_clouds
+int32[] l_clouds
+---
+visualization_msgs/MarkerArray output

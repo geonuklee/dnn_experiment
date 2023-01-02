@@ -20,6 +20,7 @@ import time
 
 #from ros_client import *
 from unet.util import GetColoredLabel, Evaluate2D
+from unet_ext import GetBoundary, UnprojectPointscloud
 
 def get_rectification(camera_info):
     K = np.array( camera_info.K ,dtype=np.float).reshape((3,3))
@@ -53,6 +54,14 @@ def convert2pose(Twc):
     pose.orientation.w = quat[3]
     return pose
 
+def convert2tf(pose):
+    T = np.zeros((3,4),dtype=float)
+    T[:,3] = np.array((pose.position.x, pose.position.y, pose.position.z),T.dtype).reshape((3))
+    quat_xyzw = (pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w)
+    Rwc = rotation_util.from_quat(quat_xyzw)
+    T[:3,:3] = Rwc.as_dcm().astype(T.dtype)
+    return T
+
 def convert_plane(pose, plane0):
     if plane0[0] == plane0[1] == plane0[2] == 0.:
         return plane0
@@ -73,17 +82,15 @@ def convert_plane(pose, plane0):
     return (nvec[0], nvec[1], nvec[2], d)
 
 def rectify(rgb_msg, depth_msg, mx, my, bridge):
-    #rgb = np.frombuffer(rgb_msg.data, dtype=np.uint8).reshape(rgb_msg.height, rgb_msg.width, 3)
-    #depth = np.frombuffer(depth_msg.data, dtype=np.float32).reshape(depth_msg.height, depth_msg.width)
     rgb = bridge.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
     depth = bridge.imgmsg_to_cv2(depth_msg, desired_encoding='32FC1')
 
-    rgb = cv2.remap(rgb,mx,my,cv2.INTER_NEAREST)
-    depth = cv2.remap(depth,mx,my,cv2.INTER_NEAREST)
+    rect_rgb = cv2.remap(rgb,mx,my,cv2.INTER_NEAREST)
+    rect_depth = cv2.remap(depth,mx,my,cv2.INTER_NEAREST)
 
     rect_rgb_msg = bridge.cv2_to_imgmsg(rgb,encoding='bgr8')
     rect_depth_msg = bridge.cv2_to_imgmsg(depth,encoding='32FC1')
-    return rect_rgb_msg, rect_depth_msg, depth, rgb
+    return rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb
 
 def get_Twc(cam_id):
     rate = rospy.Rate(2)
@@ -146,10 +153,11 @@ if __name__=="__main__":
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
 
-    rospy.wait_for_service('~Cgal/ComputeCgalObb')
-    cgal_compute_cgalobb = rospy.ServiceProxy('~Cgal/ComputeCgalObb', ros_unet.srv.ComputeCgalObb)
-    rospy.wait_for_service('~Cgal/SetCamera')
-    cgal_set_camera = rospy.ServiceProxy('~Cgal/SetCamera', ros_unet.srv.SetCamera)
+    rospy.wait_for_service('~Cgal/ComputeObb')
+    cgal_compute_obb = rospy.ServiceProxy('~Cgal/ComputeObb', ros_unet.srv.ComputePoints2Obb)
+
+    rospy.wait_for_service('~Ransac/ComputeObb')
+    ransac_compute_obb = rospy.ServiceProxy('~Ransac/ComputeObb', ros_unet.srv.ComputePoints2Obb)
 
     do_eval = rospy.get_param("~do_eval")=='true'
     if do_eval:
@@ -170,17 +178,19 @@ if __name__=="__main__":
         rect_info_msgs[cam_id], mx, my = get_rectification(sub.info)
         remap_maps[cam_id] = (mx, my)
         set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
-        cgal_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
         floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
         break
 
     Twc = get_Twc(cam_id)
+    Tfwc = convert2tf(Twc)
     while not rospy.is_shutdown():
         if sub.rgb is None or sub.depth is None or sub.info is None:
             continue
         fx, fy = rect_info_msgs[cam_id].K[0], rect_info_msgs[cam_id].K[4]
-        rect_rgb_msg, rect_depth_msg, depth, rgb = rectify(sub.rgb, sub.depth, mx, my, bridge)
-        init_floormask, cv_mask = get_init_floormask(bridge,rgb.shape[1],rgb.shape[0], y0=50)
+        rect_K = np.array(rect_info_msgs[cam_id].K,np.float).reshape((3,3))
+        rect_D = np.array(rect_info_msgs[cam_id].D,np.float).reshape((-1,))
+        rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb = rectify(sub.rgb, sub.depth, mx, my, bridge)
+        init_floormask, cv_mask = get_init_floormask(bridge,rect_rgb.shape[1],rect_rgb.shape[0], y0=50)
         floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
         plane_c  = floor_msg.plane
         plane_w = convert_plane(Twc, plane_c) # empty plane = no floor filter.
@@ -194,8 +204,21 @@ if __name__=="__main__":
                 Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
         t1 = time.time()
 
-        cgal_compute_cgalobb(rect_depth_msg, obb_resp.marker,
-                Twc, std_msgs.msg.String(cam_id), fx, fy)
+        w,h = obb_resp.marker.width, obb_resp.marker.height
+        marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32).reshape(h,w).copy()
+        boundary = GetBoundary(marker, 2)
+        dist = cv2.distanceTransform( (boundary<1).astype(np.uint8), distanceType=cv2.DIST_L2, maskSize=5)
+        #marker[dist < 10.] = 0
+        marker[dist < 15.] = 0
+
+        xyzrgb, labels = UnprojectPointscloud(rect_rgb,rect_depth,marker,rect_K,rect_D,leaf_xy=0.02,leaf_z=0.01)
+        A = Tfwc.astype(xyzrgb.dtype)
+        B = np.hstack( (xyzrgb[:,:3], np.ones((xyzrgb.shape[0],1),xyzrgb.dtype))).T
+        xyzrgb[:,:3] = np.matmul(A,B).T
+        xyz = xyzrgb[:,:3].reshape(-1,).tolist()
+        labels = labels.reshape(-1,).tolist()
+        mvbb_resp = cgal_compute_obb(xyz,labels)
+        ransac_resp = ransac_compute_obb(xyz,labels)
 
         if do_eval:
             eval_frame, pred_marker, dst = Evaluate2D(obb_resp, pick['marker'], rgb)

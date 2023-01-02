@@ -1,0 +1,6 @@
+float32[] innerclouds
+int32[] l_innerclouds
+float32[] boundaryclouds
+int32[] l_boundaryclouds
+---
+visualization_msgs/MarkerArray output
