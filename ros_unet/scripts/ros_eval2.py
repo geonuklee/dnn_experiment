@@ -290,7 +290,7 @@ def Evaluate3D(pick, gt_obb_markers, obb_resp, output2dlist):
             msg = '   Failed to compute OBB'
             cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, (0,0,255), font_thick)
             pt[1] += h+hoffset
-            output23dlist.append( output+(False, 999., 999., 999.) )
+            output23dlist.append( output+(False, 999., 999., 999.,None,None) )
             continue
 
         if  iou < .6:
@@ -335,7 +335,7 @@ def Evaluate3D(pick, gt_obb_markers, obb_resp, output2dlist):
         cv2.putText(dst_score, msg, tuple(pt), font_face, font_scale, color, font_thick)
 
         pt[1] += h+hoffset
-        output23dlist.append( output+(True, t_err, deg_err, max_wh_err) )
+        output23dlist.append( output+(True, t_err, deg_err, max_wh_err, b0,b1) )
 
     dst_rgb = rgb.copy()
     dst_rgb[boundary>0,:] = dst[boundary>0,:] = 0
@@ -397,7 +397,7 @@ def GetDistance(eval_data, picks):
             distance_array[indicies] = np.linalg.norm(t_cb)
             #distance_array[indicies] = t_cb[2]
     assert( (distance_array<0).sum() == 0)
-    return distance_array 
+    return distance_array
 
 def GetMargin(eval_data, picks, normalized):
     margin_array = np.repeat(-1.,eval_data.shape)
@@ -496,11 +496,57 @@ def LabelHeight(ax, rects, form='%.2f'):
     #        lim=1000)
     return
 
-def PlotLengthOblique(picks, mvbb_data, eval_data):
-    datas = Od()
-    datas['TODO(Naming)'] = eval_data
-    datas['mvbb'] = mvbb_data
+def GetThickness(eval_data):
+    thickness_array = np.repeat(-1.,eval_data.shape)
+    for i,b1 in enumerate(eval_data['predbox']):
+        thickness_array[i] = b1.scale[0]
+    return thickness_array
 
+def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
+    ourobb_data = eval_data_allmethod[eval_data_allmethod['method']=='myobb']
+    mvbb_data = eval_data_allmethod[eval_data_allmethod['method']=='mvbb']
+    ransac_data = eval_data_allmethod[eval_data_allmethod['method']=='ransac']
+
+    # TODO valid for each method
+    valid = logical_ands([tags=='',
+                          ourobb_data['iou']>min_iou,
+                          ourobb_data['valid_obb'],
+                          ~ourobb_data['overseg'],
+                          ~ourobb_data['underseg']
+                          ])
+    ourobb_data = ourobb_data[valid]
+    thresh_thick = 0.05
+    datas = Od()
+    datas['OBB for all']                  = ourobb_data
+    datas['OBB for observable side']      = ourobb_data[GetThickness(ourobb_data) > thresh_thick]
+    datas['OBB for unobservable side']    = ourobb_data[GetThickness(ourobb_data) < thresh_thick]
+    datas['MVBB for observable side']     = mvbb_data[GetThickness(mvbb_data) > thresh_thick]
+    datas['MVBB for unobservable side']   = mvbb_data[GetThickness(mvbb_data) < thresh_thick]
+    datas['RANSAC for observable side']   = ransac_data[GetThickness(ransac_data) > thresh_thick]
+    datas['RANSAC for unobservable side'] = ransac_data[GetThickness(ransac_data) < thresh_thick]
+
+    error_names = ['trans_err', 'max_wh_err', 'deg_err']
+    rows = []
+    for data_name, data in datas.items():
+        row = [data_name]
+        for err_name in error_names:
+            errors = data[err_name]
+            for eval_type in ['Median', 'MAE']:
+                if eval_type == 'Median':
+                    val = np.median(errors)
+                else:
+                    val = np.sum(np.abs(errors)) / float(len(errors))
+                row.append(val)
+        rows.append(row)
+    # ref : https://pyhdust.readthedocs.io/tabulate.html
+    table = tabulate(rows, tablefmt="latex",
+            floatfmt=(None,'.3f', '.3f', '.3f','.3f','.2f','.2f') )
+    print(table)
+
+    datas = Od()
+    datas['OBB for all']                  = ourobb_data
+    datas['MVBB for observable side']     = mvbb_data[GetThickness(mvbb_data) > thresh_thick]
+    datas['RANSAC for unobservable side'] = ransac_data[GetThickness(ransac_data) < thresh_thick]
     min_length = .1
     fig = plt.figure(figsize=(8,6), dpi=DPI)
     fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
@@ -526,7 +572,7 @@ def PlotLengthOblique(picks, mvbb_data, eval_data):
         min_max = [0., n_bins*step]
         x = np.arange(n_bins)
         max_bound = 0.
-        nbar = 2
+        nbar = len(datas)
         width = 1. / float(nbar) - .05
         x = np.arange(n_bins)
         offset = float(nbar-1)*width/2.
@@ -534,10 +580,6 @@ def PlotLengthOblique(picks, mvbb_data, eval_data):
         for i, (method, data) in enumerate(datas.items()):
             lengths = GetMinLength(data, picks)
             values = data[lengths > min_length][err_name]
-            #if method=='mvbb':
-            #    print("~~~~~~~~~~~~~~~~~~~~~")
-            #    print("%s median(%s) = %f"%(method,err_name,np.median(values)) )
-            #    print("~~~~~~~~~~~~~~~~~~~~~")
             tp_hist,  bins = np.histogram(values, n_bins, min_max)
             tp_hist = tp_hist.astype(float) / np.sum(tp_hist).astype(float)
             tp_hist[tp_hist==0.] = 1e-10 # For no missing label
@@ -649,8 +691,8 @@ def PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection'):
         ax = fig.add_subplot(111)
         ax.set_xticklabels([])
         ax.set_yticklabels([])
-        ax.set_xticks([]) 
-        ax.set_yticks([]) 
+        ax.set_xticks([])
+        ax.set_yticks([])
         plt.axis('off')
         valid = eval_data['base']==base
         scene_data = eval_data[valid]
@@ -803,7 +845,7 @@ def Plot3dEval(eval_data, ax, ytype,
     for k, v in yvalues.items():
         if v == 0.:
             yvalues[k] = 1e-10
-    
+
     rects = ax.bar(x-offset, width=width, height=yvalues['trans_err'],
             alpha=.5, label='trans error')
     LabelHeight(ax, rects, form='%.2f')
@@ -868,7 +910,7 @@ def PlotTagAp(eval_data, tags, ax, min_iou, show_underseg=False, show_overseg=Fa
         params['underseg'] = eval_data['underseg']
     if show_overseg:
         params['overseg'] = eval_data['overseg']
-    
+
     for name, inliers in params.items():
         case_nhist = Od()
         valid = tags==''
@@ -931,10 +973,10 @@ def GetErrorOfMvbb(gt_obb_markers, mvbb_resp):
 
         # Assume recall 1 because get from ground truth marker
         pidx = gidx = gt_obb.id
-        iou = precision = recall = 1. 
+        iou = precision = recall = 1.
         overseg = underseg = False
-        output = gidx, iou, recall, overseg, underseg, pidx, precision 
-        output23dlist.append( output+(True, t_err, deg_err, max_wh_err) )
+        output = gidx, iou, recall, overseg, underseg, pidx, precision
+        output23dlist.append( output+(True, t_err, deg_err, max_wh_err, b0,b1) )
     return output23dlist
 
 def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
@@ -964,6 +1006,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
 
     pkg_dir = get_pkg_dir()
 
+    # output23dlist.append( ~
     dtype = [('base',object),
             ('sidx',int), # Scene index
             ('fidx',int), # Frame index
@@ -976,6 +1019,8 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
             ('trans_err',float),
             ('deg_err', float),
             ('max_wh_err', float),
+            ('gtbox',object),
+            ('predbox',object),
             ]
 
     eval_data = None
@@ -1030,7 +1075,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                 * [x] collecting cases
                 * [x] Cgal OBB marker array로 획득.
                 * [x] deg_err 계산해서 반영.
-                * [x] 2면이 보이는 instance만 따로 골라내기 
+                * [x] 2면이 보이는 instance만 따로 골라내기
                     * Cgal OBB둘다 일정 크기 이상의 깊이를 가지면 orientation 문제가 감지됨.
                         -> marker에 상자 두께가 관찰되는 상황이라 이야기하자.
                 '''
@@ -1084,7 +1129,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
         cv2.imwrite(fn, dst)
 
     cv2.destroyAllWindows()
-    with open(fn_evaldata,'wb') as f: 
+    with open(fn_evaldata,'wb') as f:
         np.save(f, eval_data)
 
     return eval_data
@@ -1134,7 +1179,7 @@ def test_evaluation(show_sample):
     if not osp.exists(fn_evaldata):
         eval_data_allmethod = perform_test(eval_dir, gt_files, fn_evaldata, methods=['myobb','mvbb','ransac'])
     else:
-        with open(fn_evaldata,'rb') as f: 
+        with open(fn_evaldata,'rb') as f:
             eval_data_allmethod = np.load(f, allow_pickle=True)
     picks = {}
     for fn in gt_files:
@@ -1159,7 +1204,7 @@ def test_evaluation(show_sample):
         for gidx, tag in val.items():
             tmp_tags[(base,gidx)] = tag
     tags = tmp_tags
-    
+
     la = np.logical_and
     eval_data = eval_data_allmethod[eval_data_allmethod['method']=='myobb']
     oblique = GetOblique(eval_data, picks)
@@ -1224,7 +1269,6 @@ def test_evaluation(show_sample):
         fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'),  transparent=True, bbox_inches=full_extent(axes[2]))
         fig.savefig(osp.join(eval_dir,'test_distance_ap.svg'), transparent=True, bbox_inches=full_extent(axes[3]))
 
-        min_iou=.6
         valid = tags==''
         valid = la(valid, eval_data['iou']>min_iou)
         valid = la(valid, ~eval_data['underseg'])
@@ -1250,33 +1294,10 @@ def test_evaluation(show_sample):
             axes[n0+8].set_title('Distance - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
 
         # Only valid 2D segmentations are counted for 3D evaluation
-        ourmethod_data = eval_data[valid]
-        mvbb_data = eval_data_allmethod[eval_data_allmethod['method']=='mvbb']
-        fig, axes = PlotLengthOblique(picks, mvbb_data, ourmethod_data)
+        fig, axes = PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou)
         for err_name, ax in axes.items():
             fn = 'test_pdf_%s.svg'% err_name
             fig.savefig(osp.join(eval_dir,fn), bbox_inches=full_extent(ax), transparent=True)
-
-        error_names = ['trans_err', 'max_wh_err', 'deg_err']
-        datas = Od()
-        datas['OurMethod'] = ourmethod_data
-        datas['MVBB'] = mvbb_data
-        rows = []
-        for data_name, data in datas.items():
-            row = [data_name]
-            for error_name in error_names:
-                errors = data[err_name]
-                for eval_type in ['Median', 'MAE']:
-                    if eval_type == 'Median':
-                        val = np.median(errors)
-                    else:
-                        val = np.sum(np.abs(errors)) / float(len(errors))
-                    row.append(val)
-            rows.append(row)
-        # ref : https://pyhdust.readthedocs.io/tabulate.html
-        table = tabulate(rows, tablefmt="latex",
-                floatfmt=(None,'.3f', '.3f', '.3f','.3f','.2f','.2f') )
-        print(table)
 
     #PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection')
     return
@@ -1295,7 +1316,7 @@ def dist_evaluation():
     if not osp.exists(fn_evaldata):
         eval_data = perform_test(eval_dir, gt_files, fn_evaldata)
     else:
-        with open(fn_evaldata,'rb') as f: 
+        with open(fn_evaldata,'rb') as f:
             eval_data = np.load(f, allow_pickle=True)
     picks = {}
     for fn in gt_files:
@@ -1335,7 +1356,7 @@ def oblique_evaluation():
     if not osp.exists(fn_evaldata):
         eval_data = perform_test(eval_dir, gt_files, fn_evaldata)
     else:
-        with open(fn_evaldata,'rb') as f: 
+        with open(fn_evaldata,'rb') as f:
             eval_data = np.load(f, allow_pickle=True)
     picks = {}
     for fn in gt_files:

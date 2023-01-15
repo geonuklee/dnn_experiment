@@ -111,8 +111,11 @@ def Evaluate(dataset_name='vtk_dataset_nooffset'):
         rgb, depth, gt_marker, outline, K = pick['rgb'], pick['depth'], pick['mask'], pick['edge'], pick['K']
         rgb, depth, gt_marker, outline, K = resize(rgb, depth, gt_marker, outline, K)
         D = pick['D']
-        assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2InterInput' yet.
-        input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1],threshold_curvature)
+        assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2IterInput' yet.
+        input_x, grad, hessian, outline0, convex_edge\
+                = Convert2IterInput(depth, K[0,0], K[1,1],
+                        rgb=None,
+                        threshold_curvature=threshold_curvature)
         input_x = torch.Tensor(input_x).unsqueeze(0)
         y1, y2, pred = model(input_x)
         del y1, y2, input_x
@@ -172,8 +175,8 @@ def Train(dataset_name='vtk_dataset_nooffset'):
             rgb, depth, gt_marker, outline, K = pick['rgb'], pick['depth'], pick['mask'], pick['edge'], pick['K']
             rgb, depth, gt_marker, outline, K = resize(rgb, depth, gt_marker, outline, K)
             D = pick['D']
-            assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2InterInput' yet.
-            input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1],threshold_curvature=.1)
+            assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2IterInput' yet.
+            input_x, grad, hessian, outline0, convex_edge = Convert2IterInput(rgb, depth, K[0,0], K[1,1],threshold_curvature=.1)
 
             #if i==0:
             #    print(pick['fn'])
@@ -222,8 +225,11 @@ def Train(dataset_name='vtk_dataset_nooffset'):
                     rgb, depth, gt_marker, outline, K = pick['rgb'], pick['depth'], pick['mask'], pick['edge'], pick['K']
                     rgb, depth, gt_marker, outline, K = resize(rgb, depth, gt_marker, outline, K)
                     D = pick['D']
-                    assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2InterInput' yet.
-                    input_x, grad, hessian, outline0, convex_edge = Convert2InterInput(rgb, depth, K[0,0], K[1,1], threshold_curvature)
+                    assert( np.linalg.norm(D) < 1e-5 ) # No support for distorted image by 'Convert2IterInput' yet.
+                    input_x, grad, hessian, outline0, convex_edge\
+                            = Convert2IterInput(depth, K[0,0], K[1,1],
+                                    rgb=None,
+                                    threshold_curvature=threshold_curvature)
                     input_x = torch.Tensor(input_x).unsqueeze(0)
                     y1, y2, pred = model(input_x)
                     del y1, y2, input_x

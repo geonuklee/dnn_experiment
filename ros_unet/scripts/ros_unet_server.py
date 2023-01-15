@@ -7,8 +7,7 @@ from sensor_msgs.msg import Image, CameraInfo
 import cv2
 import torch
 from unet.iternet import *
-from unet.util import SplitAdapter, Convert2InterInput
-import unet_ext as cpp_ext #TODO erase
+from unet.util import SplitAdapter, Convert2IterInput
 import ros_unet.srv
 
 import ros_numpy
@@ -22,7 +21,8 @@ class Node:
     def PredictEdge(self, req):
         depth = np.frombuffer(req.depth.data, dtype=np.float32).reshape(req.depth.height, req.depth.width)
         rgb = np.frombuffer(req.rgb.data, dtype=np.uint8).reshape(req.rgb.height, req.rgb.width,3)
-        input_x, grad, hessian, outline, convex_edge = Convert2InterInput(rgb, depth, req.fx, req.fy)
+        input_x, grad, hessian, outline, convex_edge\
+                = Convert2IterInput(depth,req.fx,req.fy,rgb=rgb)
         input_x = torch.Tensor(input_x).unsqueeze(0)
         y1, y2, pred = self.model(input_x)
         del y1, y2, input_x
@@ -32,10 +32,7 @@ class Node:
         del pred
 
         mask[depth < .001] = 1
-        #mask_convex = np.stack((mask,convex_edge),axis=2)
         mask_convex = np.stack((mask==1,mask==2),axis=2).astype(mask.dtype)
-        #output_msg = ros_numpy.msgify(Image, mask_convex, encoding='8UC2')
-        #import pdb; pdb.set_trace()
         output_msg = ros_unet.srv.ComputeEdgeResponse()
         output_msg.edge = ros_numpy.msgify(Image, mask_convex, encoding='8UC2')
         output_msg.grad = ros_numpy.msgify(Image, grad, encoding='32FC2')

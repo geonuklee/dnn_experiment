@@ -153,11 +153,10 @@ if __name__=="__main__":
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
 
-    rospy.wait_for_service('~Cgal/ComputeObb')
-    cgal_compute_obb = rospy.ServiceProxy('~Cgal/ComputeObb', ros_unet.srv.ComputePoints2Obb)
-
-    rospy.wait_for_service('~Ransac/ComputeObb')
-    ransac_compute_obb = rospy.ServiceProxy('~Ransac/ComputeObb', ros_unet.srv.ComputePoints2Obb)
+    #rospy.wait_for_service('~Cgal/ComputeObb')
+    #cgal_compute_obb = rospy.ServiceProxy('~Cgal/ComputeObb', ros_unet.srv.ComputePoints2Obb)
+    #rospy.wait_for_service('~Ransac/ComputeObb')
+    #ransac_compute_obb = rospy.ServiceProxy('~Ransac/ComputeObb', ros_unet.srv.ComputePoints2Obb)
 
     do_eval = rospy.get_param("~do_eval")=='true'
     if do_eval:
@@ -217,8 +216,8 @@ if __name__=="__main__":
         xyzrgb[:,:3] = np.matmul(A,B).T
         xyz = xyzrgb[:,:3].reshape(-1,).tolist()
         labels = labels.reshape(-1,).tolist()
-        mvbb_resp = cgal_compute_obb(xyz,labels)
-        ransac_resp = ransac_compute_obb(xyz,labels)
+        #mvbb_resp = cgal_compute_obb(xyz,labels)
+        #ransac_resp = ransac_compute_obb(xyz,labels)
 
         if do_eval:
             eval_frame, pred_marker, dst = Evaluate2D(obb_resp, pick['marker'], rgb)

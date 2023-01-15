@@ -31,7 +31,7 @@ python2 scripts/unet/gen_labeling.py
 
 ## Train
 ```bash
-python3 scripts/unet/train_dunet.py
+python3 scripts/train_iternet.py
 ```
 
 # OBB

@@ -141,7 +141,7 @@ class SplitAdapter:
         dst = cv2.addWeighted(dst, 0.9, gray, 0.1, 0.)
         return dst
 
-def Convert2InterInput(rgb, depth, fx, fy, threshold_curvature=20.):
+def Convert2IterInput(depth, fx, fy, rgb=None, threshold_curvature=20.):
     gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
     dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.01)
     fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)

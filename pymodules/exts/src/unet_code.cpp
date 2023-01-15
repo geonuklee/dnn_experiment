@@ -990,12 +990,9 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
   py::buffer_info buf_rgb = _rgb.request();
   py::buffer_info buf_depth = _depth.request();
   py::buffer_info buf_labels = _labels.request();
-
   assert(buf_labels.shape.size() == buf_depth.shape.size());
   for(int i = 0; i < buf_labels.shape.size(); ++i)
     assert(buf_labels.shape.at(i)==buf_depth.shape.at(i));
-
-
   cv::Mat K, D; {
     float* K_ptr = (float*) _K.request().ptr;
     float* D_ptr = (float*) _D.request().ptr;
@@ -1008,10 +1005,30 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
       D.at<float>(i,0) = D_ptr[i];
   }
 
+  // TODO BoNet ID notation과 호환성.
+  const int min_label = 1;
   const int rows = buf_labels.shape[0];
   const int cols = buf_labels.shape[1];
+  std::map<int,size_t> n_points;
+  for (int r=0; r<rows; r++) {
+    for (int c=0; c<cols; c++) {
+        const int l = ((int32_t*) buf_labels.ptr)[r*cols+c];
+        if(l < min_label)
+          continue;
+        n_points[l]++;
+    }
+  }
 
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
+  std::map<int, pcl::PointCloud<pcl::PointXYZRGB>::Ptr> clouds;
+  size_t sum = 0;
+  for(auto it : n_points){
+    int l = it.first;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr ptr(new pcl::PointCloud<pcl::PointXYZRGB>());
+    ptr->reserve(it.second);
+    clouds[l] = ptr;
+    sum += it.second;
+  }
+
   {
     const float min_depth = 0.0001;
     cv::Mat rgb(rows, cols, CV_8UC3);
@@ -1019,29 +1036,34 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
     std::vector<cv::Point2f> uv_points, normalized_points;
     std::vector<float> z_points;
     std::vector<cv::Scalar> colors;
-    uv_points.reserve(rows*cols);
-    colors.reserve(uv_points.capacity());
-    z_points.reserve(uv_points.capacity());
+    std::vector<int> l_points;
+    uv_points.reserve(sum);
+    z_points.reserve(sum);
+    colors.reserve(sum);
+    l_points.reserve(sum);
 
     for (int r=0; r<rows; r++) {
       for (int c=0; c<cols; c++) {
         const float& d = ((float*) buf_depth.ptr)[r*cols+c];
         if( d < min_depth)
           continue;
+        const int l = ((int32_t*) buf_labels.ptr)[r*cols+c];
+        if(l < min_label)
+          continue;
         uv_points.push_back(cv::Point2f(c,r));
         z_points.push_back(d);
         const auto& pixel_rgb = rgb.at<cv::Vec3b>(r,c);
         cv::Scalar color(pixel_rgb[0],pixel_rgb[1],pixel_rgb[2]);
         colors.push_back(color);
+        l_points.push_back(l);
       }
     }
     cv::undistortPoints(uv_points, normalized_points, K, D);
-
-    cloud->reserve(uv_points.size());
     for(size_t i = 0; i < normalized_points.size(); i++){
       const cv::Point2f& xbar = normalized_points.at(i);
       const float& z = z_points.at(i);
       const cv::Scalar& color = colors.at(i);
+      const int l = l_points.at(i);
       pcl::PointXYZRGB pt;
       pt.x = xbar.x*z;
       pt.y = xbar.y*z;
@@ -1049,68 +1071,53 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
       pt.r = (float)color[0];
       pt.g = (float)color[1];
       pt.b = (float)color[2];
-      cloud->push_back(pt);
+      auto ptr = clouds.at(l);
+      ptr->push_back(pt);
     }
+  }
 
-#if 1
+  sum = 0;
+  const float euclidean_tolerance = 10. * leaf_xy;
+  for(auto it: clouds){
+    auto ptr = it.second;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>());
     pcl::VoxelGrid<pcl::PointXYZRGB> sor;
-    sor.setInputCloud(cloud);
+    sor.setInputCloud(ptr);
     sor.setLeafSize(leaf_xy, leaf_xy, leaf_z);
     sor.filter(*cloud_filtered);
-    //std::cout << "filter " << cloud->size() << "->" << cloud_filtered->size() << std::endl;
-    cloud = cloud_filtered;
-#endif
+    *ptr = *cloud_filtered;
+    EuclideanCluster<pcl::PointXYZRGB>(euclidean_tolerance, ptr);
+    sum += ptr->size();
   }
 
-  //const float euclidean_tolerance = 10. * leaf_xy;
-  //EuclideanCluster<pcl::PointXYZRGB>(euclidean_tolerance, cloud);
-
-  const int n_points = cloud->size();
-  py::array_t<float> xyzrgb(6*n_points);
-  py::array_t<int32_t> ins_points(n_points);
-  xyzrgb.resize({n_points, 6});
-  ins_points.resize({n_points,});
-
-  py::buffer_info buf_xyzrgb = xyzrgb.request();
+  const int n_point = sum;
+  py::array_t<float> xyzrgb(6*n_point);
+  py::array_t<int32_t> ins_points(n_point);
+  xyzrgb.resize({n_point, 6});
+  ins_points.resize({n_point,});
   py::buffer_info buf_ins_points = ins_points.request();
 
+  float* xyzrgb_arr = (float*) xyzrgb.request().ptr;
+  int32_t* ins_arr = (int32_t*) ins_points.request().ptr;
   {
-    std::vector<cv::Point3f> obj_points;
-    obj_points.reserve(cloud->size());
-    for(const pcl::PointXYZRGB& pt : *cloud)
-      obj_points.push_back(cv::Point3f(pt.x,pt.y,pt.z));
-
-    std::vector<cv::Point2f> img_points;
-    cv::Mat tvec = cv::Mat::zeros(3,1,CV_32F);
-    cv::Mat rvec = cv::Mat::zeros(3,1,CV_32F);
-    cv::projectPoints(obj_points, rvec, tvec, K, D, img_points);
-    int32_t* arr = (int32_t*) buf_ins_points.ptr;
-    for(int i = 0; i < img_points.size(); i++){
-      const cv::Point2i uv = img_points.at(i);
-      if(uv.x<0 || uv.y <0 || uv.x >= cols || uv.y >= rows){
-        arr[i] = 0;
+    int i = 0; 
+    for(auto it: clouds){
+      int l= it.first;
+      for(auto pt : *(it.second) ){
+        float* ptr = xyzrgb_arr+6*i;
+        ptr[0] = pt.x;
+        ptr[1] = pt.y;
+        ptr[2] = pt.z;
+        ptr[3] = ( (float) pt.r ) / 255.;
+        ptr[4] = ( (float) pt.g ) / 255.;
+        ptr[5] = ( (float) pt.b ) / 255.;
+        for(int j = 3; j <6; j++){
+          ptr[j] = std::min(1.f, ptr[j]);
+          ptr[j] = std::max(0.f, ptr[j]);
+        }
+        ins_arr[i] = l;
+        i++;
       }
-      else{
-        const int r = uv.y;
-        const int c = uv.x;
-        arr[i] = ((int32_t*) buf_labels.ptr)[r*cols+c];
-      }
-    }
-  }
-
-  for(int i = 0; i < n_points; i++){
-    const pcl::PointXYZRGB& pt = cloud->at(i);
-    float* ptr = (float*)xyzrgb.request().ptr + 6*i;
-    ptr[0] = pt.x;
-    ptr[1] = pt.y;
-    ptr[2] = pt.z;
-    ptr[3] = ( (float) pt.r ) / 255.;
-    ptr[4] = ( (float) pt.g ) / 255.;
-    ptr[5] = ( (float) pt.b ) / 255.;
-    for(int j = 3; j <6; j++){
-      ptr[j] = std::min(1.f, ptr[j]);
-      ptr[j] = std::max(0.f, ptr[j]);
     }
   }
 

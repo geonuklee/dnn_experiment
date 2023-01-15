@@ -47,8 +47,9 @@ def draw_unet_bonet_comparison():
     #plt.show()
 
 def draw_watershed():
-    heightmap = cv2.imread('/home/geo/.ros/heightmap.png')[:,:,0]
-    xx, yy = np.mgrid[0:heightmap.shape[0], 0:heightmap.shape[1]]
+    fn = 'eval_test0523/scene_0_helios_dist_2022-05-20-12-01-09.png'
+    output = cv2.imread(fn)[:,:640,:]
+
     fig = plt.figure(figsize=(12,6),dpi=100)
     ax1 = fig.add_subplot(121, projection='3d')
     # Make panes transparent
@@ -73,13 +74,6 @@ def draw_watershed():
     ax1.set_yticks([]) 
     ax1.set_zticks([])
     ax1.axis('equal')
-    ax1.set_aspect('equal')
-    #cmap = plt.cm.gray
-    cmap = plt.cm.gray.reversed()
-    ax1.plot_surface(xx, yy, heightmap.max()-heightmap, rstride=4, cstride=4,
-            cmap=cmap,
-            linewidth=0, antialiased=False)
-    ax1.view_init(elev=75., azim=0.)
 
     plt.show()
     print(ax.elev, ax.azim)
