@@ -876,6 +876,7 @@ void GetHessian(const float* depth,
   }
   }
 
+  // Sum of diagonal elements in Hessian
   for(int i = 0; i < size; i++)
     hessian[i] = hessian_x[i] + hessian_y[i];
 

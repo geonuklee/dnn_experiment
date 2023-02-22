@@ -27,7 +27,7 @@ import pickle
 import rosbag
 import torchvision.transforms.functional as TF
 
-from .util import ConvertDepth2input, Convert2InterInput
+from .util import Convert2IterInput
 from .gen_obblabeling import ParseMarker
 import re
 
@@ -153,7 +153,7 @@ class ObbDataset(Dataset):
             convex_edges = convex_edges.reshape((1,convex_edges.shape[-2], convex_edges.shape[-1]))
             marker  =  marker.reshape((1,outline.shape[-2], outline.shape[-1]))
 
-        input_x = Convert2InterInput(rgb, depth, K[0,0], K[1,1])[0]
+        input_x = Convert2IterInput(depth, K[0,0], K[1,1], rgb=None)[0]
         cv_outline = outline.reshape(outline.shape[1:])
         cv_marker = marker.reshape(marker.shape[1:])
         outline_dist = cv2.distanceTransform( (cv_outline==0).astype(np.uint8), cv2.DIST_L1, cv2.DIST_MASK_3)

@@ -103,10 +103,14 @@ class IterNetModule(nn.Module):
         return xout, x6, x9s
         
 class IterNetInit(nn.Module):
-    def __init__(self):
+    def __init__(self, input_ch):
+        '''
+        input_ch 3 for hessian, Gx,Gy
+        input_ch 4 for gray, hessian, Gx,Gy
+        '''
         super(IterNetInit, self).__init__()
         self.block1_pool = maxPool()
-        self.block1_c1 = conv2L(dim_in=  4, dim_out= 32, kernel=3, stride=1, padding=1, bias=True)
+        self.block1_c1 = conv2L(dim_in=input_ch, dim_out= 32, kernel=3, stride=1, padding=1, bias=True)
         self.block1_c2 = conv2L(dim_in= 32, dim_out= 64, kernel=3, stride=1, padding=1, bias=True)
         self.block1_c3 = conv2L(dim_in= 64, dim_out=128, kernel=3, stride=1, padding=1, bias=True)
         self.block1_c4 = conv2L(dim_in=128, dim_out=256, kernel=3, stride=1, padding=1, bias=True)
@@ -142,9 +146,9 @@ class IterNetInit(nn.Module):
     
 
 class IterNet(nn.Module):
-    def __init__(self):
+    def __init__(self,input_ch):
         super(IterNet, self).__init__()
-        self.net1 = IterNetInit()
+        self.net1 = IterNetInit(input_ch)
         self.net2 = IterNetModule(2)
         self.net3 = IterNetModule(3)
         #self.net4 = IterNetModule(4) # Not enough cuda memory.
@@ -183,9 +187,9 @@ def weighted_bce_loss(output, target, w1, w2):
     return loss1 + loss2
 
 class IterNet2(nn.Module):
-    def __init__(self):
+    def __init__(self,input_ch):
         super(IterNet, self).__init__()
-        self.net1 = IterNetInit()
+        self.net1 = IterNetInit(input_ch=input_ch)
         self.net2 = IterNetModule(2)
         self.net3 = IterNetModule(3)
         #self.net4 = IterNetModule(4) # Not enough cuda memory.
@@ -208,10 +212,10 @@ else:
 from torch import nn, optim
 
 class IterNetInterface(nn.Module):
-    def __init__(self):
+    def __init__(self, input_ch):
         super(IterNetInterface, self).__init__()
         self.device = 'cuda:0'
-        self.iternet = IterNet().to(self.device)
+        self.iternet = IterNet(input_ch).to(self.device)
         self.spliter = SplitAdapter(128, 100)
         self.epoch = -1
         self.niter= 0
@@ -311,8 +315,8 @@ class WeightedIterNetInterface(IterNetInterface):
         return fn_loss+fnp_loss
 
 class BigIterNetInterface(IterNetInterface):
-    def __init__(self):
-        super(BigIterNetInterface, self).__init__()
+    def __init__(self, input_ch):
+        super(BigIterNetInterface, self).__init__(input_ch)
         self.spliter = SplitAdapter(256, 200)
 
 class WeighteBigdIterNetInterface(WeightedIterNetInterface):

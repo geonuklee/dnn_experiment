@@ -12,14 +12,15 @@
 <arg name="info" default="helios2/camera_info"/>
 <arg name="rviz_name" default="unet.rviz"/>
 
-<arg name="weight_file" value="$(find ros_unet)/weights_big/iternet_9000.pth"/>
+<!--arg name="weight_file" value="$(find ros_unet)/weights_big/iternet_9000.pth"/-->
+<arg name="weight_file" value="$(find ros_unet)/weights/iternet_9000.pth"/>
 
-<node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
+<!--node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
     <rosparam subst_value="True">
       input_ch: 6
       weight_file: "$(arg weight_file)"
     </rosparam>
-</node>
+</node-->
 
 <node name="obb_server" pkg="ros_unet" type="obb_server" output="screen" required="true">
     <rosparam subst_value="True">

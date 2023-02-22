@@ -1,9 +1,10 @@
 <launch>
-  <include file="$(find ros_unet)/launch/ex.launch"/>
+  <!--include file="$(find ros_unet)/launch/ex.launch"/-->
+  <node name="rqt_gui" pkg="rqt_gui" type="rqt_gui"/>
 
   <group ns="cam0">
     <include file="$(find ros_unet)/launch/azure_driver.launch">
-      <arg name="sensor_sn" default="000350601812"/>
+      <arg name="sensor_sn" default="000635701312"/>
       <arg name="namespace" default="cam0" />
       <arg name="depth_enabled" default="false"/>
     </include>
@@ -13,7 +14,7 @@
     <node name="helios2" pkg="rise_helios2" type="arena_camera_node_depth" output="screen">
       <param name="device_user_id" type="string" value="$(arg device_user_id)"/>
       <param name="cam_info_url"   type="string" value="$(find unloader_calib)/config/cam0.yaml"/> 
-      <rosparam param="frame_rate"> 30 </rosparam>
+      <rosparam param="frame_rate"> 20 </rosparam>
     </node>
 
     <rosparam command="load" file="$(find unloader_calib)/config/$(arg device_user_id)_to_rgb_tf.yaml" />

@@ -142,7 +142,6 @@ class SplitAdapter:
         return dst
 
 def Convert2IterInput(depth, fx, fy, rgb=None, threshold_curvature=20.):
-    gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
     dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.01)
     fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
     grad, valid = cpp_ext.GetGradient(fd, sample_offset=0.01, fx=fx,fy=fy)
@@ -169,11 +168,19 @@ def Convert2IterInput(depth, fx, fy, rgb=None, threshold_curvature=20.):
     grad[grad < -max_grad] = -max_grad
     # Normalization -.5 ~ 5
     grad /= 2.*max_grad
-    input_stack = np.stack( ((gray/255.).astype(hessian.dtype),
-                             hessian,
-                             grad[:,:,0],
-                             grad[:,:,1]
-                             ), axis=0 )
+
+    if rgb is None:
+        input_stack = np.stack( (hessian,
+                                 grad[:,:,0],
+                                 grad[:,:,1]
+                                 ), axis=0 )
+    else:
+        gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
+        input_stack = np.stack( ((gray/255.).astype(hessian.dtype),
+                                 hessian,
+                                 grad[:,:,0],
+                                 grad[:,:,1]
+                                 ), axis=0 )
     return (input_stack, grad, hessian, outline, convex_edge )
 
 def ConvertDepth2input(depth, fx, fy):
