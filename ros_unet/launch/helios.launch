@@ -1,26 +1,17 @@
 <launch>
-  <!--include file="$(find ros_unet)/launch/ex.launch"/-->
-  <node name="rqt_gui" pkg="rqt_gui" type="rqt_gui"/>
-
-  <group ns="cam0">
-    <include file="$(find ros_unet)/launch/azure_driver.launch">
-      <arg name="sensor_sn" default="000635701312"/>
-      <arg name="namespace" default="cam0" />
-      <arg name="depth_enabled" default="false"/>
-    </include>
-
+  <include file="$(find rise_helios2)/launch/dip_stream.launch">
     <arg name="device_user_id" default="cam0" />
-    
-    <node name="helios2" pkg="rise_helios2" type="arena_camera_node_depth" output="screen">
-      <param name="device_user_id" type="string" value="$(arg device_user_id)"/>
-      <param name="cam_info_url"   type="string" value="$(find unloader_calib)/config/cam0.yaml"/> 
-      <rosparam param="frame_rate"> 20 </rosparam>
-    </node>
+    <arg name="kinect_sensor_sn" default="" />   <!-- Put serial number if you use multiple kinect -->
+    <arg name="color_resolution" default="720P"/> <!--options: 720P, 1080P, 1440P, 1536P, 2160P, 3072P -->
+    <arg name="use_kinect"   default="true"/>
+    <arg name="helios_fps"   default="15"/>
+    <arg name="kinect_fps"   default="15"/>
+  </include>
 
-    <rosparam command="load" file="$(find unloader_calib)/config/$(arg device_user_id)_to_rgb_tf.yaml" />
-    <node name="rgbd_publisher" pkg="nodelet" type="nodelet" args="standalone unloader_calib/RGBDStreamerNodelet" output="screen">
-      <param name="device_user_id" type="string" value="$(arg device_user_id)"/>
-    </node>
-  </group>
+  <include file="$(find ros_unet)/launch/ex.launch">
+    <arg name="rgb"   default="/cam0/helios2/rgb_rect"/>
+    <arg name="depth" default="/cam0/helios2/depth_rect"/>
+    <arg name="info"  default="/cam0/helios2/camera_info_rect"/>
+  </include>
 
 </launch>

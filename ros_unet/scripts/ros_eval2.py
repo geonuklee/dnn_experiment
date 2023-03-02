@@ -566,7 +566,7 @@ def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
             ax.set_title('Trans error-PDF',fontsize=7)#.set_position( (.5, 1.42))
         elif err_name == 'max_wh_err':
             n_bins, step = 5, 0.05
-            unit, _format = '[m]', '%.3f~%.3f'
+            unit, _format = '[cm]', '%.1f~%.1f'
             ax.set_title('Size error-PDF',fontsize=7)#.set_position( (.5, 1.42))
 
         min_max = [0., n_bins*step]
@@ -1368,7 +1368,7 @@ def oblique_evaluation():
     tags = {}
     margin, minwidth = GetMargin(eval_data, picks, normalized=False)
     oblique = GetOblique(eval_data, picks)
-    valid   = margin>40.
+    valid   = margin > 20./500. # 0.04
     fig = plt.figure(1, figsize=FIG_SIZE, dpi=DPI)
     fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
     ax = fig.add_subplot(N_FIG[0],N_FIG[1],1)

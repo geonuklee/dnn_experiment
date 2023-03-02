@@ -7,20 +7,20 @@
 <arg name="euc_tolerance" value="0.1" />
 <arg name="filename" default=""/>
 <arg name="do_eval" default="false"/>
-<arg name="rgb" default="aligned/rgb_to_depth/image_raw"/>
-<arg name="depth" default="helios2/depth/image_raw"/>
-<arg name="info" default="helios2/camera_info"/>
+<arg name="rgb"   default="/cam0/aligned/rgb_to_depth/image_raw"/>
+<arg name="depth" default="/cam0/helios2/depth/image_raw"/>
+<arg name="info"  default="/cam0/helios2/camera_info"/>
 <arg name="rviz_name" default="unet.rviz"/>
 
 <!--arg name="weight_file" value="$(find ros_unet)/weights_big/iternet_9000.pth"/-->
 <arg name="weight_file" value="$(find ros_unet)/weights/iternet_9000.pth"/>
 
-<!--node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
+<node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
     <rosparam subst_value="True">
       input_ch: 6
       weight_file: "$(arg weight_file)"
     </rosparam>
-</node-->
+</node>
 
 <node name="obb_server" pkg="ros_unet" type="obb_server" output="screen" required="true">
     <rosparam subst_value="True">
@@ -32,17 +32,17 @@
       generate_points: $(arg generate_points)
     </rosparam>
 </node>
-<node name="cgal_server" pkg="ros_unet" type="cgal_server" output="screen" required="true">
+
+<!--node name="cgal_server" pkg="ros_unet" type="cgal_server" output="screen" required="true">
     <rosparam subst_value="True">
       verbose: $(arg verbose)
     </rosparam>
 </node>
-
 <node name="ransac_server" pkg="ros_unet" type="ros_ransacobb_server.py" output="screen" required="true">
     <rosparam subst_value="True">
       verbose: $(arg verbose)
     </rosparam>
-</node>
+</node-->
 
 <node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/>
 <node name="rosbag" pkg="rosbag" type="play" args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')"/>
@@ -56,9 +56,9 @@
     <remap from="~Cgal/ComputeObb"  to="/cgal_server/ComputeObb" />
     <remap from="~Ransac/ComputeObb"  to="/ransac_server/ComputeObb" />
 
-    <remap from="~cam0/rgb"    to="/cam0/$(arg rgb)" />
-    <remap from="~cam0/depth"  to="/cam0/$(arg depth)" />
-    <remap from="~cam0/info"   to="/cam0/$(arg info)" />
+    <remap from="~cam0/rgb"    to="$(arg rgb)" />
+    <remap from="~cam0/depth"  to="$(arg depth)" />
+    <remap from="~cam0/info"   to="$(arg info)" />
 
     <rosparam subst_value="True">
       do_eval: "$(arg do_eval)"

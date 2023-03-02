@@ -1,55 +1,44 @@
 <launch>
   <arg name="sensor_sn" default="" />
   <arg name="namespace" default=""/>
-  <arg name="depth_enabled" default="true"/>
+  <arg name="depth_enabled"    default="true"/>
+  <arg name="depth_unit"       default="32FC1"/>  <!--"32FC1" for float metre, "16UC1" for integer millimetre-->
+  <arg name="color_resolution" default="1536P"/>  <!--options: 720P, 1080P, 1440P, 1536P, 2160P, 3072P -->
+  <arg name="oldcalib" default="false"/>
+  <!-- Deprecate after dependency on old calibration between azure and Helios in 2020~2023.2-->
+  <group ns="k4a" if="$(arg oldcalib)">
+      <param name="robot_description"
+        command="xacro $(find azure_kinect_ros_driver)/urdf/azure_kinect.urdf.xacro" />
+      <node pkg="nodelet" type="nodelet" name="rectify_rgb"
+            args="load image_proc/rectify manager --no-bond"
+            respawn="true">
+        <remap from="image_mono"  to="rgb/image_raw" />
+        <remap from="image_rect"  to="rgb/image_rect_color" />
+      </node>
+      <node pkg="nodelet" type="nodelet" name="rectify_depth"
+            args="load image_proc/rectify manager --no-bond"
+            respawn="true">
+        <remap from="image_mono"  to="depth/image_raw" />
+        <remap from="image_rect"  to="depth/image_rect" />
+        <param name="interpolation" value="0" />
+      </node>
+  </group>
 
   <group ns="k4a" >
-    <param name="robot_description"
-      command="xacro $(find azure_kinect_ros_driver)/urdf/azure_kinect.urdf.xacro" />
-    <!-- <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher" /> -->
-    <!-- <node name="robot_state_publisher" pkg="robot_state_publisher" type="state_publisher" /> -->
-
-    <!-- Spawn a nodelet manager -->
-    <node pkg="nodelet" type="nodelet" name="manager" args="manager" output="screen">
+    <!-- xterm -e to ignore annoying warn -->
+    <node pkg="nodelet" type="nodelet" name="manager" args="manager" output="log" respawn="true"
+      launch-prefix="xterm -e">
       <param name="num_worker_threads" value="4" />
     </node>
-
-    <!-- Spawn an image_proc/rectify nodelet to rectify the RGB image -->
-    <node pkg="nodelet" type="nodelet" name="rectify_rgb"
-          args="load image_proc/rectify manager --no-bond"
-          respawn="true">
-      <remap from="image_mono"  to="rgb/image_raw" />
-      <remap from="image_rect"  to="rgb/image_rect_color" />
-    </node>
-
-    <!-- Spawn an image_proc/rectify nodelet to rectify the depth image -->
-    <node pkg="nodelet" type="nodelet" name="rectify_depth"
-          args="load image_proc/rectify manager --no-bond"
-          respawn="true">
-      <remap from="image_mono"  to="depth/image_raw" />
-      <remap from="image_rect"  to="depth/image_rect" />
-
-      <param name="interpolation" value="0" />
-    </node>
-
-    <!-- Spawn an image_proc/rectify nodelet to rectify the depth image -->
-    <node pkg="nodelet" type="nodelet" name="rectify_depth_to_rgb"
-          args="load image_proc/rectify manager --no-bond"
-          respawn="true">
-      <remap from="image_mono"  to="depth_to_rgb/image_raw" />
-      <remap from="image_rect"  to="depth_to_rgb/image_rect" />
-      <remap from="camera_info" to="depth_to_rgb/camera_info"/>
-      <param name="interpolation" value="0" />
-    </node>
-
     <node pkg="nodelet" type="nodelet" name="k4a_ros_bridge"
           args="load Azure_Kinect_ROS_Driver/K4AROSBridgeNodelet manager --no-bond"
-          respawn="true">
+          respawn="true" output="log">
       <param name="sensor_sn"         type="string" value="$(arg sensor_sn)" />
       <param name="depth_enabled"     type="bool"   value="$(arg depth_enabled)" />
+      <param name="depth_unit"        type="string" value="$(arg depth_unit)" />
       <param name="depth_mode"        type="string" value="NFOV_UNBINNED" />
       <param name="color_enabled"     type="bool"   value="true" />
-      <param name="color_resolution"  type="string" value="1536P" />
+      <param name="color_resolution"  type="string" value="$(arg color_resolution)" />
       <param name="fps"               type="int"    value="15" />
       <param name="point_cloud"       type="bool"   value="false" />
       <param name="rgb_point_cloud"   type="bool"   value="false" />

@@ -21,14 +21,15 @@ class Node:
     def PredictEdge(self, req):
         depth = np.frombuffer(req.depth.data, dtype=np.float32).reshape(req.depth.height, req.depth.width)
         rgb = np.frombuffer(req.rgb.data, dtype=np.uint8).reshape(req.rgb.height, req.rgb.width,3)
-        input_x, grad, hessian, outline, convex_edge\
-                = Convert2IterInput(depth,req.fx,req.fy,rgb=rgb)
+        #input_x, grad, hessian, outline, convex_edge = Convert2IterInput(depth,req.fx,req.fy,rgb=rgb)
+        input_x, grad, hessian, outline, convex_edge = Convert2IterInput(depth,req.fx,req.fy)
+                #threshold_curvature=0.005)
         input_x = torch.Tensor(input_x).unsqueeze(0)
         y1, y2, pred = self.model(input_x)
         del y1, y2, input_x
         pred = pred.to('cpu')
         pred = self.model.spliter.restore(pred)
-        mask = self.model.spliter.pred2mask(pred)
+        mask = self.model.spliter.pred2mask(pred, th=.7)
         del pred
 
         mask[depth < .001] = 1
@@ -53,12 +54,14 @@ class Node:
 if __name__ == '__main__':
     rospy.init_node('ros_unet_server', anonymous=True)
     fn = rospy.get_param('~weight_file')
-    input_ch = rospy.get_param('~input_ch')
     device = "cuda:0"
     checkpoint = torch.load(fn)
     model_name = checkpoint['model_name']
-    model = globals()[model_name]()
-    model.load_state_dict(checkpoint['model_state_dict'])
+    state = checkpoint['model_state_dict']
+    #input_ch = rospy.get_param('~input_ch')
+    input_ch = state['iternet.net1.block1_c1.main.0.weight'].shape[1]
+    model = globals()[model_name](input_ch)
+    model.load_state_dict(state)
 
     model.to(device)
     model.eval()

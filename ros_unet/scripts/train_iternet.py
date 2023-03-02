@@ -87,11 +87,12 @@ def train():
     #model_name = 'WeightedIterNetInterface'
     #model_name = 'WeighteBigdIterNetInterface' # Poor than non weighted
     model_name = 'BigIterNetInterface' # Good after 6000 iter
-    model = globals()[model_name]()
+    input_ch=3
+    model = globals()[model_name](input_ch)
 
     optimizer = model.CreateOptimizer()
     if state0 is not None:
-        model0 = globals()[state0['model_name']]()
+        model0 = globals()[state0['model_name']](input_ch)
         model0.load_state_dict(state0['model_state_dict'])
         model.iternet = model0.iternet
         del model0

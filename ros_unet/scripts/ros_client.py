@@ -25,7 +25,8 @@ from unet_ext import GetBoundary, UnprojectPointscloud
 def get_rectification(camera_info):
     K = np.array( camera_info.K ,dtype=np.float).reshape((3,3))
     D = np.array( camera_info.D, dtype=np.float).reshape((-1,))
-
+    if D.sum() == 0.:
+        return camera_info, None, None
     osize = (camera_info.width,camera_info.height)
     newK,_ = cv2.getOptimalNewCameraMatrix(K,D,osize,0)
     mx,my = cv2.initUndistortRectifyMap(K,D,None,newK,osize,cv2.CV_32F)
@@ -84,12 +85,13 @@ def convert_plane(pose, plane0):
 def rectify(rgb_msg, depth_msg, mx, my, bridge):
     rgb = bridge.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
     depth = bridge.imgmsg_to_cv2(depth_msg, desired_encoding='32FC1')
-
-    rect_rgb = cv2.remap(rgb,mx,my,cv2.INTER_NEAREST)
-    rect_depth = cv2.remap(depth,mx,my,cv2.INTER_NEAREST)
-
-    rect_rgb_msg = bridge.cv2_to_imgmsg(rgb,encoding='bgr8')
-    rect_depth_msg = bridge.cv2_to_imgmsg(depth,encoding='32FC1')
+    if mx is None:
+        rect_rgb, rect_depth = rgb, depth
+    else:
+        rect_rgb = cv2.remap(rgb,mx,my,cv2.INTER_NEAREST)
+        rect_depth = cv2.remap(depth,mx,my,cv2.INTER_NEAREST)
+    rect_rgb_msg = bridge.cv2_to_imgmsg(rect_rgb,encoding='bgr8')
+    rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
     return rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb
 
 def get_Twc(cam_id):
@@ -168,14 +170,12 @@ if __name__=="__main__":
     cam_id = "cam0"
     sub = Sub("~%s/rgb"%cam_id, "~%s/depth"%cam_id, "~%s/info"%cam_id)
     rect_info_msgs = {}
-    remap_maps = {}
 
     rate = rospy.Rate(hz=30)
     while not rospy.is_shutdown():
         if sub.info is None:
             continue
         rect_info_msgs[cam_id], mx, my = get_rectification(sub.info)
-        remap_maps[cam_id] = (mx, my)
         set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
         floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
         break
