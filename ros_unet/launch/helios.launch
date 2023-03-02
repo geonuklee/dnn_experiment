@@ -1,7 +1,7 @@
 <launch>
   <include file="$(find rise_helios2)/launch/dip_stream.launch">
     <arg name="device_user_id" default="cam0" />
-    <arg name="kinect_sensor_sn" default="" />   <!-- Put serial number if you use multiple kinect -->
+    <arg name="kinect_sensor_sn" default="" />    <!-- Put serial number if you use multiple kinect -->
     <arg name="color_resolution" default="720P"/> <!--options: 720P, 1080P, 1440P, 1536P, 2160P, 3072P -->
     <arg name="use_kinect"   default="true"/>
     <arg name="helios_fps"   default="15"/>

@@ -81,7 +81,8 @@ if __name__=="__main__":
     obbdatasetpath = osp.join(pkg_dir,dataset_name)
     output_path, exist_labels = make_dataset_dir(obbdatasetpath)
 
-    rosbag_path = '/home/geo/catkin_ws/src/ros_unet/rosbag_%s/**/*.bag'%usage
+    #rosbag_path = '/home/geo/catkin_ws/src/ros_unet/rosbag_%s/**/*.bag'%usage
+    rosbag_path = osp.join(pkg_dir,'rosbag_%s/**/*.bag'%usage)
     rosbagfiles = glob2.glob(rosbag_path,recursive=True)
 
     cam_id = 0

@@ -6,9 +6,11 @@
 #/cam0/aligned/depth_to_rgb/image_rect \
 #/cam0/k4a/rgb/camera_info \
 
-rosbag record -o rosbag_0223/aruco --duration=5s \
-  /cam0/aligned/rgb_to_depth/image_raw \
-  /cam0/helios2/depth/image_raw \
-  /cam0/helios2/camera_info
-  #\ | egrep "Recording" | sed -e 's/.*\(rosbag_0523\/helios.*\.bag\).*/\1/'| xargs rosbag info
+#mkdir rosbag_230303
+#roslaunch ros_unet label.launch target:=230303
+rosbag record -o rosbag_230303/helio --duration=5s \
+  /cam0/helios2/depth_rect \
+  /cam0/helios2/rgb_rect \
+  /cam0/helios2/intensity_rect \
+  /cam0/helios2/camera_info_rect
 

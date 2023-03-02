@@ -8,16 +8,19 @@
 <arg name="rviz_name" default="unet.rviz"/>
 <arg name="target" default="test"/>
 <arg name="show" default="1"/>
+<arg name="methods" default="myobb,mvbb,ransac"/>
+<arg name="rosbag_subnames" default="test0523,"/>
+<arg name="nframe_per_scene" default="20"/>
 
 <!--arg name="weight_file" value="$(find ros_unet)/weights_big/iternet_9000.pth"/-->
 <arg name="weight_file" value="$(find ros_unet)/weights/iternet_9000.pth"/>
 
-<!--node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
+<node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
     <rosparam subst_value="True">
       input_ch: 6
       weight_file: "$(arg weight_file)"
     </rosparam>
-</node-->
+</node>
 
 <node name="obb_server" pkg="ros_unet" type="obb_server" output="screen" required="true">
     <rosparam subst_value="True">
@@ -54,9 +57,13 @@
     <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" />
     <remap from="~Cgal/ComputeObb"  to="/cgal_server/ComputeObb" />
     <remap from="~Ransac/ComputeObb"  to="/ransac_server/ComputeObb" />
+    <param name="~nframe_per_scene" type="int" value="$(arg nframe_per_scene)"/>
     <rosparam subst_value="True">
+      nframe_per_scene: "$(arg nframe_per_scene)"
       target: "$(arg target)"
       show: "$(arg show)"
+      methods: "$(arg methods)"
+      rosbag_subnames: "$(arg rosbag_subnames)"
     </rosparam>
 </node>
 

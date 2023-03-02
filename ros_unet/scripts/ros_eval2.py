@@ -24,7 +24,7 @@ from collections import OrderedDict as Od
 from myadjust_text import myadjust_text
 from adjustText import adjust_text
 
-from evaluator import get_pkg_dir, get_pick, GetMarkerCenters, VisualizeGt, marker2box, FitAxis, GetSurfCenterPoint
+from evaluator import get_pkg_dir, get_pick, GetMarkerCenters, VisualizeGt, marker2box, FitAxis, GetSurfCenterPoint, get_topicnames
 from Objectron import box, iou
 
 from ros_client import *
@@ -58,12 +58,6 @@ matplotlib.rcParams['mathtext.rm'] = 'Bitstream Vera Sans'
 matplotlib.rcParams['mathtext.it'] = 'Bitstream Vera Sans:italic'
 matplotlib.rcParams['mathtext.bf'] = 'Bitstream Vera Sans:bold'
 # https://stackoverflow.com/questions/23824687/text-does-not-work-in-a-matplotlib-label
-
-def get_topicnames(bagfn, bag, given_camid='cam0'):
-    depth = '/%s/helios2/depth/image_raw'%given_camid
-    info  = '/%s/helios2/camera_info'%given_camid
-    rgb   = '/%s/aligned/rgb_to_depth/image_raw'%given_camid
-    return rgb, depth, info
 
 def get_camid(fn):
     base = osp.splitext( osp.basename(fn) )[0]
@@ -504,8 +498,13 @@ def GetThickness(eval_data):
 
 def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
     ourobb_data = eval_data_allmethod[eval_data_allmethod['method']=='myobb']
+    assert(len(ourobb_data)>0)
     mvbb_data = eval_data_allmethod[eval_data_allmethod['method']=='mvbb']
+    if len(mvbb_data) == 0:
+        rospy.logwarn("No samples for MVBB test")
     ransac_data = eval_data_allmethod[eval_data_allmethod['method']=='ransac']
+    if len(ransac_data) == 0:
+        rospy.logwarn("No samples for RANSAC test")
 
     # TODO valid for each method
     valid = logical_ands([tags=='',
@@ -517,13 +516,16 @@ def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
     ourobb_data = ourobb_data[valid]
     thresh_thick = 0.05
     datas = Od()
-    datas['OBB for all']                  = ourobb_data
-    datas['OBB for observable side']      = ourobb_data[GetThickness(ourobb_data) > thresh_thick]
-    datas['OBB for unobservable side']    = ourobb_data[GetThickness(ourobb_data) < thresh_thick]
-    datas['MVBB for observable side']     = mvbb_data[GetThickness(mvbb_data) > thresh_thick]
-    datas['MVBB for unobservable side']   = mvbb_data[GetThickness(mvbb_data) < thresh_thick]
-    datas['RANSAC for observable side']   = ransac_data[GetThickness(ransac_data) > thresh_thick]
-    datas['RANSAC for unobservable side'] = ransac_data[GetThickness(ransac_data) < thresh_thick]
+    if len(ourobb_data)>0:
+        datas['OBB for all']                  = ourobb_data
+        datas['OBB for observable side']      = ourobb_data[GetThickness(ourobb_data) > thresh_thick]
+        datas['OBB for unobservable side']    = ourobb_data[GetThickness(ourobb_data) < thresh_thick]
+    if len(mvbb_data)>0:
+        datas['MVBB for observable side']     = mvbb_data[GetThickness(mvbb_data) > thresh_thick]
+        datas['MVBB for unobservable side']   = mvbb_data[GetThickness(mvbb_data) < thresh_thick]
+    if len(ransac_data)>0:
+        datas['RANSAC for observable side']   = ransac_data[GetThickness(ransac_data) > thresh_thick]
+        datas['RANSAC for unobservable side'] = ransac_data[GetThickness(ransac_data) < thresh_thick]
 
     error_names = ['trans_err', 'max_wh_err', 'deg_err']
     rows = []
@@ -544,9 +546,12 @@ def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
     print(table)
 
     datas = Od()
-    datas['OBB for all']                  = ourobb_data
-    datas['MVBB for observable side']     = mvbb_data[GetThickness(mvbb_data) > thresh_thick]
-    datas['RANSAC for unobservable side'] = ransac_data[GetThickness(ransac_data) < thresh_thick]
+    if len(ourobb_data)>0:
+        datas['OBB']                          = ourobb_data # for all cases
+    if len(mvbb_data)>0:
+        datas['MVBB for observable side']     = mvbb_data[GetThickness(mvbb_data) > thresh_thick]
+    if len(ransac_data)>0:
+        datas['RANSAC for unobservable side'] = ransac_data[GetThickness(ransac_data) < thresh_thick]
     min_length = .1
     fig = plt.figure(figsize=(8,6), dpi=DPI)
     fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
@@ -983,28 +988,36 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
     #if osp.exists(screenshot_dir):
     #    shutil.rmtree(screenshot_dir)
     #makedirs(screenshot_dir)
+    rospy.loginfo("Waiting PredictEdge")
     rospy.wait_for_service('~PredictEdge')
     predict_edge = rospy.ServiceProxy('~PredictEdge', ros_unet.srv.ComputeEdge)
+    rospy.loginfo("Waiting SetCamera")
     rospy.wait_for_service('~SetCamera')
     set_camera = rospy.ServiceProxy('~SetCamera', ros_unet.srv.SetCamera)
+    rospy.loginfo("Waiting ComputeObb")
     rospy.wait_for_service('~ComputeObb')
     compute_obb = rospy.ServiceProxy('~ComputeObb', ros_unet.srv.ComputeObb)
     bridge = CvBridge()
+    rospy.loginfo("Waiting FloorDetector")
     rospy.wait_for_service('~FloorDetector/SetCamera')
     floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
 
+    rospy.loginfo("Waiting Cgal")
     rospy.wait_for_service('~Cgal/ComputeObb')
     cgal_compute_obb = rospy.ServiceProxy('~Cgal/ComputeObb', ros_unet.srv.ComputePoints2Obb)
+    rospy.loginfo("Waiting Ransac")
     rospy.wait_for_service('~Ransac/ComputeObb')
     ransac_compute_obb = rospy.ServiceProxy('~Ransac/ComputeObb', ros_unet.srv.ComputePoints2Obb)
-
 
     pub_gt_obb = rospy.Publisher("~gt_obb", MarkerArray, queue_size=-1)
     pub_gt_pose = rospy.Publisher("~gt_pose", PoseArray, queue_size=1)
 
     pkg_dir = get_pkg_dir()
+
+    nframe_per_scene = rospy.get_param('~nframe_per_scene',-1)
+    assert(nframe_per_scene > 0)
 
     # output23dlist.append( ~
     dtype = [('base',object),
@@ -1113,7 +1126,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
             cv2.imwrite(fn, dst)
             nframe += 1
             depth_msg, rgb_msg = None, None
-            if nframe >= 20:
+            if nframe >= nframe_per_scene:
                 break
 
         eval_scene = np.array(eval_scene, dtype)
@@ -1151,7 +1164,9 @@ def full_extent(ax, pad=0.0):
     #items += ax.get_yticklabels()
     items.append(ax.xaxis.label)
     items.append(ax.yaxis.label)
-    items.append(ax.get_legend())
+    item = ax.get_legend()
+    if item is not None:
+        items.append(item)
     fig = ax.get_figure()
     bbox = Bbox.union([item.get_window_extent(renderer=ren).transformed(fig.dpi_scale_trans.inverted()) \
             for item in items])
@@ -1165,19 +1180,19 @@ def logical_ands(list_of_arrays):
         valid = np.logical_and(valid, arr)
     return valid
 
-def test_evaluation(show_sample):
+def test_evaluation(rosbag_subnames, show_sample):
     pkg_dir = get_pkg_dir()
-    eval_dir = osp.join(pkg_dir, 'eval_test0523')
+    eval_dir = osp.join(pkg_dir, 'eval_%s'%rosbag_subnames[0])
     if not osp.exists(eval_dir):
         makedirs(eval_dir)
     fn_evaldata = osp.join(eval_dir,'eval_data.npy')
-    usages = ['test0523']
     gt_files = []
-    for usage in usages:
+    for usage in rosbag_subnames:
         obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
         gt_files += glob2.glob(obbdatasetpath)
     if not osp.exists(fn_evaldata):
-        eval_data_allmethod = perform_test(eval_dir, gt_files, fn_evaldata, methods=['myobb','mvbb','ransac'])
+        methods = rospy.get_param("~methods").split(',')
+        eval_data_allmethod = perform_test(eval_dir, gt_files, fn_evaldata, methods=methods)
     else:
         with open(fn_evaldata,'rb') as f:
             eval_data_allmethod = np.load(f, allow_pickle=True)
@@ -1386,7 +1401,10 @@ if __name__=="__main__":
     target = rospy.get_param('~target')
     show = int(rospy.get_param('~show'))
     if target=='test':
-        test_evaluation(show_sample=show)
+        rosbag_subnames = rospy.get_param("~rosbag_subnames").split(',')
+        rosbag_subnames = [x for x in rosbag_subnames if x]
+        #rosbag_subnames = ['test0523']
+        test_evaluation(rosbag_subnames, show_sample=show)
     elif target=='dist':
         dist_evaluation()
     elif target=='oblique':

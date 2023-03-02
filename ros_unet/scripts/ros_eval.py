@@ -25,12 +25,6 @@ import matplotlib.pyplot as plt
 import pyautogui
 import shutil
 
-def get_topicnames(bagfn, bag, given_camid='cam0'):
-    depth = '/%s/helios2/depth/image_raw'%given_camid
-    info  = '/%s/helios2/camera_info'%given_camid
-    rgb   = '/%s/aligned/rgb_to_depth/image_raw'%given_camid
-    return rgb, depth, info
-
 def get_camid(fn):
     base = osp.splitext( osp.basename(fn) )[0]
     groups = re.findall("(.*)_(cam0|cam1)", base)[0]

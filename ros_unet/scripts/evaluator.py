@@ -30,6 +30,19 @@ from unet_ext import GetBoundary, EvaluateEdgeDetection
 
 tp_iou = .5
 
+def get_topicnames(bagfn, bag, given_camid='cam0'):
+    topics = bag.get_type_and_topic_info()[1].keys()
+    rgb    = '/%s/aligned/rgb_to_depth/image_raw'%given_camid
+    if '/%s/helios2/depth/image_raw'%given_camid in topics:
+        depth = '/%s/helios2/depth/image_raw'%given_camid
+        info  = '/%s/helios2/camera_info'%given_camid
+    else:
+        rgb   = '/%s/helios2/rgb_rect'%given_camid
+        depth = '/%s/helios2/depth_rect'%given_camid
+        info  = '/%s/helios2/camera_info_rect'%given_camid
+    return rgb, depth, info
+
+
 def get_pick(fn):
     f = open(fn,'r')
     pick = pickle.load(f)

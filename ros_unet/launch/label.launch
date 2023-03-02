@@ -1,6 +1,7 @@
 <launch>
 <arg name="rviz_name" default="labeling.rviz"/>
 <arg name="target" default="test"/>
+<arg name="rosbag_subnames" default="test0523,"/>
 
 <node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/>
 <node name="labeling" pkg="ros_unet" type="labeling.py" output="screen" required="true">
