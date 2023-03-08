@@ -8,7 +8,7 @@
 
 #mkdir rosbag_230303
 #roslaunch ros_unet label.launch target:=230303
-rosbag record -o rosbag_230303/helio --duration=5s \
+rosbag record -o rosbag_230303/helios --duration=5s \
   /cam0/helios2/depth_rect \
   /cam0/helios2/rgb_rect \
   /cam0/helios2/intensity_rect \

@@ -134,6 +134,8 @@ def get_pkg_dir():
 def get_pick_fromrosbag(datasetname, rosbagfn):
     base = osp.splitext( osp.basename(rosbagfn) )[0]
     pick_fn = osp.join(get_pkg_dir(), datasetname, "%s_cam0.pick"%base)
+    if not osp.exists(pick_fn):
+        return None
     f = open(pick_fn,'r')
     pick = pickle.load(f)
     f.close()
@@ -143,6 +145,7 @@ if __name__=="__main__":
     rospy.init_node('~', anonymous=True)
     rospy.wait_for_service('~PredictEdge')
     predict_edge = rospy.ServiceProxy('~PredictEdge', ros_unet.srv.ComputeEdge)
+    pub_eval = rospy.Publisher('~eval', Image,queue_size=1)
 
     rospy.wait_for_service('~SetCamera')
     set_camera = rospy.ServiceProxy('~SetCamera', ros_unet.srv.SetCamera)
@@ -163,8 +166,17 @@ if __name__=="__main__":
     do_eval = rospy.get_param("~do_eval")=='true'
     if do_eval:
         rosbagfn = rospy.get_param("~filename")
-        datasetname = rospy.get_param("~datasetname")
-        pick = get_pick_fromrosbag(datasetname, rosbagfn)
+        datasetnames = rospy.get_param("~datasetnames").split(",")
+        for datasetname in datasetnames:
+            pick = get_pick_fromrosbag(datasetname, rosbagfn)
+            if pick is None:
+                continue
+            else:
+                break
+        if pick is None:
+            rospy.logerr("Can't find %s in [%s]"%(rosbagfn,datasetnames) )
+            import pdb; pdb.set_trace()
+            exit(1)
 
     bridge = CvBridge()
     cam_id = "cam0"
@@ -203,27 +215,27 @@ if __name__=="__main__":
                 Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
         t1 = time.time()
 
-        w,h = obb_resp.marker.width, obb_resp.marker.height
-        marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32).reshape(h,w).copy()
-        boundary = GetBoundary(marker, 2)
-        dist = cv2.distanceTransform( (boundary<1).astype(np.uint8), distanceType=cv2.DIST_L2, maskSize=5)
-        #marker[dist < 10.] = 0
-        marker[dist < 15.] = 0
+        if False:
+            w,h = obb_resp.marker.width, obb_resp.marker.height
+            marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32).reshape(h,w).copy()
+            boundary = GetBoundary(marker, 2)
+            dist = cv2.distanceTransform( (boundary<1).astype(np.uint8), distanceType=cv2.DIST_L2, maskSize=5)
+            #marker[dist < 10.] = 0
+            marker[dist < 15.] = 0
 
-        xyzrgb, labels = UnprojectPointscloud(rect_rgb,rect_depth,marker,rect_K,rect_D,leaf_xy=0.02,leaf_z=0.01)
-        A = Tfwc.astype(xyzrgb.dtype)
-        B = np.hstack( (xyzrgb[:,:3], np.ones((xyzrgb.shape[0],1),xyzrgb.dtype))).T
-        xyzrgb[:,:3] = np.matmul(A,B).T
-        xyz = xyzrgb[:,:3].reshape(-1,).tolist()
-        labels = labels.reshape(-1,).tolist()
-        #mvbb_resp = cgal_compute_obb(xyz,labels)
-        #ransac_resp = ransac_compute_obb(xyz,labels)
+            xyzrgb, labels = UnprojectPointscloud(rect_rgb,rect_depth,marker,rect_K,rect_D,leaf_xy=0.02,leaf_z=0.01)
+            A = Tfwc.astype(xyzrgb.dtype)
+            B = np.hstack( (xyzrgb[:,:3], np.ones((xyzrgb.shape[0],1),xyzrgb.dtype))).T
+            xyzrgb[:,:3] = np.matmul(A,B).T
+            xyz = xyzrgb[:,:3].reshape(-1,).tolist()
+            labels = labels.reshape(-1,).tolist()
+            #mvbb_resp = cgal_compute_obb(xyz,labels)
+            #ransac_resp = ransac_compute_obb(xyz,labels)
 
         if do_eval:
-            eval_frame, pred_marker, dst = Evaluate2D(obb_resp, pick['marker'], rgb)
-            cv2.imshow("dst", dst)
-            if ord('q') == cv2.waitKey(1):
-                exit(1)
+            outputlist, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
+            dst_msg = bridge.cv2_to_imgmsg(dst,encoding='bgr8')
+            pub_eval.publish(dst_msg)
 
         #print("etime = ", t1-t0)
         rate.sleep()

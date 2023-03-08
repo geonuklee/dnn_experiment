@@ -296,7 +296,7 @@ def Overlap(marker, rgb, text=False):
     return dst
 
 
-def Evaluate2D(obb_resp, gt_marker, rgb):
+def Evaluate2D(obb_resp, gt_marker, rgb, strict_rule=True):
     pred_marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32)\
             .reshape(obb_resp.marker.height, obb_resp.marker.width)
     pred_filtered_outline = np.frombuffer(obb_resp.filtered_outline.data, dtype=np.uint8)\
@@ -307,6 +307,12 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
     #cv2.imshow("gt",GetColoredLabel(gt_marker,True))
     #cv2.imshow("pred",GetColoredLabel(pred_marker,True))
     #cv2.waitKey()
+    
+    # Strict rule for determine over, under seg
+    if strict_rule:
+        underseg_th = 0. # helio_2023-03-04-14-48-40.bag 참고
+    else:
+        underseg_th = 1.
 
     arr = []
     for (gidx, pidx), count in zip(pair_marker,counts):
@@ -327,6 +333,14 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
         pred_areas[pidx] = ps
 
     gt_indices, tmp = np.unique(gt_marker, return_counts=True)
+    gt_maxwidth = {}
+    for gidx in gt_indices:
+        if gidx<1:
+            continue
+        gt_part = gt_marker==gidx
+        gt_part[0,:] = gt_part[:,0] = gt_part[-1,:] = gt_part[:,-1] = 0
+        dist = cv2.distanceTransform(gt_part.astype(np.uint8),distanceType=cv2.DIST_L2, maskSize=5)
+        gt_maxwidth[gidx]=dist.max()
     gt_areas ={}
     for (gidx, gs) in zip(gt_indices, tmp.astype(np.float) ):
         if gidx<1:
@@ -351,19 +365,25 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
                     continue
                 if intersection/pred_areas[_pidx] > .8:
                     overlap_pred.append(_pidx)
-            # TODO recall대신 gidx boundary중, overlap_pred 로부터 20pixel 이상 떨어진 원소가 있는경우.
             if len(overlap_pred) > 1:
-                overseg = False
-                gt_mask = gt_marker==gidx
-                for _pidx in overlap_pred:
-                    part = pred_marker==_pidx
-                    part[0,:] = part[:,0] = part[-1,:] = part[:,-1] = 0
-                    dist_part = cv2.distanceTransform( (~part).astype(np.uint8),
-                            distanceType=cv2.DIST_L2, maskSize=5)
-                    farthest = np.max(dist_part[gt_mask])
-                    if farthest > 20.:
-                        overseg=True
-                        break
+                '''
+                * 모든 pred에 대해, (pred-gt)intersection outline 안쪽 최대폭이
+                  gt width의 x%를 넘을 경우 overseg라 판정.
+                * 해당 gt 크기에 비해 너무 작은 pred는 무시하기 위함.
+                * Overseg 평가와 관련해서, helio_2023-03-04-15-00-36.bag
+                '''
+                overseg = True
+                if not strict_rule:
+                    gt_part = gt_marker==gidx
+                    for _pidx in overlap_pred:
+                        intersec_part = np.logical_and(pred_marker==_pidx, gt_part)
+                        intersec_part[0,:] = intersec_part[:,0] = intersec_part[-1,:] = intersec_part[:,-1] = 0
+                        intersec_dist = cv2.distanceTransform( intersec_part.astype(np.uint8),
+                                distanceType=cv2.DIST_L2, maskSize=5)
+                        intersec_width = intersec_dist.max()
+                        if intersec_width < .2 * gt_maxwidth[gidx]:
+                            overseg=False
+                            break
             else:
                 overseg = False
                 
@@ -383,31 +403,29 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
             precision = 0.
         else:
             precision = matches['count'][0] / ps
-            overlap_gt = []
+            overlap_gt, underseged_gt = [], []
             for gidx, intersection in matches[['gidx','count']]:
                 if gidx < 1:
                     continue
                 if intersection/gt_areas[gidx] > .2:
                     overlap_gt.append(gidx)
-            # TODO precision대신 pidx boundary중, overlap_gt로부터 20pixel 이상 떨어진 원소가 있는경우.
             if len(overlap_gt) > 1:
-                underseg = False
-                pred_mask = pred_marker==pidx
+                pred_part = pred_marker==pidx
                 for gidx in overlap_gt:
-                    part = gt_marker==gidx
-                    part[0,:] = part[:,0] = part[-1,:] = part[:,-1] = 0
-                    dist_part = cv2.distanceTransform( (~part).astype(np.uint8),
-                            distanceType=cv2.DIST_L2, maskSize=5)
-                    farthest = np.max(dist_part[pred_mask])
-                    if farthest > 20.:
-                        underseg=True
-                        break
-            else:
-                underseg = False
-
-            if underseg:
-                for gidx in overlap_gt:
-                    undersegs.add(gidx)
+                    gt_part = gt_marker==gidx
+                    gt_part[0,:] = gt_part[:,0] = gt_part[-1,:] = gt_part[:,-1] = False
+                    gt_dist = cv2.distanceTransform((~gt_part).astype(np.uint8),distanceType=cv2.DIST_L2, maskSize=5)
+                    farthest  = gt_dist[pred_part].max()
+                    '''
+                    * pred instance의 안쪽에서, gt outline 바깥으로 거리 최대값이
+                      gt width의 x%를 넘을 경우 underseg라 판정.
+                    * 해당 gt에 비해 너무 작은 이웃 gt instance는 무시하기 위함.
+                    * Underseg 평가와 관련해서, helio_2023-03-04-14-48-40.bag, gt#12 참고
+                    '''
+                    if farthest > underseg_th * gt_maxwidth[gidx]:
+                        underseged_gt.append(gidx)
+            for gidx in underseged_gt:
+                undersegs.add(gidx)
 
     outputlist = []
     dst = np.zeros((gt_marker.shape[0],gt_marker.shape[1],3), dtype=np.uint8)
@@ -444,8 +462,8 @@ def Evaluate2D(obb_resp, gt_marker, rgb):
             pt = centroids[i].astype(np.int)
             msg = '%d'%gidx
             w,h = cv2.getTextSize(msg, cv2.FONT_HERSHEY_PLAIN,1.5,2)[0]
-            cv2.rectangle(dst,(pt[0]-2,pt[1]+5),(pt[0]+w+2,pt[1]-h-5),(255,255,255),-1)
-            cv2.rectangle(dst,(pt[0]-2,pt[1]+5),(pt[0]+w+2,pt[1]-h-5),(100,100,100),1)
+            #cv2.rectangle(dst,(pt[0]-2,pt[1]+5),(pt[0]+w+2,pt[1]-h-5),(255,255,255),-1)
+            #cv2.rectangle(dst,(pt[0]-2,pt[1]+5),(pt[0]+w+2,pt[1]-h-5),(100,100,100),1)
             cv2.putText(dst, msg, (pt[0],pt[1]), cv2.FONT_HERSHEY_PLAIN,1.5,(0,0,0),2)
     dst = np.hstack((dst_pred,dst))
 

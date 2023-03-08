@@ -12,6 +12,7 @@ import rosbag
 import ros_unet.srv
 
 import sensor_msgs, std_msgs
+from sensor_msgs.msg import Image as rosImage
 import geometry_msgs
 import cv2
 from cv_bridge import CvBridge
@@ -22,28 +23,15 @@ from ros_eval import *
 from tkinter import * 
 from tkinter import messagebox
 from unet.gen_obblabeling import *
-from unet.util import ConvertDepth2input
+from unet.util import ConvertDepth2input, GetColoredLabel
 
-def AskMakeLabelforIt(msg, pick_fn):
-    pass_it = True
-    except_ext, ext = osp.splitext(pick_fn)
-    label_fn = "%s.png"%except_ext
-    if osp.exists(label_fn):
-        dst_with_msg = cv2.imread(label_fn)
-    else:
-        dst_with_msg = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, -1)
-    dsize = (640,480)
-    dst_with_msg  = cv2.resize(dst_with_msg, dsize)
-    dst_with_msg[:12,:,:] = 255
-    cv2.putText(dst_with_msg, 'Do you edit label for this scene? y/n/q',
-            (5,10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255))
-    cv2.imshow("sample", dst_with_msg)
-    c = cv2.waitKey()
-    if c == ord('q'):
+def AskMakeLabelforIt(messagebox):
+    output=messagebox.askyesnocancel("Re-Edit?","(y)es re-edit; (n)o next scene; (c)ancel, for quit")
+    if output is None:
         exit(1)
-    if c == 255:
-        c = ord('y')
-    return c != ord('y')
+    pass_it = not output
+    #import pdb; pdb.set_trace()
+    return pass_it
 
 def MakeLabel(rect_rgb, rect_depth, label_fn):
     gray = (0.8 * cv2.cvtColor(rect_rgb,cv2.COLOR_BGR2GRAY)).astype(np.uint8)
@@ -59,11 +47,29 @@ def MakeLabel(rect_rgb, rect_depth, label_fn):
     cv_gt = cv2.imread(label_fn)
     return cv_gt
 
-def ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scen_eval):
+def ShowObb(scen_eval, pub_marker,pub_edges,pub_planes, pick):
     rate = rospy.Rate(5)
     while not rospy.is_shutdown():
-        # TODO y0, max_z 대신 floor mask로부터 floor계산하는 기능 추가
         scene_eval.pubGtObb()
+        rgb, plane_marker,marker,outline\
+                =pick['rgb'].copy(), pick['plane_marker'],pick['marker'],pick['outline']
+        #import pdb; pdb.set_trace()
+        dst_marker = GetColoredLabel(marker,text=True)
+        rgb = cv2.addWeighted(rgb,0.4,dst_marker,0.4,1.)
+        dst = np.vstack((rgb,dst_marker))
+        dst_marker_msg = bridge.cv2_to_imgmsg(dst,encoding='bgr8')
+
+        dst_edge = cv2.cvtColor(255*outline.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        dst_edge = cv2.addWeighted(rgb,0.2,dst_edge,0.8,1.)
+        dst_edge_msg = bridge.cv2_to_imgmsg(dst_edge,encoding='bgr8')
+
+        dst_plane = GetColoredLabel(plane_marker,text=True)
+        dst_plane_msg = bridge.cv2_to_imgmsg(dst_plane,encoding='bgr8')
+
+        pub_marker.publish(dst_marker_msg)
+        pub_edges.publish(dst_edge_msg)
+        pub_planes.publish(dst_plane_msg)
+
         n0 = scene_eval.pub_gt_obb.get_num_connections()
         n1 = scene_eval.pub_gt_pose.get_num_connections()
         if n0 > 0 and n1 > 0:
@@ -91,14 +97,15 @@ if __name__=="__main__":
     floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
     rospy.wait_for_service('~FloorDetector/ComputeFloor')
     compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
-
+    pub_marker = rospy.Publisher("~marker", rosImage, queue_size=1)
+    pub_edges = rospy.Publisher("~edges", rosImage, queue_size=1)
+    pub_planes = rospy.Publisher("~planes", rosImage, queue_size=1)
     bridge = CvBridge()
     rate = rospy.Rate(10)
 
     root = Tk()
-    root.geometry("300x200")
+    root.geometry("30x20")
     add_newlabel = 'yes'==messagebox.askquestion("askquestion", "Add new label?(or check exist label)")
-    #add_newlabel = False
     y0, max_z = 50, 5.,
     obb_max_depth = 5.
 
@@ -162,16 +169,19 @@ if __name__=="__main__":
                     callout = subprocess.call(['kolourpaint', label_fn] )
                     exit(1)
                     import pdb; pdb.set_trace()
-                ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scene_eval)
+                ShowObb(scene_eval, pub_marker,pub_edges,pub_planes, pick)
                 print("write for %s" % gt_fn)
                 print("coeff", pick['plane2coeff'])
                 with open(gt_fn, "wb" ) as f:
                     pickle.dump(pick, f, protocol=2)
+            else:
+                rgb = pick['rgb']
+                rgb_msg = bridge.cv2_to_imgmsg(rgb,encoding='bgr8')
+                pub_marker.publish(rgb_msg)
 
             # 1) ask wether make label for it or not.
             if not reedit:
-                pass_it = AskMakeLabelforIt(rect_rgb_msg, gt_fn)
-                if pass_it:
+                if AskMakeLabelforIt(messagebox):
                     break
             reedit = False
             # 2) call kolour for this rosbag.
@@ -191,7 +201,7 @@ if __name__=="__main__":
 
             # 3) show obb
             scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
-            ShowObb(rect_depth_msg, rect_rgb_msg, y0, max_z, scene_eval)
+            ShowObb(scene_eval, pub_marker,pub_edges,pub_planes, pick)
             with open(gt_fn, "wb" ) as f:
                 pickle.dump(pick, f, protocol=2)
 

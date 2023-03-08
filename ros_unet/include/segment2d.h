@@ -98,7 +98,7 @@ cv::Mat GetGroove(const cv::Mat marker,
                   int bg_idx);
 
 cv::Mat GetDiscontinuousDepthEdge(const cv::Mat& depth, float threshold_depth);
-cv::Mat FilterOutlineEdges(const cv::Mat outline, bool verbose);
+cv::Mat FilterOutlineEdges(const cv::Mat& outline, bool verbose);
 
 void DistanceWatershed(const cv::Mat dist_fromedge,
                        cv::Mat& markers,

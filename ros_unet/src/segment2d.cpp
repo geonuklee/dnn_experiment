@@ -819,14 +819,18 @@ lap_depth_threshold_(lap_depth_threshold){
 
 }
 
-cv::Mat FilterOutlineEdges(const cv::Mat outline, bool verbose) {
-  // TODO filter를 여기에 작성.
-  cv::Mat ones = cv::Mat::ones(10,10,outline.type());
+cv::Mat FilterOutlineEdges(const cv::Mat& outline, bool verbose) {
+  cv::Mat labels, stats, centroids;
+#if 1
+  cv::Mat ones = cv::Mat::ones(5,5,outline.type());
   cv::Mat expanded_outline;
   cv::dilate(outline, expanded_outline, ones);
-
-  cv::Mat labels, stats, centroids;
+  cv::threshold(expanded_outline,expanded_outline, 200., 255, cv::THRESH_BINARY);
   cv::connectedComponentsWithStats(expanded_outline,labels,stats,centroids);
+#else
+  cv::connectedComponentsWithStats(outline,labels,stats,centroids);
+#endif
+
   std::set<int> inliers;
   for(int i = 0; i < stats.rows; i++){
     // left,top,width,height,area
@@ -835,20 +839,20 @@ cv::Mat FilterOutlineEdges(const cv::Mat outline, bool verbose) {
       inliers.insert(i);
   }
 
-  cv::Mat output = outline.clone();
+  cv::Mat output = cv::Mat::zeros(outline.rows, outline.cols, CV_8UC1);
   for(int r = 0; r < output.rows; r++){
     for(int c = 0; c < output.cols; c++){
-      unsigned char& i = output.at<unsigned char>(r,c);
-      if(i < 1)
+      if(outline.at<unsigned char>(r,c) < 200) // outline에 버그로 작은숫자의 노이즈 있음.
         continue;
       const int& l = labels.at<int>(r,c);
-      i = inliers.count(l);
+      unsigned char& i = output.at<unsigned char>(r,c);
+      i = inliers.count(l)?255:0;
     }
   }
 
   if(verbose){
     cv::imshow("labels", GetColoredLabel(labels));
-    cv::imshow("filtered", output*255);
+    cv::imshow("filtered", output);
   }
   return output;
 }

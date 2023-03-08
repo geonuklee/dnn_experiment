@@ -402,9 +402,12 @@ def GetMargin(eval_data, picks, normalized):
         K = pick['K'] # TODO K? newK?
         fx, fy, cx, cy = K[0,0], K[1,1], K[0,2], K[1,2]
         if normalized:
-            r = fx/fy
+            r = round(fx/fy)
             if fx != fy:
-                gt_marker = cv2.resize(gt_marker, (int(w), int(r*h)) )
+                try:
+                    gt_marker = cv2.resize(gt_marker, (int(w), int(r*h)) )
+                except:
+                    import pdb; pdb.set_trace()
             fx = fy
         for gidx in np.unique(gt_marker):
             if gidx == 0:
@@ -1112,7 +1115,8 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                         eval_scene.append( (base,i_file,nframe,method)+ each)
 
             if 'myobb' in methods:
-                eval_2d, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)
+                # strict rule : 논문미팅 지도에 따라, 조그만 조각이라도 instace 나누면 overseg 판정.
+                eval_2d, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb, strict_rule=True)
                 eval_23d, dst3d = Evaluate3D(pick, gt_obb_markers, obb_resp, eval_2d)
                 for each in eval_23d:
                     eval_scene.append( (base,i_file,nframe,'myobb')+ each)
@@ -1125,6 +1129,8 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
             fn = osp.join(eval_dir, 'frame_%d_%s_%04d.png'%(i_file,base,nframe) )
             cv2.imwrite(fn, dst)
             nframe += 1
+            rospy.loginfo("Perform evaluation for %s, S[%d/%d], F[%d/%d]"\
+                    %(base, i_file+1,len(gt_files), nframe,nframe_per_scene) )
             depth_msg, rgb_msg = None, None
             if nframe >= nframe_per_scene:
                 break
@@ -1186,23 +1192,9 @@ def test_evaluation(rosbag_subnames, show_sample):
     if not osp.exists(eval_dir):
         makedirs(eval_dir)
     fn_evaldata = osp.join(eval_dir,'eval_data.npy')
-    gt_files = []
-    for usage in rosbag_subnames:
-        obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
-        gt_files += glob2.glob(obbdatasetpath)
-    if not osp.exists(fn_evaldata):
-        methods = rospy.get_param("~methods").split(',')
-        eval_data_allmethod = perform_test(eval_dir, gt_files, fn_evaldata, methods=methods)
-    else:
-        with open(fn_evaldata,'rb') as f:
-            eval_data_allmethod = np.load(f, allow_pickle=True)
-    picks = {}
-    for fn in gt_files:
-        base = osp.splitext( osp.basename(fn) )[0]
-        groups = re.findall("(.*)_(cam0|cam1)", base)[0]
-        base = groups[0]
-        with open(fn,'r') as f:
-            picks[base] = pickle.load(f)
+    rospy.loginfo("The output path:%s"%eval_dir)
+
+    black_lists = set()
     tags = {}
     tags['eval_test0523/scene_3_helios_test_2022-05-23-15-37-08.png']\
         = { 8:'tape'}
@@ -1218,7 +1210,38 @@ def test_evaluation(rosbag_subnames, show_sample):
         base = re.findall("scene_\d*_(.*)", fn)[0]
         for gidx, tag in val.items():
             tmp_tags[(base,gidx)] = tag
+        black_lists.add(base)
+    black_lists.add('helio_2023-03-04-14-02-02') # Icebox with unflat surface
     tags = tmp_tags
+
+    gt_files = []
+    for usage in rosbag_subnames:
+        obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
+        ls0 = glob2.glob(obbdatasetpath)
+        ls = []
+        for fn in ls0:
+            base = osp.splitext(osp.basename(fn))[0]
+            groups = re.findall("(.*)_(cam0|cam1)", base)[0]
+            base = groups[0]
+            if base in black_lists:
+                #import pdb; pdb.set_trace()
+                continue
+            ls.append(fn)
+        #import pdb; pdb.set_trace()
+        gt_files += ls
+    if not osp.exists(fn_evaldata):
+        methods = rospy.get_param("~methods").split(',')
+        eval_data_allmethod = perform_test(eval_dir, gt_files, fn_evaldata, methods=methods)
+    else:
+        with open(fn_evaldata,'rb') as f:
+            eval_data_allmethod = np.load(f, allow_pickle=True)
+    picks = {}
+    for fn in gt_files:
+        base = osp.splitext( osp.basename(fn) )[0]
+        groups = re.findall("(.*)_(cam0|cam1)", base)[0]
+        base = groups[0]
+        with open(fn,'r') as f:
+            picks[base] = pickle.load(f)
 
     la = np.logical_and
     eval_data = eval_data_allmethod[eval_data_allmethod['method']=='myobb']

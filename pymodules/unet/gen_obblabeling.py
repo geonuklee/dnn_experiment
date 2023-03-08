@@ -243,7 +243,7 @@ def ParseGroundTruth(cv_gt, rgb, depth, K, D, fn_rosbag, max_depth):
         #  pose = (x,y,z, qw,qx,qy,qz) for transform {camera} <- {box}
         obbs.append( {'id':idx, 'pose':pose, 'scale':scale } )
 
-    verbose = True
+    verbose = False
     if verbose:
         dst = GetColoredLabel(plane_marker)
         for pidx, cp in plane2centers.items():

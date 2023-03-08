@@ -84,9 +84,11 @@ public:
     GetCvMat(req, depth, rgb, convex_edge, outline_edge, surebox);
     bool verbose = param_.verbose;
 
-    const float threshold_depth = .2;
+    const float threshold_depth = .04;
     cv::Mat dd_edge= GetDiscontinuousDepthEdge(depth, threshold_depth);
+    cv::bitwise_and(dd_edge, ~convex_edge, dd_edge);
     cv::bitwise_or(outline_edge, dd_edge, outline_edge);
+
     cv::Mat filtered_outline;
 #if 1
     {
@@ -224,6 +226,7 @@ private:
       depth = odepth;
       rgb = orgb;
       convex_edge = och[1];
+      //cv::bitwise_and(och[0] == 1, convex_edge < 0, outline_edge);
       outline_edge = och[0] == 1;
       surebox = och[0] == 2;
     }

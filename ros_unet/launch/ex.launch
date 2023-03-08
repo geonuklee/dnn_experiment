@@ -45,7 +45,11 @@
 </node-->
 
 <node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/>
-<node name="rosbag" pkg="rosbag" type="play" args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')"/>
+<node name="rosbag" pkg="rosbag" type="play" args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')">
+  <remap from="/cam0/helios2/camera_info_rect" to="/cam0/helios2/camera_info"/>
+  <remap from="/cam0/helios2/depth_rect"       to="/cam0/helios2/depth/image_raw"/>
+  <remap from="/cam0/helios2/rgb_rect"         to="/cam0/aligned/rgb_to_depth/image_raw"/>
+</node>
 
 <node name="ros_client"  pkg="ros_unet" type="ros_client.py" output="screen" required="true">
     <remap from="~PredictEdge" to="/unet_server/PredictEdge" />
@@ -63,7 +67,7 @@
     <rosparam subst_value="True">
       do_eval: "$(arg do_eval)"
       filename: "$(arg filename)"
-      datasetname: "obb_dataset_test0523"
+      datasetnames: "obb_dataset_230303,obb_dataset_test0523"
     </rosparam>
 </node>
 
