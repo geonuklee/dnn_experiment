@@ -86,6 +86,9 @@ target_link_libraries(obb_server unetsegment ${catkin_LIBRARIES} ${OpenCV_LIBS})
 add_executable(floor_detector src/floor_detector.cpp)
 target_link_libraries(floor_detector ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
+add_executable(ros_bg src/ros_bg.cpp src/utils.cpp)
+target_link_libraries(ros_bg ${catkin_LIBRARIES} ${OpenCV_LIBS} ${PCL_LIBRARIES})
+
 add_executable(cgal_server
   src/cgal_server.cpp
   src/mask2obb.cpp

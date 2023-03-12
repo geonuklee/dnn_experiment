@@ -13,7 +13,6 @@
 
 #include <visualization_msgs/MarkerArray.h>
 #include <pcl/features/moment_of_inertia_estimation.h>
-#include <pcl/point_types.h>
 #include <pcl/surface/convex_hull.h>
 #include <pcl/surface/concave_hull.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -113,11 +112,6 @@ struct ObbParam{
   double forcing_iou_method_z_threshold = -0.4;
   bool verbose;
 };
-
-void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZLNormal> > >& clouds,
-                          sensor_msgs::PointCloud2& msg);
-void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > >& clouds,
-                          sensor_msgs::PointCloud2& msg);
 
 class ObbProcessVisualizer{
 public:

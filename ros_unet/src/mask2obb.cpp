@@ -83,48 +83,6 @@ void LimitUVRange(const int& rows, const int& cols, cv::Point2i& uv){
 }
 
 template<typename PointT>
-void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<PointT> > >& clouds,
-                          sensor_msgs::PointCloud2& msg){
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr colorized_pointscloud(new pcl::PointCloud<pcl::PointXYZRGB>());
-  //colors.at()
-  int n = 0;
-  for(auto it : clouds)
-    n += it.second->points.size();
-  colorized_pointscloud->points.reserve(n);
-
-  for(auto it : clouds){
-    const int& idx = it.first;
-    const auto& color = colors.at(idx % colors.size());
-    for(const PointT& xyz : *it.second){
-      pcl::PointXYZRGB pt;
-      pt.x = xyz.x;
-      pt.y = xyz.y;
-      pt.z = xyz.z;
-      pt.b = color[0];
-      pt.g = color[1];
-      pt.r = color[2];
-      pt.a = 1.;
-      colorized_pointscloud->points.push_back(pt);
-    }
-  }
-  pcl::toROSMsg(*colorized_pointscloud, msg);
-  msg.header.frame_id = "robot";
-  return;
-}
-
-void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZLNormal> > >& clouds,
-                          sensor_msgs::PointCloud2& msg){
-  ColorizeSegmentation<pcl::PointXYZLNormal>(clouds, msg);
-  return;
-}
-
-void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > >& clouds,
-                          sensor_msgs::PointCloud2& msg){
-  ColorizeSegmentation<pcl::PointXYZ>(clouds, msg);
-  return;
-}
-
-template<typename PointT>
 pcl::PointIndices::Ptr EuclideanFilter(const boost::shared_ptr<const pcl::PointCloud<PointT>> & given_cloud,
                   const ObbParam& param,
                   bool reserve_best_only

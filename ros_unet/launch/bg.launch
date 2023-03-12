@@ -1,0 +1,29 @@
+<launch>
+<arg name="generate_points" default="true"/>
+<arg name="cameras" default="[0,]" />
+<arg name="sensor_model" default="helios"/>
+<arg name="voxel_leaf" value="0.01" />
+<arg name="euc_tolerance" value="0.1" />
+<arg name="filename" default=""/>
+<arg name="do_eval" default="false"/>
+<arg name="rgb"   default="/cam0/aligned/rgb_to_depth/image_raw"/>
+<arg name="depth" default="/cam0/helios2/depth/image_raw"/>
+<arg name="info"  default="/cam0/helios2/camera_info"/>
+<arg name="rviz_name" default="bg.rviz"/>
+
+<!--node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/-->
+<node name="rosbag" pkg="rosbag" type="play" args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')">
+  <remap from="/cam0/helios2/camera_info_rect" to="/cam0/helios2/camera_info"/>
+  <remap from="/cam0/helios2/depth_rect"       to="/cam0/helios2/depth/image_raw"/>
+  <remap from="/cam0/helios2/rgb_rect"         to="/cam0/aligned/rgb_to_depth/image_raw"/>
+</node>
+
+<node name="ros_bg"  pkg="ros_unet" type="ros_bg" output="screen" required="true">
+    <remap from="~rgb"    to="$(arg rgb)" />
+    <remap from="~depth"  to="$(arg depth)"/>
+    <remap from="~info"   to="$(arg info)"/>
+</node>
+
+<node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>
+
+</launch>
