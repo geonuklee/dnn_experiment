@@ -27,6 +27,8 @@ void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<
 void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > >& clouds,
                           sensor_msgs::PointCloud2& msg);
 
+void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZL> > >& clouds,
+                          sensor_msgs::PointCloud2& msg);
 
 #endif
 
