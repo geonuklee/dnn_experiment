@@ -7,6 +7,10 @@
 
 #include <geometry_msgs/Pose.h>
 #include <cv_bridge/cv_bridge.h>
+#include <tf2_ros/transform_listener.h>
+#include <sensor_msgs/Imu.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <eigen3/Eigen/Geometry>
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -248,12 +252,13 @@ size_t getNumberOfPointsBehindPlane(pcl::PointCloud<pcl::PointXYZL>::Ptr cloud,
 }
 
 void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clusters,
-                        pcl::PointCloud<pcl::PointXYZL>::Ptr merged_p_cloud,
-                        const EigenMap<int, Eigen::Vector4f>& p_coeffs,
-                        const cv::Mat marker,
-                        int& l_floor,
-                        int& l_backwall,
-                        cv::Mat& mask
+                     pcl::PointCloud<pcl::PointXYZL>::Ptr merged_p_cloud,
+                     const EigenMap<int, Eigen::Vector4f>& p_coeffs,
+                     const cv::Mat marker,
+                     const Eigen::Vector3f& ideal_floor_nvec,
+                     int& l_floor,
+                     int& l_backwall,
+                     cv::Mat& mask
                        ){
   /* 
   * 바닥면 : negative_gravity 와 비슷한 방향의, largest_2d_bottom_seg 를 선택.
@@ -263,8 +268,6 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
   */
   const int max_bottom = 20; // [pixel]  TODO
   const float distance_th = 0.1; // [meter] TODO
-  Eigen::Vector3f ideal_floor_nvec(0., -.7, -.3); // TODO Convert it as g_acc from Kinect
-  ideal_floor_nvec.normalize();
   const float th_floor = std::cos(M_PI/180.*40.);
   const float th_perpen = std::sin(M_PI/180.*80.); // 90deg에 가까울수록 엄밀한,
 
@@ -441,14 +444,18 @@ void EuclideanFilter(pcl::PointCloud<pcl::PointXYZL>::Ptr sparse_cloud,
 
 class BgDetector {
 public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
   BgDetector(ros::NodeHandle nh) :
     nh_(nh),
     rgb_sub_(nh.subscribe<sensor_msgs::Image>("rgb", 1, &BgDetector::rgbCallback, this)),
     depth_sub_(nh.subscribe<sensor_msgs::Image>("depth", 1, &BgDetector::depthCallback, this)),
-    camera_info_sub_(nh.subscribe<sensor_msgs::CameraInfo>("info", 1, &BgDetector::cameraInfoCallback, this))
+    camera_info_sub_(nh.subscribe<sensor_msgs::CameraInfo>("info", 1, &BgDetector::cameraInfoCallback, this)),
+    imu_sub_(nh.subscribe<sensor_msgs::Imu>("imu",1, &BgDetector::imuCallback, this))
   {
     pub_points_ = nh_.advertise<sensor_msgs::PointCloud2>("points", 1);
     pub_rg_ = nh_.advertise<sensor_msgs::PointCloud2>("rg", 1);
+    pub_imu_ = nh_.advertise<sensor_msgs::Imu>("output_imu",1);
   }
 
   void Process(){
@@ -457,6 +464,8 @@ public:
     if(depth_.empty())
       return;
     if(nu_map_.empty())
+      return;
+    if(linear_acc_.sum() == 0.)
       return;
     cv::Mat init_mask = cv::Mat::ones(depth_.rows,depth_.cols,CV_8UC1);
 
@@ -504,21 +513,24 @@ public:
     projectClusters(merged_p_cloud, cloud, uvs, marker, bg_mask);
 
     // 5. Get floor, bg candidates
+    Eigen::Vector3f floor_norm_prediction = linear_acc_.normalized().cast<float>();
     int l_floor, l_backwall;
-    getFloorAndWall(p_clusters,merged_p_cloud,p_coeffs,marker, l_floor,l_backwall, bg_mask);
+    getFloorAndWall(p_clusters,merged_p_cloud,p_coeffs,marker,floor_norm_prediction,
+                    l_floor,l_backwall, bg_mask);
 
     if(pub_points_.getNumSubscribers() > 0) {
       pcl::PCLPointCloud2 pcl_pts;
       pcl::toPCLPointCloud2(*cloud, pcl_pts);
       sensor_msgs::PointCloud2 msg;
       pcl_conversions::fromPCL(pcl_pts, msg);
-      msg.header.frame_id = "robot";
+      msg.header.frame_id = frame_id_;
       pub_points_.publish(msg);
     }
     if(pub_rg_.getNumSubscribers() > 0) {
       sensor_msgs::PointCloud2 msg;
       //ColorizeSegmentation(rg_clusters,msg);
       ColorizeSegmentation(p_clusters,msg);
+      msg.header.frame_id = frame_id_;
       pub_rg_.publish(msg);
     }
     if(true){
@@ -540,6 +552,44 @@ public:
   }
 
 private:
+  void imuCallback(const sensor_msgs::ImuConstPtr& imu_msg){
+    //ROS_INFO_STREAM("IMU0 = " << imu_msg->linear_acceleration);
+    static tf2_ros::Buffer tf_buffer;
+    static tf2_ros::TransformListener tf_listener(tf_buffer);
+    try {
+      //ROS_INFO_STREAM("frame_id_ = " << imu_msg->header.frame_id << "->" << frame_id_);
+      // Get the transform from base_link to map
+      geometry_msgs::TransformStamped transform = 
+        tf_buffer.lookupTransform(frame_id_, imu_msg->header.frame_id, ros::Time(0));
+
+      Eigen::Quaterniond quat;
+      quat.x() = transform.transform.rotation.x;
+      quat.y() = transform.transform.rotation.y;
+      quat.z() = transform.transform.rotation.z;
+      quat.w() = transform.transform.rotation.w;
+      Eigen::Vector3d acc0(imu_msg->linear_acceleration.x,
+                          imu_msg->linear_acceleration.y,
+                          imu_msg->linear_acceleration.z);
+      linear_acc_ = quat * acc0;
+
+      // Create a new IMU message with the transformed orientation
+      if(!frame_id_.empty()){
+        sensor_msgs::Imu imu_transformed = *imu_msg;
+        imu_transformed.header.frame_id = frame_id_;
+        imu_transformed.linear_acceleration.x = linear_acc_.x();
+        imu_transformed.linear_acceleration.y = linear_acc_.y();
+        imu_transformed.linear_acceleration.z = linear_acc_.z();
+        pub_imu_.publish(imu_transformed);
+      }
+      // Publish the transformed IMU message
+      // imu_transformed_pub.publish(imu_transformed);
+    }
+    catch (tf2::TransformException& ex) {
+      ROS_INFO("Could not transform IMU data: %s", ex.what());
+    }
+    return;
+  }
+
   void rgbCallback(const sensor_msgs::ImageConstPtr& msg) {
     cv_bridge::CvImagePtr cv_ptr;
     try {
@@ -560,6 +610,7 @@ private:
       return;
     }
     depth_ = cv_ptr->image;
+    frame_id_ = msg->header.frame_id;
   }
 
   void cameraInfoCallback(const sensor_msgs::CameraInfoConstPtr& msg) {
@@ -602,9 +653,11 @@ private:
   }
 
   ros::NodeHandle nh_;
-  ros::Subscriber rgb_sub_, depth_sub_, camera_info_sub_;
-  ros::Publisher pub_points_, pub_rg_;
+  ros::Subscriber rgb_sub_, depth_sub_, camera_info_sub_, imu_sub_;
+  ros::Publisher pub_points_, pub_rg_, pub_imu_;
 
+  Eigen::Vector3d linear_acc_;
+  std::string frame_id_;
   cv::Mat rgb_, depth_;
   cv::Mat nu_map_, nv_map_;
   cv::Mat K_, D_;

@@ -8,9 +8,11 @@
 
 #mkdir rosbag_230303
 #roslaunch ros_unet label.launch target:=230303
-rosbag record -o rosbag_230303/helios --duration=5s \
+rosbag record -o rosbag_230318/helios --duration=5s \
   /cam0/helios2/depth_rect \
   /cam0/helios2/rgb_rect \
   /cam0/helios2/intensity_rect \
-  /cam0/helios2/camera_info_rect
-
+  /cam0/helios2/camera_info_rect \
+  /tf /tf_static \
+  /cam0/k4a/imu
+#roslaunch ros_unet bg.launch filename:=rosbag_230318/helios_2023-03-16-02-21-23.bag

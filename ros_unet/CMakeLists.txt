@@ -27,6 +27,8 @@ find_package(catkin REQUIRED
   pcl_ros
   unloader_msgs
   visualization_msgs
+  tf2
+  tf2_ros
 )
 
 add_service_files(DIRECTORY srv FILES

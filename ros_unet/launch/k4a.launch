@@ -1,16 +1,25 @@
 <launch>
-  <include file="$(find ros_unet)/launch/ex.launch">
-    <arg name="rgb" default="k4a/rgb_to_depth/image_raw"/>
-    <arg name="depth" default="k4a/depth/image_raw"/>
-    <arg name="info" default="k4a/depth/camera_info"/>
-    <arg name="rviz_name" defalut="k4a.rviz"/>
-  </include>
+  <arg name="device_user_id" default="cam0" />
+  <arg name="kinect_sensor_sn" default="" /> <!-- Put serial number if you use multiple kinect -->
+  <arg name="do_calibrate" default="false" />
+  <arg name="pattern_size" default="6,4"/>  <!-- the number of inner corners per a chessboard row and column-->
+  <arg name="show_rviz"    default="false" />
+  <arg name="color_resolution" default="1536P"/>  <!--options: 720P, 1080P, 1440P, 1536P, 2160P, 3072P -->
+  <arg name="use_kinect"   default="true"/>
+  <arg name="helios_fps"   default="15"/>
+  <arg name="kinect_fps"   default="15"/>
 
-  <group ns="cam0">
-    <include file="$(find ros_unet)/launch/azure_driver.launch">
-      <arg name="sensor_sn" default="000350601812"/>
-      <arg name="namespace" default="cam0" />
-      <arg name="depth_enabled" default="true"/>
+  <group ns="$(arg device_user_id)" >
+    <include file="$(find rise_helios2)/launch/new_azure_driver.launch" if="$(arg use_kinect)">
+      <arg name="namespace"        default="$(arg device_user_id)" />
+      <arg name="sensor_sn"        default="$(arg kinect_sensor_sn)"/>
+      <arg name="depth_enabled"    default="$(arg do_calibrate)"/> 
+      <arg name="depth_unit"       value="32FC1"/> 
+      <arg name="color_resolution" default="$(arg color_resolution)"/>
     </include>
   </group>
+
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find rise_helios2)/rviz/dip.rviz"
+    required="true"/>
+
 </launch>
