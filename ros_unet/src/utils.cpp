@@ -212,7 +212,9 @@ void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<
 
   for(auto it : clouds){
     const int& idx = it.first;
-    const auto& color = colors.at(idx % colors.size());
+    auto color = colors.at(idx % colors.size());
+    if(idx < 1)
+      color = CV_RGB(0,0,0);
     for(const PointT& xyz : *it.second){
       pcl::PointXYZRGB pt;
       pt.x = xyz.x;
