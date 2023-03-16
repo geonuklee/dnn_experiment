@@ -33,8 +33,10 @@ find_package(catkin REQUIRED
 
 add_service_files(DIRECTORY srv FILES
   ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv ComputeFloor.srv
-  ComputePoints2Obb.srv ComputeTwoPoints2Obb.srv
+  ComputePoints2Obb.srv ComputeTwoPoints2Obb.srv GetBg.srv
   )
+
+add_message_files(DIRECTORY msg FILES Plane.msg)
 
 #catkin_python_setup() # Call setup.py for catkin. ref for setup.py of catkin : http://docs.ros.org/en/jade/api/catkin/html/howto/format2/installing_python.html
 generate_messages(DEPENDENCIES sensor_msgs std_msgs geometry_msgs visualization_msgs)
@@ -101,7 +103,7 @@ target_link_libraries(cgal_server
   ${GMP_LIBRARIES} # ref) https://doc.cgal.org/latest/Manual/configurationvariables.html
 )
 
-foreach(target obb_server cgal_server)
+foreach(target obb_server cgal_server ros_bg)
     add_dependencies(${target} ${${PROJECT_NAME}_EXPORTED_TARGETS})
 endforeach()
 

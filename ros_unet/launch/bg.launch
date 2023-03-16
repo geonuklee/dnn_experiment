@@ -29,8 +29,12 @@
   <arg name="kinect_fps"   default="15"/>
 </include>
 
+<arg name="bg_service" default="false"/>
 <node name="ros_bg"  pkg="ros_unet" type="ros_bg" output="screen" required="true"
   launch-prefix="$(arg launch_prefix)">
+  <rosparam subst_value="True">
+    ig_service: $(arg bg_service)
+  </rosparam>
     <remap from="~rgb"   to="$(arg rgb)" />
     <remap from="~depth" to="$(arg depth)"/>
     <remap from="~info"  to="$(arg info)"/>

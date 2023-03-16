@@ -1,4 +1,6 @@
 #include "ros_util.h"
+#include "ros_unet/GetBg.h"
+#include "ros_unet/Plane.h"
 
 #include <ros/ros.h>
 #include <sensor_msgs/Image.h>
@@ -444,29 +446,49 @@ void EuclideanFilter(pcl::PointCloud<pcl::PointXYZL>::Ptr sparse_cloud,
 
 class BgDetector {
 public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
   BgDetector(ros::NodeHandle nh) :
     nh_(nh),
     rgb_sub_(nh.subscribe<sensor_msgs::Image>("rgb", 1, &BgDetector::rgbCallback, this)),
     depth_sub_(nh.subscribe<sensor_msgs::Image>("depth", 1, &BgDetector::depthCallback, this)),
     camera_info_sub_(nh.subscribe<sensor_msgs::CameraInfo>("info", 1, &BgDetector::cameraInfoCallback, this)),
-    imu_sub_(nh.subscribe<sensor_msgs::Imu>("imu",1, &BgDetector::imuCallback, this))
+    imu_sub_(nh.subscribe<sensor_msgs::Imu>("imu",1, &BgDetector::imuCallback, this)),
+    linear_acc_(new Eigen::Vector3d)
   {
     pub_points_ = nh_.advertise<sensor_msgs::PointCloud2>("points", 1);
     pub_rg_ = nh_.advertise<sensor_msgs::PointCloud2>("rg", 1);
     pub_imu_ = nh_.advertise<sensor_msgs::Imu>("output_imu",1);
   }
+  ~BgDetector(){
+    delete linear_acc_;
+  }
 
-  void Process(){
+  bool GetBg(ros_unet::GetBg::Request& req,
+             ros_unet::GetBg::Response& res){
+    { sensor_msgs::ImageConstPtr ptr = boost::make_shared<const sensor_msgs::Image>(req.rgb);
+      rgbCallback(ptr);
+    }
+    { sensor_msgs::ImageConstPtr ptr = boost::make_shared<const sensor_msgs::Image>(req.depth);
+      rgbCallback(ptr);
+    }
+    { sensor_msgs::CameraInfoConstPtr ptr = boost::make_shared<const sensor_msgs::CameraInfo>(req.info);
+      cameraInfoCallback(ptr);
+    }
+    { sensor_msgs::ImuConstPtr ptr = boost::make_shared<const sensor_msgs::Imu>(req.imu);
+      imuCallback(ptr);
+    }
+    bool r = Process(res);
+    return r;
+  }
+
+  bool Process(ros_unet::GetBg::Response& res){
     if(rgb_.empty())
-      return;
+      return false;
     if(depth_.empty())
-      return;
+      return false;
     if(nu_map_.empty())
-      return;
-    if(linear_acc_.sum() == 0.)
-      return;
+      return false;
+    if(linear_acc_->sum() == 0.)
+      return false;
     cv::Mat init_mask = cv::Mat::ones(depth_.rows,depth_.cols,CV_8UC1);
 
     pcl::PointCloud<pcl::PointXYZL>::Ptr cloud;
@@ -513,11 +535,10 @@ public:
     projectClusters(merged_p_cloud, cloud, uvs, marker, bg_mask);
 
     // 5. Get floor, bg candidates
-    Eigen::Vector3f floor_norm_prediction = linear_acc_.normalized().cast<float>();
+    Eigen::Vector3f floor_norm_prediction = linear_acc_->normalized().cast<float>();
     int l_floor, l_backwall;
     getFloorAndWall(p_clusters,merged_p_cloud,p_coeffs,marker,floor_norm_prediction,
                     l_floor,l_backwall, bg_mask);
-
     if(pub_points_.getNumSubscribers() > 0) {
       pcl::PCLPointCloud2 pcl_pts;
       pcl::toPCLPointCloud2(*cloud, pcl_pts);
@@ -533,6 +554,30 @@ public:
       msg.header.frame_id = frame_id_;
       pub_rg_.publish(msg);
     }
+    {
+      cv_bridge::CvImage cv_image;
+      cv_image.image = marker;
+      cv_image.encoding = sensor_msgs::image_encodings::TYPE_32SC1;
+      sensor_msgs::ImagePtr msg = cv_image.toImageMsg();
+      res.marker = *msg;
+    }
+    {
+      cv_bridge::CvImage cv_image;
+      cv_image.image = bg_mask;
+      cv_image.encoding = sensor_msgs::image_encodings::TYPE_32SC1;
+      sensor_msgs::ImagePtr msg = cv_image.toImageMsg();
+      res.mask = *msg;
+    }
+
+    // TODO 이거 받아서.. 배경 어떻게 제거?
+    for(auto it : p_coeffs) {
+      ros_unet::Plane msg;
+      msg.id = it.first;
+      for(int i=0; i<4; i++)
+        msg.coeff[i] = it.second[i];
+      res.planes.push_back(msg);
+    }
+
     if(true){
       cv::Mat dst_marker = GetColoredLabel(marker);
       cv::Mat dst_bg = GetColoredLabel(bg_mask);
@@ -548,11 +593,13 @@ public:
       if(c=='q')
         exit(1);
     }
-    return;
+    return true;
   }
 
 private:
   void imuCallback(const sensor_msgs::ImuConstPtr& imu_msg){
+    if(frame_id_.empty())
+      return;
     //ROS_INFO_STREAM("IMU0 = " << imu_msg->linear_acceleration);
     static tf2_ros::Buffer tf_buffer;
     static tf2_ros::TransformListener tf_listener(tf_buffer);
@@ -570,15 +617,15 @@ private:
       Eigen::Vector3d acc0(imu_msg->linear_acceleration.x,
                           imu_msg->linear_acceleration.y,
                           imu_msg->linear_acceleration.z);
-      linear_acc_ = quat * acc0;
+      *linear_acc_ = quat * acc0;
 
       // Create a new IMU message with the transformed orientation
       if(!frame_id_.empty()){
         sensor_msgs::Imu imu_transformed = *imu_msg;
         imu_transformed.header.frame_id = frame_id_;
-        imu_transformed.linear_acceleration.x = linear_acc_.x();
-        imu_transformed.linear_acceleration.y = linear_acc_.y();
-        imu_transformed.linear_acceleration.z = linear_acc_.z();
+        imu_transformed.linear_acceleration.x = linear_acc_->x();
+        imu_transformed.linear_acceleration.y = linear_acc_->y();
+        imu_transformed.linear_acceleration.z = linear_acc_->z();
         pub_imu_.publish(imu_transformed);
       }
       // Publish the transformed IMU message
@@ -599,6 +646,7 @@ private:
       return;
     }
     rgb_ = cv_ptr->image;
+    frame_id_ = msg->header.frame_id;
   }
 
   void depthCallback(const sensor_msgs::ImageConstPtr& msg) {
@@ -656,7 +704,7 @@ private:
   ros::Subscriber rgb_sub_, depth_sub_, camera_info_sub_, imu_sub_;
   ros::Publisher pub_points_, pub_rg_, pub_imu_;
 
-  Eigen::Vector3d linear_acc_;
+  Eigen::Vector3d* linear_acc_;
   std::string frame_id_;
   cv::Mat rgb_, depth_;
   cv::Mat nu_map_, nv_map_;
@@ -666,16 +714,31 @@ private:
 int main(int argc, char **argv) {
   ros::init(argc, argv, "bgdetector");
   ros::NodeHandle nh("~");
-  ros::Rate rate(2.);
+  bool is_service;
+  if (!nh.getParam("ig_service", is_service)) {
+    ROS_ERROR("Failed to get parameter 'ig_service'");
+    return 1;
+  }
   BgDetector bg_detector(nh);
-  while(!ros::isShuttingDown()){
-    auto t0 = std::chrono::high_resolution_clock::now();
-    bg_detector.Process();
-    auto t1 = std::chrono::high_resolution_clock::now();
-    auto etime = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
-    ROS_INFO_STREAM("Elapsed time = " << etime.count() );
-    rate.sleep();
-    ros::spinOnce();
+  if(is_service){
+    ros::ServiceServer s0 = nh.advertiseService("GetBg", &BgDetector::GetBg, &bg_detector);
+    ros::spin();
+  }
+  else{
+    ros::Rate rate(2.);
+    while(!ros::isShuttingDown()){
+      rate.sleep();
+      ros_unet::GetBg::Response res;
+      auto t0 = std::chrono::high_resolution_clock::now();
+      if(!bg_detector.Process(res)){
+        ros::spinOnce();
+        continue;
+      }
+      auto t1 = std::chrono::high_resolution_clock::now();
+      auto etime = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
+      ROS_INFO_STREAM("Elapsed time = " << etime.count() );
+      ros::spinOnce();
+    }
   }
   return 0;
 }
