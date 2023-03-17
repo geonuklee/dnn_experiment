@@ -132,22 +132,20 @@ pcl::PointIndices::Ptr EuclideanFilter(const boost::shared_ptr<const pcl::PointC
 
 
 
-void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
-                                      cv::Mat rgb,
-                                      cv::Mat depth,
-                                      cv::Mat mask,
-                                      cv::Mat convex_edge,
-                                      const ObbParam& param,
-                                      std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& clouds,
-                                      std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds,
-                                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb
+void ObbEstimator::GetSegmentedCloud(cv::Mat rgb,
+                                     cv::Mat depth,
+                                     cv::Mat mask,
+                                     cv::Mat convex_edge,
+                                     const ObbParam& param,
+                                     std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& clouds,
+                                     std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds,
+                                     pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb
                                     ){
   const float max_depth = 5.; // TODO Paramterize
 
   // Unproject xyzrgb, segmented_clouds, boundary_clouds
 
   // Denote that each instance in mask must be detached.
-  g2o::SE3Quat Twc = Tcw.inverse();
   cv::Mat dist_transform; {
     cv::Mat boundarymap = GetBoundary(mask);
     cv::Mat fg = (boundarymap==0);
@@ -167,7 +165,7 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
     return (y1-y0)/2.;
   };
 
-  auto GetXYZNormal = [&Twc,&depth, &GetGx, &GetGy, this](int r, int c,
+  auto GetXYZNormal = [&depth, &GetGx, &GetGy, this](int r, int c,
                                                           pcl::PointXYZLNormal& xyznormal){
     float gx = GetGx(r,c);
     float gy = GetGy(r,c);
@@ -189,10 +187,10 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
       if(z < 0.000001)
         return false;
       X = Eigen::Vector3d(nuv.x*z, nuv.y*z,z);
-      Eigen::Vector3d Xw = Twc*X;
-      xyznormal.x = Xw[0];
-      xyznormal.y = Xw[1];
-      xyznormal.z = Xw[2];
+      //Eigen::Vector3d Xw = Twc*X;
+      xyznormal.x = X[0];
+      xyznormal.y = X[1];
+      xyznormal.z = X[2];
     }
     Eigen::Vector3d dX1;{
       int rdr = r+dv[0];
@@ -220,10 +218,10 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
     n /= n.norm();
     if(n[2] > 0.) // normal computed from cam coordinate. z dir can't be positive.
       n = -n;
-    Eigen::Vector3d nw = Twc.rotation()*n;
-    xyznormal.normal_x = nw[0];
-    xyznormal.normal_y = nw[1];
-    xyznormal.normal_z = nw[2];
+    //Eigen::Vector3d nw = Twc.rotation()*n;
+    xyznormal.normal_x = n[0];
+    xyznormal.normal_y = n[1];
+    xyznormal.normal_z = n[2];
     return true;
   };
 
@@ -391,9 +389,10 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
         float z0 = depth.at<float>(r,c);
         cv::Point2f uv = GetUV(r,c);
         Eigen::Vector3d Xc(uv.x * z0, uv.y*z0, z0);
-        Eigen::Vector3d Xw = Twc * Xc;
+        // Eigen::Vector3d Xw = Twc * Xc;
         pcl::PointXYZRGB pt;
-        pt.x = Xw[0]; pt.y = Xw[1]; pt.z = Xw[2];
+        //pt.x = Xw[0]; pt.y = Xw[1]; pt.z = Xw[2];
+        pt.x = Xc[0]; pt.y = Xc[1]; pt.z = Xc[2];
         pt.b = rgb.at<cv::Vec3b>(r,c)[0];
         pt.g = rgb.at<cv::Vec3b>(r,c)[1];
         pt.r = rgb.at<cv::Vec3b>(r,c)[2];
@@ -405,17 +404,18 @@ void ObbEstimator::GetSegmentedCloud( const g2o::SE3Quat& Tcw,
   return;
 }
 
-ObbProcessVisualizer::ObbProcessVisualizer(const std::string& cam_id, ros::NodeHandle& nh)
-  : cam_id_(cam_id)
+ObbProcessVisualizer::ObbProcessVisualizer(const std::string& cam_id,
+                                           const std::string& frame_id,
+                                           ros::NodeHandle& nh)
+  : frame_id_(frame_id)
 {
-  std::string cam_name = cam_id+"/";
-  pub_mask     = nh.advertise<sensor_msgs::Image>(cam_name+"mask",2);
-  pub_clouds   = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"clouds",2);
-  pub_boundary = nh.advertise<sensor_msgs::PointCloud2>(cam_name+"boundary",2);
-  pub_contour  = nh.advertise<visualization_msgs::MarkerArray>(cam_name+"contour",2);
-  pub_pose0  = nh.advertise<geometry_msgs::PoseArray>(cam_name+"pose0",2);
-  pub_pose  = nh.advertise<geometry_msgs::PoseArray>(cam_name+"pose",2);
-  pub_unsynced_obb  = nh.advertise<visualization_msgs::MarkerArray>(cam_name+"unsynced_obb",2);
+  pub_mask     = nh.advertise<sensor_msgs::Image>(cam_id+"/mask",2);
+  pub_clouds   = nh.advertise<sensor_msgs::PointCloud2>(cam_id+"/clouds",2);
+  pub_boundary = nh.advertise<sensor_msgs::PointCloud2>(cam_id+"/boundary",2);
+  pub_contour  = nh.advertise<visualization_msgs::MarkerArray>(cam_id+"/contour",2);
+  pub_pose0  = nh.advertise<geometry_msgs::PoseArray>(cam_id+"/pose0",2);
+  pub_pose  = nh.advertise<geometry_msgs::PoseArray>(cam_id+"/pose",2);
+  pub_unsynced_obb  = nh.advertise<visualization_msgs::MarkerArray>(cam_id+"/unsynced_obb",2);
 }
 
 sensor_msgs::PointCloud2 ObbProcessVisualizer::Convert(const std::map<int,
@@ -438,7 +438,7 @@ sensor_msgs::PointCloud2 ObbProcessVisualizer::Convert(const std::map<int,
   }
   sensor_msgs::PointCloud2 topic;
   pcl::toROSMsg(*vis_pc, topic);
-  topic.header.frame_id = "robot";
+  topic.header.frame_id = frame_id_;
   return topic;
 }
 
@@ -489,11 +489,11 @@ void ObbProcessVisualizer::Visualize() {
     contours_current_.markers.clear();
   }
 
-  pose0_array_.header.frame_id = "robot";
+  pose0_array_.header.frame_id = frame_id_;
   pub_pose0.publish(pose0_array_);
   pose0_array_.poses.clear();
 
-  pose_array_.header.frame_id = "robot";
+  pose_array_.header.frame_id = frame_id_;
   pub_pose.publish(pose_array_);
   pose_array_.poses.clear();
 
@@ -709,15 +709,15 @@ void FitAxis(g2o::SE3Quat& Twl, Eigen::Vector3d& whd){
   return;
 }
 
-bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
-                pcl::PointCloud<pcl::PointXYZLNormal>::Ptr boundary,
-                const ObbParam& param,
-                const Eigen::Vector3f& depth_dir,
-                const Eigen::Vector3f& t_wc,
-                std::shared_ptr<unloader_msgs::Object> obj,
-                std::shared_ptr<ObbProcessVisualizer> visualizer,
-                const std::vector<float>& floor_plane
-               )
+bool ComputeBoxOBB(const std::string& frame_id,
+                   pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
+                   pcl::PointCloud<pcl::PointXYZLNormal>::Ptr boundary,
+                   const ObbParam& param,
+                   const Eigen::Vector3f& depth_dir,
+                   const Eigen::Vector3f& t_wc,
+                   std::shared_ptr<unloader_msgs::Object> obj,
+                   std::shared_ptr<ObbProcessVisualizer> visualizer
+                  )
 {
     // Compute concavehull for (inner) cloud.
     pcl::ConcaveHull<pcl::PointXYZLNormal> chull;
@@ -907,7 +907,7 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
     // Visualize contours
     {
       visualization_msgs::Marker contour_marker;
-      contour_marker.header.frame_id = "robot";
+      contour_marker.header.frame_id = frame_id;
       contour_marker.id = obj->instance_id;
       //contour_marker.color = GetColor(obj->instance_id);
       contour_marker.color = GetColor(1);
@@ -1080,16 +1080,6 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
     //  return false;
     //}
 
-    if(!floor_plane.empty()){
-      // Check whether the box is floor or not.
-      Eigen::Vector4d plane(floor_plane[0], floor_plane[1], floor_plane[2], floor_plane[3]);
-      //std::cout << "floor_plane = " << plane.transpose() << std::endl;
-      const auto& t = Twl.translation();
-      Eigen::Vector4d cp(t[0], t[1], t[2], 1.);
-      if(plane.dot(cp) < 0.)
-        return false;
-    }
-
     obj->center_pose.position.x = Twl.translation().x();
     obj->center_pose.position.y = Twl.translation().y();
     obj->center_pose.position.z = Twl.translation().z();
@@ -1171,28 +1161,26 @@ bool ComputeBoxOBB(pcl::PointCloud<pcl::PointXYZLNormal>::Ptr cloud,
   if(obj->type==unloader_msgs::Object::POUCH){
     pcl::PointCloud<pcl::PointXYZLNormal> target_cloud = *cloud + *boundary;
     pcl::toROSMsg(target_cloud, obj->point_cloud);
-    obj->point_cloud.header.frame_id = "robot";
+    obj->point_cloud.header.frame_id = frame_id;
   }
   return true;
 }
 
-
-
-
 void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& segmented_clouds,
                    const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds,
                    const ObbParam& param,
-                   const g2o::SE3Quat& Tcw,
-                   const std::string& cam_id,
-                   std::shared_ptr<ObbProcessVisualizer> visualizer,
-                   const std::vector<float>& floor_plane
+                   const std::string& frame_id,
+                   std::shared_ptr<ObbProcessVisualizer> visualizer
                    ) {
 
   Eigen::Vector3f depth_dir, t_wc;
   {
-    const Eigen::Vector3d& dir_d = Tcw.rotation().matrix().row(2);
+    //const Eigen::Vector3d& dir_d = Tcw.rotation().matrix().row(2);
+    const Eigen::Vector3d dir_d(0.,0.,1.);
     depth_dir = dir_d.cast<float>();
-    t_wc = Tcw.inverse().translation().cast<float>();
+    t_wc = Eigen::Vector3f(0.,0.,0.);
+    //t_wc = Tcw.inverse().translation().cast<float>();
+    //t_wc = Tcw.inverse().translation().cast<float>();
   }
 
   // The loop for each instance.
@@ -1217,9 +1205,9 @@ void ObbEstimator::ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZ
     obj->instance_id = it.first;
     for(int i =0; i <6; i++)
       obj->visible_plane[i] = false;
-    obj->point_cloud.header.frame_id = "robot";
+    obj->point_cloud.header.frame_id = frame_id;
 
-    if(! ComputeBoxOBB(cloud, boundary, param, depth_dir, t_wc, obj, visualizer, floor_plane) )
+    if(! ComputeBoxOBB(frame_id, cloud, boundary, param, depth_dir, t_wc, obj, visualizer) )
       continue;
 
     // TODO Collect unsynced obb before matching.

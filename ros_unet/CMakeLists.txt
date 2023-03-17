@@ -32,7 +32,7 @@ find_package(catkin REQUIRED
 )
 
 add_service_files(DIRECTORY srv FILES
-  ComputeEdge.srv ComputeObb.srv SetCamera.srv ClearCamera.srv ComputeFloor.srv
+  ComputeEdge.srv ComputeObb.srv ComputeFloor.srv #SetCamera.srv ClearCamera.srv 
   ComputePoints2Obb.srv ComputeTwoPoints2Obb.srv GetBg.srv
   )
 
@@ -92,18 +92,19 @@ target_link_libraries(floor_detector ${catkin_LIBRARIES} ${OpenCV_LIBS})
 
 add_executable(ros_bg src/ros_bg.cpp src/utils.cpp)
 target_link_libraries(ros_bg ${catkin_LIBRARIES} ${OpenCV_LIBS} ${PCL_LIBRARIES})
+#set_source_files_properties(src/ros_bg.cpp PROPERTIES COMPILE_FLAGS "-O0 -g")
 
-add_executable(cgal_server
-  src/cgal_server.cpp
-  src/mask2obb.cpp
-  src/ros_util.cpp
-)
-target_link_libraries(cgal_server
-  PUBLIC unetsegment CGAL::Eigen3_support ${catkin_LIBRARIES} ${OpenCV_LIBS}
-  ${GMP_LIBRARIES} # ref) https://doc.cgal.org/latest/Manual/configurationvariables.html
-)
+#add_executable(cgal_server
+#  src/cgal_server.cpp
+#  src/mask2obb.cpp
+#  src/ros_util.cpp
+#)
+#target_link_libraries(cgal_server
+#  PUBLIC unetsegment CGAL::Eigen3_support ${catkin_LIBRARIES} ${OpenCV_LIBS}
+#  ${GMP_LIBRARIES} # ref) https://doc.cgal.org/latest/Manual/configurationvariables.html
+#)
 
-foreach(target obb_server cgal_server ros_bg)
+foreach(target obb_server ros_bg floor_detector) # cgal_server
     add_dependencies(${target} ${${PROJECT_NAME}_EXPORTED_TARGETS})
 endforeach()
 

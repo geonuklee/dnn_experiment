@@ -41,14 +41,12 @@ protected:
 
   virtual void GetEdge(const cv::Mat rgb,
                        const cv::Mat depth,
-                       const cv::Mat validmask,
                        cv::Mat& outline_edge,
                        cv::Mat& convex_edge,
-                       cv::Mat& surebox_mask,
+                       cv::Mat& valid_mask,
                        bool verbose) = 0;
 
-  cv::Mat vignett32S_;
-  cv::Mat vignett8U_;
+  cv::Mat valid_mask_;
 };
 
 class Segment2DEdgeBased : public Segment2DEdgeBasedAbstract {
@@ -56,20 +54,18 @@ public:
   Segment2DEdgeBased(const std::string& name);
   void SetEdge(const cv::Mat outline_edge,
                const cv::Mat convex_edge,
-               const cv::Mat surebox_mask);
+               const cv::Mat valid_mask);
 
 protected:
   virtual void GetEdge(const cv::Mat rgb,
                        const cv::Mat depth,
-                       const cv::Mat validmask,
                        cv::Mat& outline_edge,
                        cv::Mat& convex_edge,
-                       cv::Mat& surebox_mask,
+                       cv::Mat& valid_mask,
                        bool verbose);
 
   cv::Mat outline_edge_;
   cv::Mat convex_edge_;
-  cv::Mat surebox_mask_;
 };
 
 class Segment2Dthreshold : public Segment2DEdgeBasedAbstract {
@@ -78,10 +74,9 @@ public:
 protected:
   virtual void GetEdge(const cv::Mat rgb,
                        const cv::Mat depth,
-                       const cv::Mat validmask,
                        cv::Mat& outline_edge,
                        cv::Mat& convex_edge,
-                       cv::Mat& surebox_mask,
+                       cv::Mat& valid_mask,
                        bool verbose);
 
   const double lap_depth_threshold_;

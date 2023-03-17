@@ -333,14 +333,6 @@ bool Segment2DEdgeBasedAbstract::Process(const cv::Mat rgb,
                                  cv::Mat& convex_edge,
                                  std::map<int,int>& instance2class,
                                  bool verbose){
-  if(vignett32S_.empty() ){
-    cv::Mat src = 255*cv::Mat::ones(rgb.rows, rgb.cols, CV_8UC1);
-    // TODO Better results with below? -> Necessary to prevent blinking
-    cv::rectangle(src, cv::Point(0,0), cv::Point(rgb.cols,rgb.rows), 0, 20);
-    src.convertTo(vignett32S_, CV_32SC1);
-    src.convertTo(vignett8U_, CV_8UC1);
-  }
-
   return _Process(rgb, depth, marker, convex_edge, instance2class, verbose);
 }
 
@@ -400,24 +392,12 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
                         std::map<int,int>& instance2class,
                         bool verbose){
   cv::Mat depthmask = GetDepthMask(depth);
-  cv::Mat validmask = GetValidMask(depthmask);
-  cv::Mat outline_edge, surebox_mask;
-  GetEdge(rgb, depth, validmask, outline_edge, convex_edge, surebox_mask, verbose);
+  cv::Mat outline_edge, validmask;
+  GetEdge(rgb, depth, outline_edge, convex_edge, validmask, verbose);
+
   if(outline_edge.empty())
     return false;
 
-#if 0
-  if(!surebox_mask.empty()) { // pre-filtering for surebox
-    cv::Mat sureground;
-    cv::bitwise_or(outline_edge > 0, surebox_mask > 0, sureground);
-    cv::Mat element5(3, 3, CV_8U, cv::Scalar(1));
-    cv::morphologyEx(sureground, sureground, cv::MORPH_CLOSE, element5);
-    cv::bitwise_and(validmask, sureground,  validmask);
-  }
-
-  if(! vignett32S_.empty() )
-    cv::bitwise_and(outline_edge, vignett8U_, outline_edge);
-#endif
   cv::Mat divided;
   cv::Mat dist_fromoutline; {
 #if 1
@@ -429,6 +409,12 @@ bool Segment2DEdgeBasedAbstract::_Process(cv::Mat rgb,
       divided.convertTo(divided, CV_8UC1); // distanceTransform asks CV_8UC1 input.
     cv::distanceTransform(divided, dist_transform, cv::DIST_L2, cv::DIST_MASK_3);
 #endif
+    for(int r=0; r<dist_fromoutline.rows; r++){
+      for(int c=0; c<dist_fromoutline.cols; c++){
+        if(!validmask.at<unsigned char>(r,c))
+          dist_fromoutline.at<float>(r,c) = 0.;
+      }
+    }
   }
   cv::Mat seedmap = cv::Mat::zeros(depth.rows, depth.cols, CV_32SC1);
   cv::Mat seed_contours;
@@ -781,30 +767,28 @@ Segment2DEdgeBased::Segment2DEdgeBased(const std::string& name)
 
 void Segment2DEdgeBased::SetEdge(const cv::Mat outline_edge,
                                  const cv::Mat convex_edge,
-                                 const cv::Mat surebox_mask) {
+                                 const cv::Mat valid_mask) {
   outline_edge_ = outline_edge;
   convex_edge_ = convex_edge;
-  surebox_mask_ = surebox_mask;
+  valid_mask_ = valid_mask;
 }
 void Segment2DEdgeBased::GetEdge(const cv::Mat rgb,
                                  const cv::Mat depth,
-                                 const cv::Mat validmask,
                                  cv::Mat& outline_edge,
                                  cv::Mat& convex_edge,
-                                 cv::Mat& surebox_mask,
+                                 cv::Mat& valid_mask,
                                  bool verbose){
   outline_edge = outline_edge_;
-  convex_edge_ = convex_edge;
-  surebox_mask_ = surebox_mask;
+  convex_edge = convex_edge_;
+  valid_mask  = valid_mask_;
   return;
 }
 
 void Segment2Dthreshold::GetEdge(const cv::Mat rgb,
                                  const cv::Mat depth,
-                                 const cv::Mat validmask,
                                  cv::Mat& outline_edge,
                                  cv::Mat& convex_edge,
-                                 cv::Mat& surebox_mask,
+                                 cv::Mat& valid_mask,
                                  bool verbose){
   // Compute Hessian and NMAS using function of unet_code.cpp.
   assert(false);

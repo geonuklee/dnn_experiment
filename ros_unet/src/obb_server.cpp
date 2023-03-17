@@ -12,8 +12,8 @@
 
 #include <g2o/types/slam3d/se3quat.h>
 
-#include "ros_unet/ClearCamera.h"
-#include "ros_unet/SetCamera.h"
+//#include "ros_unet/ClearCamera.h"
+//#include "ros_unet/SetCamera.h"
 #include "ros_unet/ComputeObb.h"
 #include <ros/ros.h>
 #include <chrono>
@@ -25,16 +25,12 @@ public:
   : nh_(nh), param_(param) {
   }
 
-  bool ClearCamera(ros_unet::ClearCamera::Request  &req,
-                 ros_unet::ClearCamera::Response &res){
-
-    return true;
-  }
-
-  bool SetCamera(ros_unet::SetCamera::Request  &req,
-                 ros_unet::SetCamera::Response &res)
-  {
-    const std::vector<double>& D = req.info.D;
+  void CheckCamera(const std::string& cam_id,
+                   const std::string& frame_id,
+                   const sensor_msgs::CameraInfo& info){
+    if(obb_estimator_.count(cam_id))
+      return;
+    const std::vector<double>& D = info.D;
     double v_max = 0.;
     for(const double& v : D)
       v_max = std::max<double>(std::abs<double>(v), v_max);
@@ -45,28 +41,26 @@ public:
       assert(false); // No support yet.
       // TODO newK with cv::getOptimalNewCamera
     } else {
-      std::cout << "No distortion " << std::endl;
+      ROS_INFO_STREAM("No distortion");
       cv::Mat K = cv::Mat::zeros(3,3,CV_32F);
       for(int i = 0; i<K.rows; i++)
         for(int j = 0; j < K.cols; j++)
-          K.at<float>(i,j) = req.info.K.data()[3*i+j];
-      cv::Mat D = cv::Mat::zeros(req.info.D.size(),1,CV_32F);
+          K.at<float>(i,j) = info.K.data()[3*i+j];
+      cv::Mat D = cv::Mat::zeros(info.D.size(),1,CV_32F);
       for (int j = 0; j < D.rows; j++)
-        D.at<float>(j,0) = req.info.D.at(j);
-      cv::Size osize(req.info.width, req.info.height);
+        D.at<float>(j,0) = info.D.at(j);
+      cv::Size osize(info.width, info.height);
       camera = MarkerCamera(K,D,osize);
     }
 
-    const std::string& cam_id = req.cam_id.data;
     obb_estimator_[cam_id] = std::make_shared<ObbEstimator>(camera);
     segment2d_[cam_id] = std::make_shared<Segment2DEdgeBased>(cam_id);
-    obb_process_visualizer_[cam_id] = std::make_shared<ObbProcessVisualizer>(cam_id, nh_);
+    obb_process_visualizer_[cam_id] = std::make_shared<ObbProcessVisualizer>(cam_id, frame_id, nh_);
     pub_xyzrgb_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/xyzrgb",1);
     pub_clouds_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/clouds",1);
     pub_boundary_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/boundary",1);
     pub_vis_mask_[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/vis_mask",1);
     pub_filteredoutline[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/vis_filteredoutline",1);
-    return true;
   }
 
   bool ComputeObb(ros_unet::ComputeObb::Request  &req,
@@ -74,15 +68,21 @@ public:
   {
     // Get Tcw from cam_id.
     const std::string& cam_id = req.cam_id.data;
+    const std::string& frame_id = req.info.header.frame_id;
+
+    CheckCamera(cam_id, frame_id, req.info);
     auto segment2d = segment2d_.at(cam_id);
     auto obb_estimator = obb_estimator_.at(cam_id);
     auto obb_process_visualizer = obb_process_visualizer_.at(cam_id);
 
-    g2o::SE3Quat Tcw = GetSE3Quat(req.Twc).inverse();
-
-    cv::Mat depth, rgb, convex_edge, outline_edge, surebox;
-    GetCvMat(req, depth, rgb, convex_edge, outline_edge, surebox);
+    cv::Mat depth, rgb, convex_edge, outline_edge, valid_mask;
+    GetCvMat(req, depth, rgb, convex_edge, outline_edge, valid_mask);
     bool verbose = param_.verbose;
+
+    if(valid_mask.empty()){
+      ROS_ERROR_STREAM("Empty valid_mask");
+      exit(1);
+    }
 
     const float threshold_depth = .04;
     cv::Mat dd_edge= GetDiscontinuousDepthEdge(depth, threshold_depth);
@@ -95,28 +95,21 @@ public:
       bool verbose_filter = false;
       filtered_outline = FilterOutlineEdges(outline_edge, verbose_filter);
     }
-    segment2d->SetEdge(filtered_outline, convex_edge, surebox);
+    segment2d->SetEdge(filtered_outline, convex_edge, valid_mask); // TODO
 #else
-    segment2d->SetEdge(outline_edge, convex_edge, surebox);
+    segment2d->SetEdge(outline_edge, convex_edge, valid_mask);
 #endif
 
     cv::Mat instance_marker;
     std::map<int,int> ins2cls;
     segment2d->Process(rgb, depth, instance_marker, convex_edge, ins2cls, verbose);
 
-    if(verbose){
-      char c = cv::waitKey(0);
-      if(c == 'q')
-        exit(1);
-    }
-
     std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr> segmented_clouds, boundary_clouds;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb(new pcl::PointCloud<pcl::PointXYZRGB>());
 
 
     auto t0 = std::chrono::steady_clock::now();
-    obb_estimator->GetSegmentedCloud(Tcw,
-                                     rgb,
+    obb_estimator->GetSegmentedCloud(rgb,
                                      depth,
                                      instance_marker,
                                      convex_edge,
@@ -129,10 +122,8 @@ public:
     obb_estimator->ComputeObbs(segmented_clouds,
                                boundary_clouds,
                                param_,
-                               Tcw,
-                               cam_id,
-                               obb_process_visualizer,
-                               req.plane
+                               frame_id,
+                               obb_process_visualizer
                               );
     res.output = obb_process_visualizer->GetUnsyncedOBB();
     {
@@ -179,18 +170,20 @@ public:
     {
       sensor_msgs::PointCloud2 msg;
       pcl::toROSMsg(*xyzrgb, msg);
-      msg.header.frame_id = "robot";
+      msg.header.frame_id = frame_id;
       pub_xyzrgb_.at(cam_id).publish(msg);
     }
 
     if(pub_clouds_.at(cam_id).getNumSubscribers() > 0) {
       sensor_msgs::PointCloud2 msg;
       ColorizeSegmentation(segmented_clouds, msg);
+      msg.header.frame_id = frame_id;
       pub_clouds_.at(cam_id).publish(msg);
     }
     if(pub_boundary_.at(cam_id).getNumSubscribers() > 0) {
       sensor_msgs::PointCloud2 msg;
       ColorizeSegmentation(boundary_clouds, msg);
+      msg.header.frame_id = frame_id;
       pub_boundary_.at(cam_id).publish(msg);
     }
 
@@ -213,7 +206,7 @@ private:
                 cv::Mat& rgb,
                 cv::Mat& convex_edge,
                 cv::Mat& outline_edge,
-                cv::Mat& surebox
+                cv::Mat& valid_mask
                 ) {
     cv::Mat odepth = cv_bridge::toCvCopy(req.depth, sensor_msgs::image_encodings::TYPE_32FC1)->image;
     cv::Mat orgb = cv_bridge::toCvCopy(req.rgb, sensor_msgs::image_encodings::TYPE_8UC3)->image;
@@ -222,13 +215,14 @@ private:
       cv::split(edges, och);
     }
 
+    valid_mask = cv_bridge::toCvCopy(req.p_mask, sensor_msgs::image_encodings::TYPE_32SC1)->image;
+    valid_mask = valid_mask < 1;
+
     if(mx_.empty()){
       depth = odepth;
       rgb = orgb;
       convex_edge = och[1];
-      //cv::bitwise_and(och[0] == 1, convex_edge < 0, outline_edge);
       outline_edge = och[0] == 1;
-      surebox = och[0] == 2;
     }
     else{
       assert(false); // No support yet.
@@ -258,12 +252,6 @@ int main(int argc, char **argv) {
   param.euclidean_filter_tolerance = GetRequiredParam<double>(nh, "euc_tolerance"); // [meter] small tolerance condisering bg invasion
   param.verbose = GetRequiredParam<bool>(nh, "verbose");
   BoxDetector box_detector(nh, param);
-
-  ros::ServiceServer s0
-    = nh.advertiseService("SetCamera", &BoxDetector::SetCamera, &box_detector);
-
-  ros::ServiceServer s1
-    = nh.advertiseService("ClearCamera", &BoxDetector::ClearCamera, &box_detector);
 
   ros::ServiceServer s2
     = nh.advertiseService("ComputeObb", &BoxDetector::ComputeObb, &box_detector);

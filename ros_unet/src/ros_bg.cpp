@@ -242,6 +242,8 @@ size_t getNumberOfPointsBehindPlane(pcl::PointCloud<pcl::PointXYZL>::Ptr cloud,
                                     const Eigen::Vector4f& coeff,
                                     int plane_label,
                                     float distance_th){
+  if(distance_th < 0.)
+    ROS_WARN_STREAM("distance_th should be positive");
   size_t n = 0;
   for(const auto& pt : *cloud){
     if(pt.label == plane_label)
@@ -257,7 +259,9 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
                      pcl::PointCloud<pcl::PointXYZL>::Ptr merged_p_cloud,
                      const EigenMap<int, Eigen::Vector4f>& p_coeffs,
                      const cv::Mat marker,
-                     const Eigen::Vector3f& ideal_floor_nvec,
+                     const Eigen::Vector3f& floor_norm_prediction,
+                     const float distance_th,
+                     const float th_floor,
                      int& l_floor,
                      int& l_backwall,
                      cv::Mat& mask
@@ -269,8 +273,6 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
   * 
   */
   const int max_bottom = 20; // [pixel]  TODO
-  const float distance_th = 0.1; // [meter] TODO
-  const float th_floor = std::cos(M_PI/180.*40.);
   const float th_perpen = std::sin(M_PI/180.*80.); // 90deg에 가까울수록 엄밀한,
 
   l_floor = l_backwall = -1;
@@ -295,21 +297,23 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
       for(auto it : v_counts){
         const int& l = it.first;
         const Eigen::Vector4f& p = p_coeffs.at(l);
-        if(ideal_floor_nvec.dot(p.head<3>()) < th_floor)
+        if(floor_norm_prediction.dot(p.head<3>()) < th_floor)
           continue;
-        if(getNumberOfPointsBehindPlane(merged_p_cloud,p,l,distance_th) > 0)
+        int n = getNumberOfPointsBehindPlane(merged_p_cloud,p,l,distance_th);
+        //ROS_INFO_STREAM("p=" << p.transpose()  << "Out/All=" << n <<"/"<<merged_p_cloud->size() );
+        if(n > .1*merged_p_cloud->size() )
           continue;
         l_floor = l;
         std::vector<cv::Point> locations;
         cv::findNonZero(marker == l_floor, locations);
         for (const auto& pt : locations)
-          mask.at<int32_t>(pt) = 1;
+          mask.at<int32_t>(pt) = 1;  // FLOOR 1
         break;
       }
     }
   }
 
-  Eigen::Vector3f floor_nvec = ideal_floor_nvec;
+  Eigen::Vector3f floor_nvec = floor_norm_prediction;
   if(p_coeffs.count(l_floor))
     floor_nvec = p_coeffs.at(l_floor).head<3>();
 
@@ -320,7 +324,9 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
     if(l==l_floor)
       continue;
     const Eigen::Vector4f p = it.second;
-    if(getNumberOfPointsBehindPlane(merged_p_cloud,p,l,distance_th) > 0)
+    int n = getNumberOfPointsBehindPlane(merged_p_cloud,p,l,distance_th);
+    //ROS_INFO_STREAM("p=" << p.transpose()  << "Out/All=" << n <<"/"<<merged_p_cloud->size() );
+    if(n > .1*merged_p_cloud->size())
       continue;
     if( floor_nvec.cross(p.head<3>()).norm() > th_perpen)
       backwalls.push_back(std::make_pair(l,p[3]));
@@ -334,16 +340,20 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
     std::vector<cv::Point> locations;
     cv::findNonZero(marker == l_backwall, locations);
     for (const auto& pt : locations)
-      mask.at<int32_t>(pt) = 2;
+      mask.at<int32_t>(pt) = 2; // WALL 2
   }
+  for(int r=0; r<marker.rows; r++)
+    for(int c=0; c<marker.cols; c++)
+      if(marker.at<int32_t>(r,c) < 1)
+        mask.at<int32_t>(r,c) = 2; // Non flat
   return;
 }
 
 void projectClusters(pcl::PointCloud<pcl::PointXYZL>::Ptr merged_p_cloud,
                      pcl::PointCloud<pcl::PointXYZL>::Ptr cloud,
                      const std::vector<cv::Point2i>& uvs,
-                     cv::Mat& marker,
-                     cv::Mat& mask
+                     cv::Mat& p_marker,
+                     cv::Mat& p_mask
                     ){
   float max_square_tolerance = .05; // [meter] TODO
   max_square_tolerance *= max_square_tolerance;
@@ -364,10 +374,10 @@ void projectClusters(pcl::PointCloud<pcl::PointXYZL>::Ptr merged_p_cloud,
       continue;
     const pcl::PointXYZL& pt0 = merged_p_cloud->at(neighbors.at(0));
     pt.label = pt0.label; // Labeling cloud
-    marker.at<int32_t>(uv.y,uv.x) = pt.label; // Project the label
+    p_marker.at<int32_t>(uv.y,uv.x) = pt.label; // Project the label
     if(pt.label < 1){ // pcl::PointXYZL.label은 uint, mask는 int
-      marker.at<int32_t>(uv.y,uv.x) = -1;
-      mask.at<int32_t>(uv.y,uv.x) = -1;
+      p_marker.at<int32_t>(uv.y,uv.x) = -1;
+      p_mask.at<int32_t>(uv.y,uv.x) = -1;;
     }
   }
   return;
@@ -457,6 +467,7 @@ public:
     pub_points_ = nh_.advertise<sensor_msgs::PointCloud2>("points", 1);
     pub_rg_ = nh_.advertise<sensor_msgs::PointCloud2>("rg", 1);
     pub_imu_ = nh_.advertise<sensor_msgs::Imu>("output_imu",1);
+    pub_dst_mask_ = nh.advertise<sensor_msgs::Image>("dst_mask",1);
   }
   ~BgDetector(){
     delete linear_acc_;
@@ -468,14 +479,18 @@ public:
       rgbCallback(ptr);
     }
     { sensor_msgs::ImageConstPtr ptr = boost::make_shared<const sensor_msgs::Image>(req.depth);
-      rgbCallback(ptr);
+      depthCallback(ptr);
     }
     { sensor_msgs::CameraInfoConstPtr ptr = boost::make_shared<const sensor_msgs::CameraInfo>(req.info);
       cameraInfoCallback(ptr);
     }
-    { sensor_msgs::ImuConstPtr ptr = boost::make_shared<const sensor_msgs::Imu>(req.imu);
-      imuCallback(ptr);
+    /*
+    ros::Rate rate(10);
+    while(linear_acc_->norm() == 0.) {
+      rate.sleep();
+      ros::spinOnce();
     }
+    */
     bool r = Process(res);
     return r;
   }
@@ -487,8 +502,10 @@ public:
       return false;
     if(nu_map_.empty())
       return false;
-    if(linear_acc_->sum() == 0.)
+    /*
+    if(linear_acc_->norm() == 0.)
       return false;
+    */
     cv::Mat init_mask = cv::Mat::ones(depth_.rows,depth_.cols,CV_8UC1);
 
     pcl::PointCloud<pcl::PointXYZL>::Ptr cloud;
@@ -530,15 +547,22 @@ public:
     for(auto it : p_clusters)
       *merged_p_cloud += *it.second;
 
-    cv::Mat marker = cv::Mat::zeros(depth_.rows,depth_.cols, CV_32SC1);
-    cv::Mat bg_mask = cv::Mat::zeros(depth_.rows, depth_.cols, CV_32SC1);
-    projectClusters(merged_p_cloud, cloud, uvs, marker, bg_mask);
+    cv::Mat p_marker = cv::Mat::zeros(depth_.rows,depth_.cols, CV_32SC1);
+    cv::Mat p_mask = cv::Mat::zeros(depth_.rows, depth_.cols, CV_32SC1);
+    projectClusters(merged_p_cloud, cloud, uvs, p_marker, p_mask);
 
     // 5. Get floor, bg candidates
-    Eigen::Vector3f floor_norm_prediction = linear_acc_->normalized().cast<float>();
+    bool given_imu = linear_acc_->norm() > 0.001;
+    Eigen::Vector3f floor_norm_prediction
+      = given_imu?linear_acc_->normalized().cast<float>():Eigen::Vector3f(0.,-.7,-.3).normalized();
+    const float distance_th = given_imu?0.1:.5; // [meter] TODO
+    const float th_floor = given_imu?std::cos(M_PI/180.*40.):std::cos(M_PI/180.*70.);
+
     int l_floor, l_backwall;
-    getFloorAndWall(p_clusters,merged_p_cloud,p_coeffs,marker,floor_norm_prediction,
-                    l_floor,l_backwall, bg_mask);
+    getFloorAndWall(p_clusters,merged_p_cloud,p_coeffs,p_marker,
+                    floor_norm_prediction, distance_th, th_floor,
+                    l_floor,l_backwall, p_mask);
+
     if(pub_points_.getNumSubscribers() > 0) {
       pcl::PCLPointCloud2 pcl_pts;
       pcl::toPCLPointCloud2(*cloud, pcl_pts);
@@ -556,17 +580,17 @@ public:
     }
     {
       cv_bridge::CvImage cv_image;
-      cv_image.image = marker;
+      cv_image.image = p_marker;
       cv_image.encoding = sensor_msgs::image_encodings::TYPE_32SC1;
       sensor_msgs::ImagePtr msg = cv_image.toImageMsg();
-      res.marker = *msg;
+      res.p_marker = *msg;
     }
     {
       cv_bridge::CvImage cv_image;
-      cv_image.image = bg_mask;
+      cv_image.image = p_mask;
       cv_image.encoding = sensor_msgs::image_encodings::TYPE_32SC1;
       sensor_msgs::ImagePtr msg = cv_image.toImageMsg();
-      res.mask = *msg;
+      res.p_mask = *msg;
     }
 
     // TODO 이거 받아서.. 배경 어떻게 제거?
@@ -575,23 +599,28 @@ public:
       msg.id = it.first;
       for(int i=0; i<4; i++)
         msg.coeff[i] = it.second[i];
-      res.planes.push_back(msg);
+      res.p_coeffs.push_back(msg);
     }
 
-    if(true){
-      cv::Mat dst_marker = GetColoredLabel(marker);
-      cv::Mat dst_bg = GetColoredLabel(bg_mask);
+    {
+      cv::Mat dst_marker = GetColoredLabel(p_marker);
+      cv::Mat dst_bg = GetColoredLabel(p_mask);
       cv::Mat dst;
-      cv::vconcat(dst_marker,dst_bg,dst);
-      cv::imshow("dst", dst);
-      static bool first=true;
-      if(first){
-        cv::moveWindow("dst", 0, 0);
-        first = false;
-      }
-      char c = cv::waitKey(1);
-      if(c=='q')
-        exit(1);
+      cv::hconcat(dst_marker,dst_bg,dst);
+
+      cv_bridge::CvImage cv_img;
+      cv_img.encoding = sensor_msgs::image_encodings::TYPE_8UC3;
+      cv_img.image    = dst;
+      pub_dst_mask_.publish(*cv_img.toImageMsg());
+      //cv::imshow("dst", dst);
+      //static bool first=true;
+      //if(first){
+      //  cv::moveWindow("dst", 0, 0);
+      //  first = false;
+      //}
+      //char c = cv::waitKey(1);
+      //if(c=='q')
+      //  exit(1);
     }
     return true;
   }
@@ -646,6 +675,10 @@ private:
       return;
     }
     rgb_ = cv_ptr->image;
+    if(msg->header.frame_id.empty()){
+      ROS_ERROR_STREAM("No frame id in rgb");
+      exit(1);
+    }
     frame_id_ = msg->header.frame_id;
   }
 
@@ -658,7 +691,6 @@ private:
       return;
     }
     depth_ = cv_ptr->image;
-    frame_id_ = msg->header.frame_id;
   }
 
   void cameraInfoCallback(const sensor_msgs::CameraInfoConstPtr& msg) {
@@ -702,7 +734,7 @@ private:
 
   ros::NodeHandle nh_;
   ros::Subscriber rgb_sub_, depth_sub_, camera_info_sub_, imu_sub_;
-  ros::Publisher pub_points_, pub_rg_, pub_imu_;
+  ros::Publisher pub_points_, pub_rg_, pub_imu_, pub_dst_mask_;
 
   Eigen::Vector3d* linear_acc_;
   std::string frame_id_;
@@ -712,11 +744,11 @@ private:
 };
 
 int main(int argc, char **argv) {
-  ros::init(argc, argv, "bgdetector");
+  ros::init(argc, argv, "~");
   ros::NodeHandle nh("~");
   bool is_service;
-  if (!nh.getParam("ig_service", is_service)) {
-    ROS_ERROR("Failed to get parameter 'ig_service'");
+  if (!nh.getParam("is_service", is_service)) {
+    ROS_ERROR("Failed to get parameter 'is_service'");
     return 1;
   }
   BgDetector bg_detector(nh);

@@ -92,29 +92,15 @@ def rectify(rgb_msg, depth_msg, mx, my, bridge):
         rect_depth = cv2.remap(depth,mx,my,cv2.INTER_NEAREST)
     rect_rgb_msg = bridge.cv2_to_imgmsg(rect_rgb,encoding='bgr8')
     rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
+    assert(rgb_msg.header.frame_id == depth_msg.header.frame_id)
+    rect_rgb_msg.header.frame_id = rect_depth_msg.header.frame_id = rgb_msg.header.frame_id
     return rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb
-
-def get_Twc(cam_id):
-    rate = rospy.Rate(2)
-    while True:
-        Twc = rospy.get_param("/%s/base_T_cam"%cam_id, None)
-        if Twc is not None:
-            break
-        rate.sleep()
-    pose = convert2pose(Twc)
-    return pose
-
-def get_init_floormask(bridge, width, height, y0):
-    mask = np.zeros((height,width),dtype=np.uint8)
-    mask[-int(y0):,:] = 255
-    init_floormask = bridge.cv2_to_imgmsg(mask, encoding="8UC1")
-    return init_floormask, mask
 
 class Sub:
     def __init__(self, rgb, depth, info):
-        self.sub_depth = rospy.Subscriber(depth, Image, self.cb_depth, queue_size=30)
-        self.sub_rgb   = rospy.Subscriber(rgb, Image, self.cb_rgb, queue_size=30)
-        self.sub_info  = rospy.Subscriber(info, CameraInfo, self.cb_info, queue_size=30)
+        self.sub_depth = rospy.Subscriber(depth, Image, self.cb_depth, queue_size=1)
+        self.sub_rgb   = rospy.Subscriber(rgb, Image, self.cb_rgb, queue_size=1)
+        self.sub_info  = rospy.Subscriber(info, CameraInfo, self.cb_info, queue_size=1)
         self.depth = None
         self.rgb = None
         self.info = None
@@ -147,16 +133,12 @@ if __name__=="__main__":
     predict_edge = rospy.ServiceProxy('~PredictEdge', ros_unet.srv.ComputeEdge)
     pub_eval = rospy.Publisher('~eval', Image,queue_size=1)
 
-    rospy.wait_for_service('~SetCamera')
-    set_camera = rospy.ServiceProxy('~SetCamera', ros_unet.srv.SetCamera)
 
     rospy.wait_for_service('~ComputeObb')
     compute_obb = rospy.ServiceProxy('~ComputeObb', ros_unet.srv.ComputeObb)
 
-    rospy.wait_for_service('~FloorDetector/SetCamera')
-    floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
-    rospy.wait_for_service('~FloorDetector/ComputeFloor')
-    compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
+    rospy.wait_for_service('~GetBg')
+    get_bg = rospy.ServiceProxy('~GetBg', ros_unet.srv.GetBg)
 
     #rospy.wait_for_service('~Cgal/ComputeObb')
     #cgal_compute_obb = rospy.ServiceProxy('~Cgal/ComputeObb', ros_unet.srv.ComputePoints2Obb)
@@ -188,49 +170,38 @@ if __name__=="__main__":
         if sub.info is None:
             continue
         rect_info_msgs[cam_id], mx, my = get_rectification(sub.info)
-        set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
-        floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
         break
 
-    Twc = get_Twc(cam_id)
-    Tfwc = convert2tf(Twc)
     while not rospy.is_shutdown():
         if sub.rgb is None or sub.depth is None or sub.info is None:
             continue
-        fx, fy = rect_info_msgs[cam_id].K[0], rect_info_msgs[cam_id].K[4]
+        # TODO Hard code for test with old data
+        if sub.rgb.header.frame_id == 'arena_camera':
+            sub.info.header.frame_id = sub.rgb.header.frame_id = sub.depth.header.frame_id = 'cam0_arena_camera'
+
+        rect_info_msg = rect_info_msgs[cam_id]
+        fx, fy = rect_info_msg.K[0], rect_info_msg.K[4]
         rect_K = np.array(rect_info_msgs[cam_id].K,np.float).reshape((3,3))
         rect_D = np.array(rect_info_msgs[cam_id].D,np.float).reshape((-1,))
         rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb = rectify(sub.rgb, sub.depth, mx, my, bridge)
-        init_floormask, cv_mask = get_init_floormask(bridge,rect_rgb.shape[1],rect_rgb.shape[0], y0=50)
-        floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
-        plane_c  = floor_msg.plane
-        plane_w = convert_plane(Twc, plane_c) # empty plane = no floor filter.
-        #plane_w = (0.,0.,0.,1.)
-        #cv2.imshow("floor", cv_mask)
-        #cv2.waitKey(1)
 
+        '''
+        foolr mask 대신 GetBg로 처리.
+        1) floor, too far에 있는 OBB는 필터링.
+        2) wall을 이루는 OBB의 숫자, 크기, 평행 여부, 면적 비율 비교로 wall 여부 판정.
+        '''
+        bg_res = get_bg(rect_rgb_msg,rect_depth_msg,rect_info_msg)
+        #p_marker = bridge.imgmsg_to_cv2(bg_res.p_marker, desired_encoding='bgr8')
+        #p_marker = bridge.imgmsg_to_cv2(bg_res.p_marker, desired_encoding='passthrough')
+        #p_mask = bridge.imgmsg_to_cv2(bg_res.p_mask, desired_encoding='passthrough')
+        #rect_depth = bridge.imgmsg_to_cv2(rect_depth_msg, desired_encoding='passthrough').copy()
+        #rect_depth[p_mask>0] = 0. # p_mask 1 for floor, 2 for wall
+        #rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
         t0 = time.time()
         edge_resp = predict_edge(rect_rgb_msg, rect_depth_msg, fx, fy)
-        obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.edge,
-                Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
+        obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.edge, rect_info_msg,
+                std_msgs.msg.String(cam_id), bg_res.p_mask)
         t1 = time.time()
-
-        if False:
-            w,h = obb_resp.marker.width, obb_resp.marker.height
-            marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32).reshape(h,w).copy()
-            boundary = GetBoundary(marker, 2)
-            dist = cv2.distanceTransform( (boundary<1).astype(np.uint8), distanceType=cv2.DIST_L2, maskSize=5)
-            #marker[dist < 10.] = 0
-            marker[dist < 15.] = 0
-
-            xyzrgb, labels = UnprojectPointscloud(rect_rgb,rect_depth,marker,rect_K,rect_D,leaf_xy=0.02,leaf_z=0.01)
-            A = Tfwc.astype(xyzrgb.dtype)
-            B = np.hstack( (xyzrgb[:,:3], np.ones((xyzrgb.shape[0],1),xyzrgb.dtype))).T
-            xyzrgb[:,:3] = np.matmul(A,B).T
-            xyz = xyzrgb[:,:3].reshape(-1,).tolist()
-            labels = labels.reshape(-1,).tolist()
-            #mvbb_resp = cgal_compute_obb(xyz,labels)
-            #ransac_resp = ransac_compute_obb(xyz,labels)
 
         if do_eval:
             outputlist, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb)

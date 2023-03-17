@@ -1,11 +1,9 @@
 sensor_msgs/Image depth
 sensor_msgs/Image rgb
 sensor_msgs/Image edge
-geometry_msgs/Pose Twc
+sensor_msgs/CameraInfo info
 std_msgs/String cam_id
-float32 fx
-float32 fy
-float32[] plane
+sensor_msgs/Image p_mask
 ---
 sensor_msgs/Image filtered_outline
 sensor_msgs/Image marker

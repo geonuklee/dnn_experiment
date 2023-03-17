@@ -1,5 +1,5 @@
 #include "ros_util.h"
-#include "ros_unet/SetCamera.h"
+//#include "ros_unet/SetCamera.h"
 #include "ros_unet/ComputeFloor.h"
 
 #include <ros/ros.h>
@@ -72,6 +72,7 @@ public:
     pub_mask = nh.advertise<sensor_msgs::Image>("floor",1); 
   }
 
+  /*
   bool SetCamera(ros_unet::SetCamera::Request  &req,
                  ros_unet::SetCamera::Response &res)
   {
@@ -101,6 +102,7 @@ public:
     }
     return true;
   }
+  */
 
   bool ComputeFloor(ros_unet::ComputeFloor::Request  &req,
                     ros_unet::ComputeFloor::Response &res)
@@ -194,8 +196,8 @@ int main(int argc, char **argv) {
   ros::NodeHandle nh("~");
   FloorDetector floor_detector(nh);
 
-  ros::ServiceServer s0
-    = nh.advertiseService("SetCamera", &FloorDetector::SetCamera, &floor_detector);
+  //ros::ServiceServer s0
+  //  = nh.advertiseService("SetCamera", &FloorDetector::SetCamera, &floor_detector);
 
   ros::ServiceServer s1
     = nh.advertiseService("ComputeFloor", &FloorDetector::ComputeFloor, &floor_detector);

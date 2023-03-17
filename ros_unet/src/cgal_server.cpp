@@ -9,8 +9,8 @@
 #include <g2o/types/slam3d/se3quat.h>
 
 #include "ros_util.h"
-#include "ros_unet/ClearCamera.h"
-#include "ros_unet/SetCamera.h"
+//#include "ros_unet/ClearCamera.h"
+//#include "ros_unet/SetCamera.h"
 #include "ros_unet/ComputePoints2Obb.h"
 #include "mask2obb.h"
 

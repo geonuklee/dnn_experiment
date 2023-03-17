@@ -1,28 +1,34 @@
 <launch>
-<arg name="verbose" default="false"/>
-<arg name="generate_points" default="true"/>
-<arg name="cameras" default="[0,]" />
-<arg name="sensor_model" default="helios"/>
-<arg name="voxel_leaf" value="0.01" />
-<arg name="euc_tolerance" value="0.1" />
-<arg name="filename" default=""/>
-<arg name="do_eval" default="false"/>
-<arg name="rgb"   default="/cam0/aligned/rgb_to_depth/image_raw"/>
-<arg name="depth" default="/cam0/helios2/depth/image_raw"/>
-<arg name="info"  default="/cam0/helios2/camera_info"/>
-<arg name="rviz_name" default="unet.rviz"/>
+  <arg name="verbose" default="false"/>
+  <arg name="generate_points" default="true"/>
+  <arg name="cameras" default="[0,]" />
+  <arg name="sensor_model" default="helios"/>
+  <arg name="voxel_leaf" value="0.01" />
+  <arg name="euc_tolerance" value="0.1" />
+  <arg name="filename" default=""/>
+  <arg name="do_eval" default="false"/>
+  <arg name="rgb"   default="/cam0/aligned/rgb_to_depth/image_raw"/>
+  <arg name="depth" default="/cam0/helios2/depth/image_raw"/>
+  <arg name="info"  default="/cam0/helios2/camera_info"/>
+  <arg name="rviz_name" default="unet.rviz"/>
 
-<!--arg name="weight_file" value="$(find ros_unet)/weights_big/iternet_9000.pth"/-->
-<arg name="weight_file" value="$(find ros_unet)/weights/iternet_9000.pth"/>
+  <arg name="debug" default="false" />
+  <arg unless="$(arg debug)" name="launch_prefix" value="" />
+  <arg     if="$(arg debug)" name="launch_prefix" value="gdb --args" />
 
-<node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
+
+  <!--arg name="weight_file" value="$(find ros_unet)/weights_big/iternet_9000.pth"/-->
+  <arg name="weight_file" value="$(find ros_unet)/weights/iternet_9000.pth"/>
+
+  <node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
     <rosparam subst_value="True">
       input_ch: 6
       weight_file: "$(arg weight_file)"
     </rosparam>
-</node>
+  </node>
 
-<node name="obb_server" pkg="ros_unet" type="obb_server" output="screen" required="true">
+  <node name="obb_server" pkg="ros_unet" type="obb_server" output="screen" required="true"
+    launch-prefix="$(arg launch_prefix)" >
     <rosparam subst_value="True">
       verbose: $(arg verbose)
       min_points_of_cluster: 5
@@ -31,34 +37,36 @@
       euc_tolerance: $(arg euc_tolerance)
       generate_points: $(arg generate_points)
     </rosparam>
-</node>
+  </node>
 
-<!--node name="cgal_server" pkg="ros_unet" type="cgal_server" output="screen" required="true">
+  <!--node name="cgal_server" pkg="ros_unet" type="cgal_server" output="screen" required="true">
     <rosparam subst_value="True">
-      verbose: $(arg verbose)
+    verbose: $(arg verbose)
     </rosparam>
-</node>
-<node name="ransac_server" pkg="ros_unet" type="ros_ransacobb_server.py" output="screen" required="true">
+    </node>
+    <node name="ransac_server" pkg="ros_unet" type="ros_ransacobb_server.py" output="screen" required="true">
     <rosparam subst_value="True">
-      verbose: $(arg verbose)
+    verbose: $(arg verbose)
     </rosparam>
-</node-->
+  </node-->
 
-<node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/>
-<node name="rosbag" pkg="rosbag" type="play" args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')">
-  <remap from="/cam0/helios2/camera_info_rect" to="/cam0/helios2/camera_info"/>
-  <remap from="/cam0/helios2/depth_rect"       to="/cam0/helios2/depth/image_raw"/>
-  <remap from="/cam0/helios2/rgb_rect"         to="/cam0/aligned/rgb_to_depth/image_raw"/>
-</node>
+  <!--node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/-->
 
-<node name="ros_client"  pkg="ros_unet" type="ros_client.py" output="screen" required="true">
+  <node name="rosbag" pkg="rosbag" type="play" args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')">
+    <remap from="/cam0/helios2/camera_info_rect" to="/cam0/helios2/camera_info"/>
+    <remap from="/cam0/helios2/depth_rect"       to="/cam0/helios2/depth/image_raw"/>
+    <remap from="/cam0/helios2/rgb_rect"         to="/cam0/aligned/rgb_to_depth/image_raw"/>
+  </node>
+
+  <node name="ros_client"  pkg="ros_unet" type="ros_client.py" output="screen" required="true">
     <remap from="~PredictEdge" to="/unet_server/PredictEdge" />
     <remap from="~SetCamera"   to="/obb_server/SetCamera" />
     <remap from="~ComputeObb"  to="/obb_server/ComputeObb" />
-    <remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
-    <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" />
+    <!--remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
+    <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" /-->
     <remap from="~Cgal/ComputeObb"  to="/cgal_server/ComputeObb" />
     <remap from="~Ransac/ComputeObb"  to="/ransac_server/ComputeObb" />
+    <remap from="~GetBg"  to="/ros_bg/GetBg"/>
 
     <remap from="~cam0/rgb"    to="$(arg rgb)" />
     <remap from="~cam0/depth"  to="$(arg depth)" />
@@ -69,30 +77,34 @@
       filename: "$(arg filename)"
       datasetnames: "obb_dataset_230303,obb_dataset_test0523"
     </rosparam>
-</node>
+  </node>
 
+  <node name="ros_bg"  pkg="ros_unet" type="ros_bg" output="screen" required="true">
+    <rosparam subst_value="True">
+      is_service: true 
+    </rosparam>
+    <remap from="~imu"   to="/cam0/k4a/imu"/>
+  </node>
 
-<node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>
-<arg name="load_config" default="true"/>
-<arg name="side" default="down"/>
-<group if="$(arg load_config)">
-  <node pkg="rostopic" type="rostopic" name="tilt"
-  args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
-  '{header: {seq: 0, stamp: {secs: 0, nsecs: 0}, frame_id: ''},
-    cam0_tilt: true,
-    cam1_tilt: true}' -r 10" required="true" if="$(eval side=='up')"/>
-  <node pkg="rostopic" type="rostopic" name="tilt"
-  args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
-  '{header: {seq: 0, stamp: {secs: 0, nsecs: 0}, frame_id: ''},
-    cam0_tilt: false,
-    cam1_tilt: false}' -r 10" required="true" if="$(eval side=='down')"/>
-  <node pkg="tf2_ros" type="static_transform_publisher" name="link0"
-  args="0 0 0 0 0 0 1 cam0_rgb_link cam0_rgb_camera_link"/>
-  <node pkg="tf2_ros" type="static_transform_publisher" name="link1"
-  args="0 0 0 0 0 0 1 cam1_rgb_link cam1_rgb_camera_link"/>
-</group>
-<include file="$(find unloader_calib)/launch/cam_tf_publisher.launch" if="$(arg load_config)"/>
-<rosparam command="load" file="$(find ros_unet)/config/calib_info_for_tf.yaml" if="$(arg load_config)"/>
-
-
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>
+  <!--arg name="load_config" default="true"/>
+  <arg name="side" default="down"/>
+  <group if="$(arg load_config)">
+    <node pkg="rostopic" type="rostopic" name="tilt"
+      args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
+      '{header: {seq: 0, stamp: {secs: 0, nsecs: 0}, frame_id: ''},
+      cam0_tilt: true,
+      cam1_tilt: true}' -r 10" required="true" if="$(eval side=='up')"/>
+    <node pkg="rostopic" type="rostopic" name="tilt"
+      args="pub /unloader/cam_tilt unloader_msgs/MultiarmPose 
+      '{header: {seq: 0, stamp: {secs: 0, nsecs: 0}, frame_id: ''},
+      cam0_tilt: false,
+      cam1_tilt: false}' -r 10" required="true" if="$(eval side=='down')"/>
+    <node pkg="tf2_ros" type="static_transform_publisher" name="link0"
+      args="0 0 0 0 0 0 1 cam0_rgb_link cam0_rgb_camera_link"/>
+    <node pkg="tf2_ros" type="static_transform_publisher" name="link1"
+      args="0 0 0 0 0 0 1 cam1_rgb_link cam1_rgb_camera_link"/>
+  </group>
+  <include file="$(find unloader_calib)/launch/cam_tf_publisher.launch" if="$(arg load_config)"/>
+  <rosparam command="load" file="$(find ros_unet)/config/calib_info_for_tf.yaml" if="$(arg load_config)"/-->
 </launch>
