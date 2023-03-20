@@ -141,7 +141,7 @@ void ObbEstimator::GetSegmentedCloud(cv::Mat rgb,
                                      std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds,
                                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb
                                     ){
-  const float max_depth = 5.; // TODO Paramterize
+  const float max_depth = 10.; // TODO Helio2 depthmap API에 기술된 bit flag..
 
   // Unproject xyzrgb, segmented_clouds, boundary_clouds
 
@@ -387,6 +387,8 @@ void ObbEstimator::GetSegmentedCloud(cv::Mat rgb,
     for(int r = 0; r < depth.rows; r++){
       for(int c = 0; c < depth.cols; c++){
         float z0 = depth.at<float>(r,c);
+        if(z0 < 0.000001 || z0 > max_depth)
+          continue;
         cv::Point2f uv = GetUV(r,c);
         Eigen::Vector3d Xc(uv.x * z0, uv.y*z0, z0);
         // Eigen::Vector3d Xw = Twc * Xc;
