@@ -40,7 +40,8 @@ def get_topicnames(bagfn, bag, given_camid='cam0'):
         rgb   = '/%s/helios2/rgb_rect'%given_camid
         depth = '/%s/helios2/depth_rect'%given_camid
         info  = '/%s/helios2/camera_info_rect'%given_camid
-    return rgb, depth, info
+    imu = '/%s/k4a/imu'%given_camid
+    return rgb, depth, info, imu
 
 
 def get_pick(fn):
@@ -703,14 +704,17 @@ class Evaluator:
                 all_oversegment_stats
 
 class SceneEval:
-    def __init__(self, pick, Twc, plane_c, max_z, cam_id):
+    def __init__(self, pick, plane_c, max_z, cam_id, frame_id):
         self.gt_marker = pick['marker']
         self.pick = pick
-        # Convert OBB to world(frame_id='robot) coordinate.
-        q,t = Twc.orientation, Twc.position
-        Rwc = rotation_util.from_quat([q.x, q.y, q.z, q.w])
-        twc = np.array((t.x,t.y,t.z))
-        self.Twc = (Rwc, twc)
+
+        Rwc = rotation_util.from_quat([0.,0.,0.,1.])
+        twc = np.array((0.,0.,0.))
+        #q,t = Twc.orientation, Twc.position
+        #Rwc = rotation_util.from_quat([q.x, q.y, q.z, q.w])
+        #twc = np.array((t.x,t.y,t.z))
+        self.Twc = (Rwc, twc) # TODO Erase it?
+        self.frame_id = frame_id
 
         gt_obbs = {}
         plane_c = np.array(plane_c)
@@ -748,7 +752,7 @@ class SceneEval:
 
 
     def pubGtObb(self):
-        center_poses0, obj_array0 = VisualizeGt(self.gt_obbs)
+        center_poses0, obj_array0 = VisualizeGt(self.gt_obbs, self.frame_id)
         gt_info = MarkerArray()
         for obj in obj_array0.markers:
             info = Marker()
@@ -758,7 +762,7 @@ class SceneEval:
             info.scale.z = 0.04
             info.color.r = info.color.g = info.color.b = 1.
             info.color.a = 1.
-            info.header.frame_id = "robot"
+            info.header.frame_id = self.frame_id
             info.pose = obj.pose
             gt_info.markers.append(info)
 
@@ -828,7 +832,7 @@ class FrameEval:
         (rwc, twc) = self.scene_eval.Twc
         rcw , tcw = rwc.inv(), -np.matmul(rwc.inv().as_dcm(), twc)
 
-        center_poses0, obj_array0 = VisualizeGt(self.scene_eval.gt_obbs)
+        center_poses0, obj_array0 = VisualizeGt(self.scene_eval.gt_obbs, self.frame_id)
         markers0 = {}
         for marker in obj_array0.markers:
             markers0[marker.id] = marker
@@ -1000,7 +1004,7 @@ class FrameEval:
 
     def GetMatches(self, obj_array1):
         gt_obbs = self.scene_eval.gt_obbs
-        center_poses0, obj_array0 = VisualizeGt(gt_obbs)
+        center_poses0, obj_array0 = VisualizeGt(gt_obbs, self.frame_id)
         correspondence = GetCorrespondenceMarker()
         infos = MarkerArray()
         marker_optmized_gt = MarkerArray()
@@ -1174,9 +1178,9 @@ def GetSurfCenterPoint(marker, daxis):
     scale = (marker.scale.x, marker.scale.y, marker.scale.z)
     return GetSurfCenterPoint0(pose, scale, daxis)
 
-def VisualizeGt(gt_obbs, posename='pose_wb'):
+def VisualizeGt(gt_obbs, frame_id, posename='pose_wb'):
     poses = PoseArray()
-    poses.header.frame_id = 'robot'
+    poses.header.frame_id = frame_id
     markers = MarkerArray()
 
     for i, obj in gt_obbs.items():

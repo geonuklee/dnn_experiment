@@ -10,6 +10,7 @@
   <arg name="rgb"   default="/cam0/aligned/rgb_to_depth/image_raw"/>
   <arg name="depth" default="/cam0/helios2/depth/image_raw"/>
   <arg name="info"  default="/cam0/helios2/camera_info"/>
+  <arg name="imu"   default="/cam0/k4a/imu"/>
   <arg name="rviz_name" default="unet.rviz"/>
 
   <arg name="debug" default="false" />
@@ -27,8 +28,7 @@
     </rosparam>
   </node>
 
-  <node name="obb_server" pkg="ros_unet" type="obb_server" output="screen" required="true"
-    launch-prefix="$(arg launch_prefix)" >
+  <node name="obb_server" pkg="ros_unet" type="obb_server" output="screen" required="true">
     <rosparam subst_value="True">
       verbose: $(arg verbose)
       min_points_of_cluster: 5
@@ -50,9 +50,8 @@
     </rosparam>
   </node-->
 
-  <!--node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/-->
-
-  <node name="rosbag" pkg="rosbag" type="play" args="-r 0.5 --loop $(arg filename)" required="true" unless="$(eval filename=='')">
+  <param name="/use_sim_time" value="true"/>
+  <node name="rosbag" pkg="rosbag" type="play" args="-r 0.5 --loop --clock $(arg filename)" required="true" unless="$(eval filename=='')">
     <remap from="/cam0/helios2/camera_info_rect" to="/cam0/helios2/camera_info"/>
     <remap from="/cam0/helios2/depth_rect"       to="/cam0/helios2/depth/image_raw"/>
     <remap from="/cam0/helios2/rgb_rect"         to="/cam0/aligned/rgb_to_depth/image_raw"/>
@@ -71,6 +70,7 @@
     <remap from="~cam0/rgb"    to="$(arg rgb)" />
     <remap from="~cam0/depth"  to="$(arg depth)" />
     <remap from="~cam0/info"   to="$(arg info)" />
+    <remap from="~cam0/imu"    to="$(arg imu)" />
 
     <rosparam subst_value="True">
       do_eval: "$(arg do_eval)"
@@ -79,14 +79,17 @@
     </rosparam>
   </node>
 
-  <node name="ros_bg"  pkg="ros_unet" type="ros_bg" output="screen" required="true">
+  <node name="ros_bg"  pkg="ros_unet" type="ros_bg" output="screen" required="true"
+    launch-prefix="$(arg launch_prefix)" >
     <rosparam subst_value="True">
-      is_service: true 
+      is_service: true
     </rosparam>
-    <remap from="~imu"   to="/cam0/k4a/imu"/>
   </node>
 
   <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>
+  <!--node pkg="tf2_ros" type="static_transform_publisher" name="link0"
+      args="0 0 0 0 0 0 1  cam0_arena_camera robot"/-->
+
   <!--arg name="load_config" default="true"/>
   <arg name="side" default="down"/>
   <group if="$(arg load_config)">

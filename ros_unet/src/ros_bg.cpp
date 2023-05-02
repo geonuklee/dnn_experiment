@@ -475,8 +475,7 @@ public:
     rgb_sub_(nh.subscribe<sensor_msgs::Image>("rgb", 1, &BgDetector::rgbCallback, this)),
     depth_sub_(nh.subscribe<sensor_msgs::Image>("depth", 1, &BgDetector::depthCallback, this)),
     camera_info_sub_(nh.subscribe<sensor_msgs::CameraInfo>("info", 1, &BgDetector::cameraInfoCallback, this)),
-    imu_sub_(nh.subscribe<sensor_msgs::Imu>("imu",1, &BgDetector::imuCallback, this)),
-    linear_acc_(new Eigen::Vector3d)
+    linear_acc_(new Eigen::Vector3d(0,-1.,0.))
   {
     pub_points_ = nh_.advertise<sensor_msgs::PointCloud2>("points", 1);
     pub_rg_ = nh_.advertise<sensor_msgs::PointCloud2>("rg", 1);
@@ -498,6 +497,9 @@ public:
     }
     { sensor_msgs::CameraInfoConstPtr ptr = boost::make_shared<const sensor_msgs::CameraInfo>(req.info);
       cameraInfoCallback(ptr);
+    }
+    { sensor_msgs::ImuConstPtr ptr = boost::make_shared<const sensor_msgs::Imu>(req.imu);
+      imuCallback(ptr);
     }
     /*
     ros::Rate rate(10);
@@ -637,47 +639,46 @@ public:
     return true;
   }
 
-private:
   void imuCallback(const sensor_msgs::ImuConstPtr& imu_msg){
     if(frame_id_.empty())
       return;
-    //ROS_INFO_STREAM("IMU0 = " << imu_msg->linear_acceleration);
-    static tf2_ros::Buffer tf_buffer;
-    static tf2_ros::TransformListener tf_listener(tf_buffer);
-    try {
-      //ROS_INFO_STREAM("frame_id_ = " << imu_msg->header.frame_id << "->" << frame_id_);
-      // Get the transform from base_link to map
-      geometry_msgs::TransformStamped transform = 
-        tf_buffer.lookupTransform(frame_id_, imu_msg->header.frame_id, ros::Time(0));
+    // TODO linear_acc_
+    tf2_ros::Buffer tfbuffer;
+    tf2_ros::TransformListener tfListener(tfbuffer);
 
-      Eigen::Quaterniond quat;
-      quat.x() = transform.transform.rotation.x;
-      quat.y() = transform.transform.rotation.y;
-      quat.z() = transform.transform.rotation.z;
-      quat.w() = transform.transform.rotation.w;
-      Eigen::Vector3d acc0(imu_msg->linear_acceleration.x,
-                          imu_msg->linear_acceleration.y,
-                          imu_msg->linear_acceleration.z);
-      *linear_acc_ = quat * acc0;
-
-      // Create a new IMU message with the transformed orientation
-      if(!frame_id_.empty()){
-        sensor_msgs::Imu imu_transformed = *imu_msg;
-        imu_transformed.header.frame_id = frame_id_;
-        imu_transformed.linear_acceleration.x = linear_acc_->x();
-        imu_transformed.linear_acceleration.y = linear_acc_->y();
-        imu_transformed.linear_acceleration.z = linear_acc_->z();
-        pub_imu_.publish(imu_transformed);
-      }
-      // Publish the transformed IMU message
-      // imu_transformed_pub.publish(imu_transformed);
+    // Wait for the required publication to be available
+    ros::Duration duration(-1);
+    ros::Time now = ros::Time(0);
+    int n_try = 0;
+    while(!tfbuffer.canTransform(frame_id_, imu_msg->header.frame_id, now)) {
+      ros::Duration(0.1).sleep();
+      if(n_try++ > 10)
+        ROS_INFO("Waiting for transform from %s to %s", imu_msg->header.frame_id.c_str(), frame_id_.c_str());
+      now = ros::Time::now();
     }
-    catch (tf2::TransformException& ex) {
-      ROS_INFO("Could not transform IMU data: %s", ex.what());
+    geometry_msgs::TransformStamped transform;
+    try{
+      transform = tfbuffer.lookupTransform(frame_id_, imu_msg->header.frame_id, now);
     }
+    catch (tf2::TransformException &ex) {
+      ROS_ERROR("%s",ex.what());
+      exit(1);
+    }
+    Eigen::Quaterniond quat;
+    //ROS_INFO_STREAM("quat = " << transform.transform.rotation);
+    quat.x() = transform.transform.rotation.x;
+    quat.y() = transform.transform.rotation.y;
+    quat.z() = transform.transform.rotation.z;
+    quat.w() = transform.transform.rotation.w;
+    Eigen::Vector3d acc0(imu_msg->linear_acceleration.x,
+                         imu_msg->linear_acceleration.y,
+                         imu_msg->linear_acceleration.z);
+    *linear_acc_ = quat * acc0;
+    ROS_INFO_STREAM(linear_acc_->transpose());
     return;
   }
 
+private:
   void rgbCallback(const sensor_msgs::ImageConstPtr& msg) {
     cv_bridge::CvImagePtr cv_ptr;
     try {
@@ -745,7 +746,7 @@ private:
   }
 
   ros::NodeHandle nh_;
-  ros::Subscriber rgb_sub_, depth_sub_, camera_info_sub_, imu_sub_;
+  ros::Subscriber rgb_sub_, depth_sub_, camera_info_sub_;
   ros::Publisher pub_points_, pub_rg_, pub_imu_, pub_planeseg_, pub_bgmask_;
 
   Eigen::Vector3d* linear_acc_;
@@ -770,7 +771,12 @@ int main(int argc, char **argv) {
   }
   else{
     ros::Rate rate(2.);
+
+    ros::Subscriber imu_sub_(nh.subscribe<sensor_msgs::Imu>("imu",1, &BgDetector::imuCallback,
+                                                            &bg_detector));
+
     while(!ros::isShuttingDown()){
+      // TODO IMU sub here
       rate.sleep();
       ros_unet::GetBg::Response res;
       auto t0 = std::chrono::high_resolution_clock::now();

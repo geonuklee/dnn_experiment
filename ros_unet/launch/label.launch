@@ -3,7 +3,7 @@
 <arg name="target" default="test"/>
 <arg name="rosbag_subnames" default="test0523,"/>
 
-<node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/>
+<!--node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/-->
 <node name="labeling" pkg="ros_unet" type="labeling.py" output="screen" required="true">
     <remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
     <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" />
@@ -13,7 +13,7 @@
 </node>
 
 <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>
-<arg name="load_config" default="true"/>
+<!--arg name="load_config" default="true"/>
 <arg name="side" default="down"/>
 <group if="$(arg load_config)">
   <node pkg="rostopic" type="rostopic" name="tilt"
@@ -32,8 +32,7 @@
   args="0 0 0 0 0 0 1 cam1_rgb_link cam1_rgb_camera_link"/>
 </group>
 <include file="$(find unloader_calib)/launch/cam_tf_publisher.launch" if="$(arg load_config)"/>
-<rosparam command="load" file="$(find ros_unet)/config/calib_info_for_tf.yaml" if="$(arg load_config)"/>
-
+<rosparam command="load" file="$(find ros_unet)/config/calib_info_for_tf.yaml" if="$(arg load_config)"/-->
 
 </launch>
  

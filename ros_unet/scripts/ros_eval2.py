@@ -18,6 +18,10 @@ from cv_bridge import CvBridge
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import PoseArray, Pose
 
+#from tf2_msgs.msg import TFMessage
+import tf2_ros
+from geometry_msgs.msg import TransformStamped
+
 from scipy.spatial.transform import Rotation as rotation_util
 from collections import OrderedDict as Od
 
@@ -64,15 +68,16 @@ def get_camid(fn):
     groups = re.findall("(.*)_(cam0|cam1)", base)[0]
     return groups[1]
 
-def get_topics(bridge, pkg_dir,gt_fn, pick, set_cameras,floordetector_set_camera, compute_floor):
+def get_topics(bridge, pkg_dir,gt_fn, pick):
     rosbag_fn = osp.join(pkg_dir, pick['rosbag_fn'] )
     bag = rosbag.Bag(rosbag_fn)
     rgb_topics, depth_topics, info_topics = {},{},{}
+    imu_topics = {}
     rect_info_msgs = {}
     remap_maps = {}
     cameras = [get_camid(gt_fn)] # For each file test.
     for cam_id in cameras:
-        rgb_topics[cam_id], depth_topics[cam_id], info_topics[cam_id] \
+        rgb_topics[cam_id], depth_topics[cam_id], info_topics[cam_id], imu_topics[cam_id] \
                 = get_topicnames(rosbag_fn, bag, given_camid=cam_id)
         try:
             _, rgb_msg, _ = bag.read_messages(topics=[rgb_topics[cam_id]]).next()
@@ -82,10 +87,7 @@ def get_topics(bridge, pkg_dir,gt_fn, pick, set_cameras,floordetector_set_camera
             continue
         rect_info_msgs[cam_id], mx, my = get_rectification(info_msg)
         remap_maps[cam_id] = (mx, my)
-        for set_camera in set_cameras:
-            set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
-        floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msgs[cam_id])
-    rgb_msgs, depth_msgs  = {}, {}
+    rgb_msgs, depth_msgs, imu_msgs  = {}, {}, {}
     topic2cam = {}
     for k,v in rgb_topics.items():
         rgb_msgs[k] = None
@@ -93,28 +95,33 @@ def get_topics(bridge, pkg_dir,gt_fn, pick, set_cameras,floordetector_set_camera
     for k,v in depth_topics.items():
         depth_msgs[k] = None
         topic2cam[v] = k
+    for k,v in imu_topics.items():
+        imu_msgs[k] = None
+        topic2cam[v] = k
+
     set_depth = set(depth_topics.values())
     set_rgb = set(rgb_topics.values())
+    set_imu = set(imu_topics.values())
     fx, fy = rect_info_msgs[cam_id].K[0], rect_info_msgs[cam_id].K[4]
 
     rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb = rectify(rgb_msg, depth_msg, mx, my, bridge)
-    cvgt_fn = osp.join(pkg_dir,pick['cvgt_fn'])
-    cv_gt = cv2.imread(cvgt_fn)
-    max_z = 5.
-    init_floormask = GetInitFloorMask(cv_gt)
-    if init_floormask is None:
-        plane_c = (0., 0., 0., 99.)
-        floor = np.zeros((rect_depth_msg.height,rect_depth_msg.width),np.uint8)
-    else:
-        floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
-        plane_c  = floor_msg.plane
-        floor_mask = floor_msg.mask
-        floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
-    Twc = get_Twc(cam_id)
+    #cvgt_fn = osp.join(pkg_dir,pick['cvgt_fn'])
+    #cv_gt = cv2.imread(cvgt_fn)
+    #max_z = 5.
+    #init_floormask = GetInitFloorMask(cv_gt)
+    #if init_floormask is None:
+    #    plane_c = (0., 0., 0., 99.)
+    #    floor = np.zeros((rect_depth_msg.height,rect_depth_msg.width),np.uint8)
+    #else:
+    #    floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
+    #    plane_c  = floor_msg.plane
+    #    floor_mask = floor_msg.mask
+    #    floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
+    #Twc = get_Twc(cam_id)
 
     bag = rosbag.Bag(rosbag_fn)
-    return bag, set_depth, set_rgb, topic2cam, rgb_topics, depth_topics, rgb_msgs, depth_msgs,\
-            rect_info_msgs, mx, my, fx, fy, Twc, plane_c, floor
+    return bag, set_depth, set_rgb, set_imu, topic2cam, rgb_topics, depth_topics, imu_topics, rgb_msgs, depth_msgs, imu_msgs,\
+            rect_info_msgs, mx, my, fx, fy#, Twc, plane_c, floor
 
 def visualize_scene(pick, eval_scene):
     gt_indices = np.unique(eval_scene['gidx'])
@@ -994,18 +1001,14 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
     rospy.loginfo("Waiting PredictEdge")
     rospy.wait_for_service('~PredictEdge')
     predict_edge = rospy.ServiceProxy('~PredictEdge', ros_unet.srv.ComputeEdge)
-    rospy.loginfo("Waiting SetCamera")
-    rospy.wait_for_service('~SetCamera')
-    set_camera = rospy.ServiceProxy('~SetCamera', ros_unet.srv.SetCamera)
     rospy.loginfo("Waiting ComputeObb")
     rospy.wait_for_service('~ComputeObb')
     compute_obb = rospy.ServiceProxy('~ComputeObb', ros_unet.srv.ComputeObb)
     bridge = CvBridge()
-    rospy.loginfo("Waiting FloorDetector")
-    rospy.wait_for_service('~FloorDetector/SetCamera')
-    floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
-    rospy.wait_for_service('~FloorDetector/ComputeFloor')
-    compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
+
+    rospy.loginfo("Waiting GetBg")
+    rospy.wait_for_service('~GetBg')
+    get_bg = rospy.ServiceProxy('~GetBg', ros_unet.srv.GetBg)
 
     rospy.loginfo("Waiting Cgal")
     rospy.wait_for_service('~Cgal/ComputeObb')
@@ -1040,49 +1043,77 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
             ]
 
     eval_data = None
+    br = tf2_ros.StaticTransformBroadcaster()
+
     for i_file, gt_fn in enumerate(gt_files):
         #print(gt_fn)
         pick = get_pick(gt_fn)
         base = osp.splitext(osp.basename(pick['rosbag_fn']))[0]
-        bag, set_depth, set_rgb, topic2cam, rgb_topics, depth_topics, rgb_msgs, depth_msgs,\
-                rect_info_msgs, mx, my, fx, fy, Twc, plane_c, floor = \
-                get_topics(bridge,pkg_dir,gt_fn, pick,
-                        [set_camera,],
-                        floordetector_set_camera, compute_floor)
-        Tfwc = convert2tf(Twc)
+        bag, set_depth, set_rgb, set_imu, topic2cam, rgb_topics, depth_topics, imu_topics, rgb_msgs, depth_msgs, imu_msgs,\
+                rect_info_msgs, mx, my, fx, fy = \
+                get_topics(bridge,pkg_dir,gt_fn, pick)
+        #Tfwc = convert2tf(Twc)
         gt_obbs = {}
         for obb in pick['obbs']:
             gt_obbs[obb['id']] = obb
-        gt_obb_poses, gt_obb_markers = VisualizeGt(gt_obbs)
-        a = Marker()
-        a.action = Marker.DELETEALL
-        for arr in [gt_obb_markers]: # ,gt_infos
-            arr.markers.append(a)
-            arr.markers.reverse()
+
+        gt_obb_markers = None
 
         eval_scene, nframe = [], 0
-        for topic, msg, t in bag.read_messages(topics=rgb_topics.values()+depth_topics.values()):
+        transforms = {}
+        for topic, msg, t in bag.read_messages(topics=['/tf', '/tf_static']):
+            for tf in msg.transforms:
+                transforms['%s-%s'%(tf.header.frame_id, tf.child_frame_id)] = tf
+
+        for topic, msg, t in bag.read_messages(topics=rgb_topics.values()\
+                                                      +depth_topics.values()\
+                                                      +imu_topics.values() ):
             cam_id = topic2cam[topic]
             if topic in set_depth:
                 depth_msgs[cam_id] = msg
             elif topic in set_rgb:
                 rgb_msgs[cam_id] = msg
+            elif topic in set_imu:
+                imu_msgs[cam_id] = msg
 
-            rgb_msg, depth_msg = rgb_msgs[cam_id], depth_msgs[cam_id]
-            if depth_msg is None or rgb_msg is None:
+            rgb_msg, depth_msg, imu_msg = rgb_msgs[cam_id], depth_msgs[cam_id], imu_msgs[cam_id]
+            if depth_msg is None or rgb_msg is None or imu_msg is None:
                 continue
+            if gt_obb_markers is None:
+                cam_frame_id = rgb_msgs[cam_id].header.frame_id
+                gt_obb_poses, gt_obb_markers = VisualizeGt(gt_obbs, frame_id=cam_frame_id)
+                a = Marker()
+                a.action = Marker.DELETEALL
+                for arr in [gt_obb_markers]: # ,gt_infos
+                    arr.markers.append(a)
+                    arr.markers.reverse()
+
             rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb = rectify(rgb_msg, depth_msg, mx, my, bridge)
+            rect_info_msg = rect_info_msgs[cam_id]
             rect_K = np.array(rect_info_msgs[cam_id].K,np.float).reshape((3,3))
             rect_D = np.array(rect_info_msgs[cam_id].D,np.float).reshape((-1,))
 
-            #rect_depth[floor>0] = 0.
-            #rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
+            now = rospy.Time.now()
+            tf_lists = []
+            for k,v in transforms.items():
+                if k  == 'cam0_depth_camera_link-cam0_imu_link':
+                    continue
+                tf = TransformStamped()
+                tf.header.frame_id = v.header.frame_id
+                tf.header.stamp = now
+                tf.child_frame_id = v.child_frame_id
+                #tf.transform.translation= v.transform.translation
+                #tf.transform.rotation= v.transform.rotation
+                tf.transform = v.transform
+                tf_lists.append(tf)
+            br.sendTransform(tf_lists)
 
             t0 = time.time()
             edge_resp = predict_edge(rect_rgb_msg,rect_depth_msg, fx, fy)
-            plane_w = convert_plane(Twc, plane_c) # empty plane = no floor filter.
-            obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.edge,
-                    Twc, std_msgs.msg.String(cam_id), fx, fy, plane_w)
+            # TODO Need to publish 'tf' before get_bg
+            bg_res = get_bg(rect_rgb_msg,rect_depth_msg,rect_info_msg,imu_msg)
+            obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.edge, rect_info_msg,
+                    std_msgs.msg.String(cam_id), bg_res.p_mask)
             t1 = time.time()
 
             if 'mvbb' in methods or 'ransac' in methods:

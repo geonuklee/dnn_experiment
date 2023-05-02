@@ -93,10 +93,10 @@ if __name__=="__main__":
 
     cam_id = 0
 
-    rospy.wait_for_service('~FloorDetector/SetCamera')
-    floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
-    rospy.wait_for_service('~FloorDetector/ComputeFloor')
-    compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
+    #rospy.wait_for_service('~FloorDetector/SetCamera')
+    #floordetector_set_camera = rospy.ServiceProxy('~FloorDetector/SetCamera', ros_unet.srv.SetCamera)
+    #rospy.wait_for_service('~FloorDetector/ComputeFloor')
+    #compute_floor = rospy.ServiceProxy('~FloorDetector/ComputeFloor', ros_unet.srv.ComputeFloor)
     pub_marker = rospy.Publisher("~marker", rosImage, queue_size=1)
     pub_edges = rospy.Publisher("~edges", rosImage, queue_size=1)
     pub_planes = rospy.Publisher("~planes", rosImage, queue_size=1)
@@ -120,7 +120,6 @@ if __name__=="__main__":
             continue
         cam_id = 'cam0'
         gt_fn = osp.join(obbdatasetpath, '%s_%s.pick'%(basename, cam_id) )
-        Twc = get_Twc(cam_id)
 
         #bag = rosbag.Bag(pick['fullfn'])
         bag = rosbag.Bag(fullfn)
@@ -131,8 +130,10 @@ if __name__=="__main__":
         _, info_msg, _= bag.read_messages(topics=[info_topic]).next()
         rect_info_msg, mx, my = get_rectification(info_msg)
         rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb = rectify(rgb_msg, depth_msg, mx, my, bridge)
+        cam_frame_id = rect_rgb_msg.header.frame_id
+        rospy.loginfo("cam_frame_id=%s"%cam_frame_id)
     
-        floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msg)
+        #floordetector_set_camera(std_msgs.msg.String(cam_id), rect_info_msg)
 
         reedit = False
         while not rospy.is_shutdown():
@@ -164,7 +165,7 @@ if __name__=="__main__":
                 else:
                     plane_c = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask).plane
                 try:
-                    scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
+                    scene_eval = SceneEval(pick, plane_c, max_z, cam_id, frame_id=cam_frame_id)
                 except:
                     callout = subprocess.call(['kolourpaint', label_fn] )
                     exit(1)
@@ -200,7 +201,7 @@ if __name__=="__main__":
                 plane_c = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask).plane
 
             # 3) show obb
-            scene_eval = SceneEval(pick, Twc, plane_c, max_z, cam_id)
+            scene_eval = SceneEval(pick, plane_c, max_z, cam_id, frame_id=cam_frame_id)
             ShowObb(scene_eval, pub_marker,pub_edges,pub_planes, pick)
             with open(gt_fn, "wb" ) as f:
                 pickle.dump(pick, f, protocol=2)

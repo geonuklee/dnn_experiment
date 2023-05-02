@@ -47,14 +47,20 @@
     </rosparam>
 </node>
 
-<node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/>
+<!--node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/-->
+<node name="ros_bg"  pkg="ros_unet" type="ros_bg" output="screen" required="true">
+  <rosparam subst_value="True">
+    is_service: true
+  </rosparam>
+</node>
 
 <node name="evaluator"  pkg="ros_unet" type="ros_eval2.py" output="screen" required="true">
     <remap from="~PredictEdge" to="/unet_server/PredictEdge" />
     <remap from="~SetCamera"   to="/obb_server/SetCamera" />
     <remap from="~ComputeObb"  to="/obb_server/ComputeObb" />
-    <remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
-    <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" />
+    <!--remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
+    <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" /-->
+    <remap from="~GetBg"  to="/ros_bg/GetBg"/>
     <remap from="~Cgal/ComputeObb"  to="/cgal_server/ComputeObb" />
     <remap from="~Ransac/ComputeObb"  to="/ransac_server/ComputeObb" />
     <param name="~nframe_per_scene" type="int" value="$(arg nframe_per_scene)"/>
@@ -68,7 +74,7 @@
 </node>
 
 <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ros_unet)/rviz/$(arg rviz_name)" required="true"/>
-<arg name="load_config" default="true"/>
+<!--arg name="load_config" default="true"/>
 <arg name="side" default="down"/>
 <group if="$(arg load_config)">
   <node pkg="rostopic" type="rostopic" name="tilt"
@@ -87,7 +93,8 @@
   args="0 0 0 0 0 0 1 cam1_rgb_link cam1_rgb_camera_link"/>
 </group>
 <include file="$(find unloader_calib)/launch/cam_tf_publisher.launch" if="$(arg load_config)"/>
-<rosparam command="load" file="$(find ros_unet)/config/calib_info_for_tf.yaml" if="$(arg load_config)"/>
-
+<rosparam command="load" file="$(find ros_unet)/config/calib_info_for_tf.yaml" if="$(arg load_config)"/-->
+<!--node pkg="tf2_ros" type="static_transform_publisher" name="link0"
+  args="0 0 0 0 0 0 1  cam0_arena_camera robot"/-->
 
 </launch>

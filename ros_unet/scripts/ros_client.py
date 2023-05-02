@@ -11,7 +11,7 @@ import numpy as np
 import rosbag
 import ros_unet.srv
 
-from sensor_msgs.msg import Image, CameraInfo
+from sensor_msgs.msg import Image, CameraInfo, Imu
 import geometry_msgs, std_msgs
 import cv2
 from cv_bridge import CvBridge
@@ -96,14 +96,29 @@ def rectify(rgb_msg, depth_msg, mx, my, bridge):
     rect_rgb_msg.header.frame_id = rect_depth_msg.header.frame_id = rgb_msg.header.frame_id
     return rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb
 
+#def get_Twc(cam_id):
+#    rate = rospy.Rate(2)
+#    while True:
+#        Twc = rospy.get_param("/%s/base_T_cam"%cam_id, None)
+#        if Twc is not None:
+#            break
+#        rate.sleep()
+#    pose = convert2pose(Twc)
+#    return pose
+
 class Sub:
-    def __init__(self, rgb, depth, info):
+    def __init__(self, rgb, depth, info, imu):
         self.sub_depth = rospy.Subscriber(depth, Image, self.cb_depth, queue_size=1)
         self.sub_rgb   = rospy.Subscriber(rgb, Image, self.cb_rgb, queue_size=1)
         self.sub_info  = rospy.Subscriber(info, CameraInfo, self.cb_info, queue_size=1)
+        self.sub_imu   = rospy.Subscriber(imu, Imu, self.cb_imu, queue_size=1)
         self.depth = None
         self.rgb = None
         self.info = None
+        self.imu = None
+
+    def cb_imu(self, msg):
+        self.imu = msg
 
     def cb_depth(self, msg):
         self.depth = msg
@@ -162,7 +177,7 @@ if __name__=="__main__":
 
     bridge = CvBridge()
     cam_id = "cam0"
-    sub = Sub("~%s/rgb"%cam_id, "~%s/depth"%cam_id, "~%s/info"%cam_id)
+    sub = Sub("~%s/rgb"%cam_id, "~%s/depth"%cam_id, "~%s/info"%cam_id, "~%s/imu"%cam_id)
     rect_info_msgs = {}
 
     rate = rospy.Rate(hz=30)
@@ -173,7 +188,7 @@ if __name__=="__main__":
         break
 
     while not rospy.is_shutdown():
-        if sub.rgb is None or sub.depth is None or sub.info is None:
+        if sub.rgb is None or sub.depth is None or sub.info is None or sub.imu is None:
             continue
         # TODO Hard code for test with old data
         if sub.rgb.header.frame_id == 'arena_camera':
@@ -190,7 +205,7 @@ if __name__=="__main__":
         1) floor, too far에 있는 OBB는 필터링.
         2) wall을 이루는 OBB의 숫자, 크기, 평행 여부, 면적 비율 비교로 wall 여부 판정.
         '''
-        bg_res = get_bg(rect_rgb_msg,rect_depth_msg,rect_info_msg)
+        bg_res = get_bg(rect_rgb_msg,rect_depth_msg,rect_info_msg,sub.imu)
         #p_marker = bridge.imgmsg_to_cv2(bg_res.p_marker, desired_encoding='bgr8')
         #p_marker = bridge.imgmsg_to_cv2(bg_res.p_marker, desired_encoding='passthrough')
         #p_mask = bridge.imgmsg_to_cv2(bg_res.p_mask, desired_encoding='passthrough')
