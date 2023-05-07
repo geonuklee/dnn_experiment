@@ -69,7 +69,7 @@ void Unproject(cv::Mat depth,
       const float& nu = nu_map.at<float>(r,c);
       const float& nv = nv_map.at<float>(r,c);
       pcl::PointXYZL pt;
-      pt.x = nu*z; pt.y = nv*z; pt.z = z; pt.label = -1;
+      pt.x = nu*z; pt.y = nv*z; pt.z = z; pt.label = 0;
       cloud->points.push_back(pt);
       uvs.push_back(cv::Point2i(c,r));
     }
@@ -265,6 +265,7 @@ void planeCluster(const std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr >& cl
 }
 
 size_t getNumberOfPointsBehindPlane(pcl::search::Search<pcl::PointXYZL>::Ptr sparse_tree,
+                                    const std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr >& p_clusters,
                                     pcl::PointCloud<pcl::PointXYZL>::ConstPtr plane_cloud,
                                     const Eigen::Vector4f& coeff,
                                     int plane_label,
@@ -283,6 +284,10 @@ size_t getNumberOfPointsBehindPlane(pcl::search::Search<pcl::PointXYZL>::Ptr spa
       const auto& pt1 = sparse_cloud->at(i);
       if(pt1.label==plane_label)
         continue;
+      if(pt1.label < 1)
+        continue;
+      if(p_clusters.at(pt1.label)->size() < 10)
+        continue;
       float d = coeff.dot(Eigen::Vector4f(pt1.x,pt1.y,pt1.z,1.));
       if(d + distance_th < 0.)
         n++;
@@ -292,19 +297,18 @@ size_t getNumberOfPointsBehindPlane(pcl::search::Search<pcl::PointXYZL>::Ptr spa
 }
 
 void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clusters,
-                     pcl::search::Search<pcl::PointXYZL>::Ptr sparse_tree,
+                     pcl::search::Search<pcl::PointXYZL>::Ptr p_tree,
                      const EigenMap<int, Eigen::Vector4f>& p_coeffs,
                      const cv::Mat marker,
                      const Eigen::Vector3f& floor_norm_prediction,
                      bool given_imu,
-                     int& l_floor,
+                     const Eigen::Vector3d& linear_acc,
                      std::vector<int>& l_walls,
                      cv::Mat& mask
                        ){
   /*
     outermost_plane 중에서 l_floor, l_ceiling 찾아내는게 목적.
   */
-  const float distance_th = .05;
   const float perpen_th = std::sin(M_PI/180.*80.); // 90deg에 가까울수록 엄밀한,
   const float voxel_leaf = 0.1;
   std::set<int> outermost_planes;
@@ -313,14 +317,32 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
     if(l < 1) // Ignore too far outer points
       continue;
     const Eigen::Vector4f& p = p_coeffs.at(l);
+    std::vector<float> depths;
+    depths.reserve(it_p.second->size());
+    for(const auto& pt : *it_p.second)
+      depths.push_back(pt.z);
+    std::sort(depths.begin(),depths.end());
+    const float& median = depths.at(depths.size()/2);
+    const float distance_th = .1*median;
     // TODO Range 또는 angle 제한 필요.
-    bool is_outermost = 10 > getNumberOfPointsBehindPlane(sparse_tree,it_p.second,p,l,distance_th);
+    int n = 0.2 * it_p.second->size() ;
+    bool is_outermost = n > getNumberOfPointsBehindPlane(p_tree,p_clusters,it_p.second,p,l,distance_th);
     if(is_outermost)
       outermost_planes.insert(l);
   }
+#if 1
+  for(const auto&l : outermost_planes){
+    std::vector<cv::Point> locations;
+    cv::findNonZero(marker == l, locations);
+    for (const auto& pt : locations)
+      mask.at<int32_t>(pt) = 2;  // OTHER_WALL 2
+  }
 
+#else
+  const float distance_th = .15;
+  int l_floor = -1;
+  const float th_floor = given_imu?std::cos(M_PI/180.*20.):std::cos(M_PI/180.*40.);
   { // Search floor
-    const float th_floor = given_imu?std::cos(M_PI/180.*20.):std::cos(M_PI/180.*40.);
     std::vector<std::pair<int, size_t> > candidates;
     for(const auto& l : outermost_planes){
       const Eigen::Vector4f& p = p_coeffs.at(l);
@@ -351,7 +373,11 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
         continue;
       const Eigen::Vector4f& p0 = p_coeffs.at(l_floor);
       const Eigen::Vector4f& p = p_coeffs.at(l);
-      if( p0.head<3>().cross(p.head<3>()).norm() < perpen_th)
+      // Perpendicular wall
+      bool not_perpen = p0.head<3>().cross(p.head<3>()).norm() < perpen_th;
+      // Ceil
+      bool not_ceil = p0.head<3>().dot(p.head<3>()) > -th_floor;
+      if( not_perpen && not_ceil)
         continue;
     }
     std::vector<cv::Point> locations;
@@ -364,6 +390,7 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
     for(int c=0; c<marker.cols; c++)
       if(marker.at<int32_t>(r,c) < 1)
         mask.at<int32_t>(r,c) = 3; // Non flat
+#endif
   return;
 }
 
@@ -536,7 +563,7 @@ public:
       sor.setLeafSize(voxel_leaf, voxel_leaf, voxel_leaf);
       sor.filter(*voxel_cloud);
       for(auto& pt : *voxel_cloud)
-        pt.label = -1;
+        pt.label = 255; // TODO should be 0, but bug..
     }
     std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > rg_clusters;
     std::map<int, pcl::PointXYZL> rg_means;
@@ -576,11 +603,10 @@ public:
     bool given_imu = linear_acc_->norm() > 0.001;
     Eigen::Vector3f floor_norm_prediction
       = given_imu?linear_acc_->normalized().cast<float>():Eigen::Vector3f(0.,-.7,-.3).normalized();
-    int l_floor = -1;
     std::vector<int> l_walls;
     getFloorAndWall(p_clusters, merged_p_tree,
-                    p_coeffs,p_marker,floor_norm_prediction, given_imu,
-                    l_floor,l_walls, p_mask);
+                    p_coeffs,p_marker,floor_norm_prediction, given_imu, *linear_acc_,
+                    l_walls, p_mask);
 
     if(pub_points_.getNumSubscribers() > 0) {
       pcl::PCLPointCloud2 pcl_pts;
@@ -612,7 +638,6 @@ public:
       res.p_mask = *msg;
     }
 
-    // TODO 이거 받아서.. 배경 어떻게 제거?
     for(auto it : p_coeffs) {
       ros_unet::Plane msg;
       msg.id = it.first;
@@ -674,7 +699,7 @@ public:
                          imu_msg->linear_acceleration.y,
                          imu_msg->linear_acceleration.z);
     *linear_acc_ = quat * acc0;
-    ROS_INFO_STREAM(linear_acc_->transpose());
+    //ROS_INFO_STREAM(linear_acc_->transpose());
     return;
   }
 
