@@ -52,7 +52,6 @@ void Unproject(cv::Mat depth,
                pcl::PointCloud<pcl::PointXYZL>::Ptr& cloud,
                std::vector<cv::Point2i>& uvs
               ){
-  const double max_z = 5.; // TODO
   cloud = pcl::PointCloud<pcl::PointXYZL>::Ptr(new pcl::PointCloud<pcl::PointXYZL>());
   int n = cv::countNonZero(init_mask);
   cloud->reserve(n);
@@ -63,8 +62,6 @@ void Unproject(cv::Mat depth,
       if(z==0.)
         continue;
       if( init_mask.at<unsigned char>(r,c) <1 )
-        continue;
-      if(z > max_z)
         continue;
       const float& nu = nu_map.at<float>(r,c);
       const float& nv = nv_map.at<float>(r,c);
@@ -111,29 +108,40 @@ void regionGrowing(pcl::PointCloud<pcl::PointXYZL>::Ptr cloud,
   std::vector<pcl::PointIndices> _clusters;
   reg.extract(_clusters);
 
+  const float max_r2 = 3.*3.;
   for(int i =0; i<_clusters.size();i++){
-    const int label = i+1;
-    pcl::PointCloud<pcl::PointXYZL>::Ptr g(new pcl::PointCloud<pcl::PointXYZL>());
-    clusters[label] = g;
     const auto& indices = _clusters.at(i).indices;
-    g->reserve(indices.size());
     //pt_mean.x = pt_mean.y = pt_mean.z = 0.;
-    std::vector<float> vx,vy,vz;
+    std::vector<float> vx,vy,vz, vr;
     vx.reserve(indices.size());
     vy.reserve(indices.size());
     vz.reserve(indices.size());
     for(const int& j : indices){
-      auto& pt0 = cloud->at(j);
-      pt0.label = label;
-      g->push_back(pt0);
+      const auto& pt0 = cloud->at(j);
       vx.push_back(pt0.x);
       vy.push_back(pt0.y);
       vz.push_back(pt0.z);
-      //pt_mean.x += pt.x; pt_mean.y += pt.y; pt_mean.z += pt.z;
+      vr.push_back(pt0.x*pt0.x+pt0.y*pt0.y+pt0.z*pt0.z);
     }
     std::sort(vx.begin(), vx.end());
     std::sort(vy.begin(), vy.end());
     std::sort(vz.begin(), vz.end());
+    std::sort(vr.begin(), vr.end());
+
+    pcl::PointCloud<pcl::PointXYZL>::Ptr g(new pcl::PointCloud<pcl::PointXYZL>());
+    g->reserve(indices.size());
+    int label = i+1;
+    if(*vr.begin() > max_r2)
+      label = 0;
+    for(const int& j : indices){
+      auto& pt0 = cloud->at(j);
+      g->push_back(pt0);
+      pt0.label = label;
+    }
+    clusters[label] = g;
+    if(label < 1)
+      continue;
+
     pcl::PointXYZL pt_mean;
     pt_mean.label = label;
     pt_mean.x = vx.at(vx.size()/2);
@@ -201,7 +209,7 @@ void planeCluster(const std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr >& cl
   normal_tree->setInputCloud(planes_normal);
   
   const float normal_tolerance = .3;
-  const float plane2point_tolerance = .15; // Not square
+  const float plane2point_tolerance = .1; // Not square
   std::vector<std::vector<int> > plane_cluster;
   std::set<int> closed;
   for(const auto& it : index_sizes){
@@ -563,8 +571,38 @@ public:
       sor.setLeafSize(voxel_leaf, voxel_leaf, voxel_leaf);
       sor.filter(*voxel_cloud);
       for(auto& pt : *voxel_cloud)
-        pt.label = 255; // TODO should be 0, but bug..
+        pt.label = -1; // TODO should be 0, but bug..
     }
+#if 0
+    std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > rg_clusters;
+    std::map<int, pcl::PointXYZL> rg_means;
+    regionGrowing(voxel_cloud, rg_clusters, rg_means);
+
+    if(pub_rg_.getNumSubscribers() > 0) {
+      sensor_msgs::PointCloud2 msg;
+      ColorizeSegmentation(rg_clusters,msg);
+      //ColorizeSegmentation(p_clusters,msg);
+      msg.header.frame_id = frame_id_;
+      pub_rg_.publish(msg);
+    }
+
+    boost::shared_ptr<pcl::search::KdTree<pcl::PointXYZL> > sparse_tree(new pcl::search::KdTree<pcl::PointXYZL>());
+    // Euclidean cluster in more sparse voxel cloud (for computational cost)
+    // Erase outliers from voxel_cloud and rg_clusters
+    {
+      const float vvoxel_leaf=.1;
+      pcl::VoxelGrid<pcl::PointXYZL> sor;
+      sor.setInputCloud(voxel_cloud);
+      pcl::PointCloud<pcl::PointXYZL>::Ptr vvoxel_cloud = pcl::PointCloud<pcl::PointXYZL>::Ptr(new pcl::PointCloud<pcl::PointXYZL>);
+      sor.setLeafSize(vvoxel_leaf, vvoxel_leaf, vvoxel_leaf);
+      sor.filter(*vvoxel_cloud);
+      const float square_tolerance = 9.;
+      sparse_tree->setInputCloud(vvoxel_cloud);
+      EuclideanFilter(sparse_tree, square_tolerance, rg_clusters, voxel_cloud);
+    }
+
+
+#else
     std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > rg_clusters;
     std::map<int, pcl::PointXYZL> rg_means;
     regionGrowing(voxel_cloud, rg_clusters, rg_means);
@@ -579,7 +617,7 @@ public:
       pcl::PointCloud<pcl::PointXYZL>::Ptr vvoxel_cloud = pcl::PointCloud<pcl::PointXYZL>::Ptr(new pcl::PointCloud<pcl::PointXYZL>);
       sor.setLeafSize(vvoxel_leaf, vvoxel_leaf, vvoxel_leaf);
       sor.filter(*vvoxel_cloud);
-      const float square_tolerance = .5;
+      const float square_tolerance = 25.;
       sparse_tree->setInputCloud(vvoxel_cloud);
       EuclideanFilter(sparse_tree, square_tolerance, rg_clusters, voxel_cloud);
     }
@@ -661,6 +699,7 @@ public:
       cv_img.image    = dst;
       pub_bgmask_.publish(*cv_img.toImageMsg());
     }
+#endif
     return true;
   }
 
