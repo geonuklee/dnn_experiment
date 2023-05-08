@@ -49,6 +49,7 @@ void Unproject(cv::Mat depth,
                cv::Mat nu_map,
                cv::Mat nv_map,
                cv::Mat init_mask,
+               int step,
                pcl::PointCloud<pcl::PointXYZL>::Ptr& cloud,
                std::vector<cv::Point2i>& uvs
               ){
@@ -56,10 +57,10 @@ void Unproject(cv::Mat depth,
   int n = cv::countNonZero(init_mask);
   cloud->reserve(n);
   uvs.reserve(n);
-  for(int r=0; r<depth.rows; r++){
-    for(int c=0; c<depth.cols; c++){
-      float z = depth.at<float>(r,c);
-      if(z==0.)
+  for(int r=0; r<depth.rows; r+=step){
+    for(int c=0; c<depth.cols; c+=step){
+      const float& z = depth.at<float>(r,c);
+      if(z < 0.001)
         continue;
       if( init_mask.at<unsigned char>(r,c) <1 )
         continue;
@@ -75,8 +76,7 @@ void Unproject(cv::Mat depth,
 }
 
 void regionGrowing(pcl::PointCloud<pcl::PointXYZL>::Ptr cloud,
-                   std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr >& clusters,
-                   std::map<int, pcl::PointXYZL>& rg_means
+                   std::map<u_int32_t, pcl::PointCloud<pcl::PointXYZL>::Ptr >& clusters //, std::map<u_int32_t, pcl::PointXYZL>& rg_means
                    ){
   pcl::search::Search<pcl::PointXYZL>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZL>);
   pcl::PointCloud <pcl::Normal>::Ptr normals(new pcl::PointCloud <pcl::Normal>);
@@ -109,73 +109,44 @@ void regionGrowing(pcl::PointCloud<pcl::PointXYZL>::Ptr cloud,
   reg.extract(_clusters);
 
   const float max_r2 = 3.*3.;
-  for(int i =0; i<_clusters.size();i++){
+  for(u_int32_t i =0; i<_clusters.size();i++){
     const auto& indices = _clusters.at(i).indices;
-    //pt_mean.x = pt_mean.y = pt_mean.z = 0.;
-    std::vector<float> vx,vy,vz, vr;
-    vx.reserve(indices.size());
-    vy.reserve(indices.size());
-    vz.reserve(indices.size());
+    std::vector<float> vr;
+    vr.reserve(indices.size());
     for(const int& j : indices){
       const auto& pt0 = cloud->at(j);
-      vx.push_back(pt0.x);
-      vy.push_back(pt0.y);
-      vz.push_back(pt0.z);
       vr.push_back(pt0.x*pt0.x+pt0.y*pt0.y+pt0.z*pt0.z);
     }
-    std::sort(vx.begin(), vx.end());
-    std::sort(vy.begin(), vy.end());
-    std::sort(vz.begin(), vz.end());
     std::sort(vr.begin(), vr.end());
-
     pcl::PointCloud<pcl::PointXYZL>::Ptr g(new pcl::PointCloud<pcl::PointXYZL>());
     g->reserve(indices.size());
-    int label = i+1;
+    u_int32_t label = i+1;
     if(*vr.begin() > max_r2)
       label = 0;
     for(const int& j : indices){
       auto& pt0 = cloud->at(j);
-      g->push_back(pt0);
       pt0.label = label;
+      g->push_back(pt0);
     }
-    clusters[label] = g;
-    if(label < 1)
-      continue;
-
-    pcl::PointXYZL pt_mean;
-    pt_mean.label = label;
-    pt_mean.x = vx.at(vx.size()/2);
-    pt_mean.y = vy.at(vx.size()/2);
-    pt_mean.z = vz.at(vx.size()/2);
-    rg_means[label] = pt_mean;
+#if 1
+    if(label < 1 && clusters.count(0) )
+      *clusters[0] += *g;
+    else
+      clusters[label] = g;
+#else
+#endif
   }
   return;
 }
 
-void planeCluster(const std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr >& clusters,
-                  const std::map<int, pcl::PointXYZL>& rg_means,
-                  std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr >& p_clusters,
-                  EigenMap<int, Eigen::Vector4f>& p_coeffs
-                  ) {
-  /*
-  가장큰 평면과, 평행한 이웃 평면의 평균 point 사이의 거리로 병합 판정.
-
-   normal_cluster_indices을 cluster 점의 개수 순서로 먼저 정렬,
-  가장큰 평면과, 나란한 법선벡터를 가진 neighbor의 mean point를 비교해서 병합.
-  */
-  // 1. Detect planes for each region.
-  pcl::PointCloud<pcl::PointXYZL>::Ptr planes_normal(new pcl::PointCloud<pcl::PointXYZL>);
-  planes_normal->reserve(clusters.size());
-  std::map<int, float> l2d; // Label to 'd' of plane coeff
-  std::vector< std::pair<int, size_t> > index_sizes;
-  index_sizes.reserve(clusters.size());
-
+void getPlanes(std::map<u_int32_t, pcl::PointCloud<pcl::PointXYZL>::Ptr >& clusters,
+              EigenMap<u_int32_t, Eigen::Vector4f>& p_coeffs
+              ) {
   for(auto it : clusters){
-    if(it.first < 1)
+    const int& label = it.first;
+    if(label < 1)
       continue;
     pcl::PointCloud<pcl::PointXYZL>::Ptr cloud = it.second;
-    index_sizes.push_back( std::make_pair(index_sizes.size(), cloud->size()) );
-
     // Create the segmentation object
     pcl::SACSegmentation<pcl::PointXYZL> seg;
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
@@ -187,96 +158,32 @@ void planeCluster(const std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr >& cl
     // Mandatory
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setDistanceThreshold(0.01);
-
+    seg.setDistanceThreshold(0.04); // TODO Median?
     seg.setInputCloud(cloud);
     seg.segment(*inliers, *coefficients);
-    pcl::PointXYZL normal;
+    Eigen::Vector4f coeff;
     if(coefficients->values[3] < 0.)
-      for(int i=0;i<4;i++)
-        coefficients->values[i] *= -1.;
-    normal.x = coefficients->values[0];
-    normal.y = coefficients->values[1];
-    normal.z = coefficients->values[2];
-    normal.label = it.first;
-    planes_normal->push_back(normal);
-    l2d[it.first] = coefficients->values[3];
-  }
-  // Sort the vector of pairs in descending order of size 
-  std::sort(index_sizes.begin(), index_sizes.end(), [](const auto& lhs, const auto& rhs) {
-            return lhs.second > rhs.second; });
-  pcl::search::KdTree<pcl::PointXYZL>::Ptr normal_tree(new pcl::search::KdTree<pcl::PointXYZL>);
-  normal_tree->setInputCloud(planes_normal);
-  
-  const float normal_tolerance = .3;
-  const float plane2point_tolerance = .1; // Not square
-  std::vector<std::vector<int> > plane_cluster;
-  std::set<int> closed;
-  for(const auto& it : index_sizes){
-    const int& i0 = it.first;
-    const pcl::PointXYZL& n0 = planes_normal->at(i0);
-    const int& l0 = n0.label;
-    if(closed.count(l0))
-      continue;
-    std::vector<int> neighbors;
-    std::vector<float> sqr_distances;
-    normal_tree->radiusSearch(n0, normal_tolerance, neighbors, sqr_distances);
-    const float& d0 = l2d.at(l0);
-    Eigen::Vector4f p0(n0.x,n0.y,n0.z,d0);
-    std::vector<int> g = {l0,};
-    closed.insert(l0);
-    for(const int& i1 : neighbors){
-      const pcl::PointXYZL& n1 = planes_normal->at(i1);
-      const int& l1 = n1.label;
-      if(closed.count(l1))
-        continue;
-      const pcl::PointXYZL& pt = rg_means.at(l1);
-      Eigen::Vector4f p1(pt.x,pt.y,pt.z,1.);
-      float err = std::abs( p0.dot(p1) );
-      if(err > plane2point_tolerance)
-        continue;
-      g.push_back(l1);
-      closed.insert(l1);
-    }
-    plane_cluster.push_back(g);
-    p_coeffs[l0] = p0;
+      coeff = Eigen::Vector4f(-coefficients->values[0],
+                              -coefficients->values[1],
+                              -coefficients->values[2],
+                              -coefficients->values[3]);
+
+    else
+      coeff = Eigen::Vector4f(coefficients->values[0],
+                              coefficients->values[1],
+                              coefficients->values[2],
+                              coefficients->values[3]);
+    p_coeffs[label] = coeff;
   }
 
-  // 3. Merge cloud
-  for(const std::vector<int>& indices : plane_cluster){
-    // create a new point cloud to hold the merged point clouds
-    pcl::PointCloud<pcl::PointXYZL>::Ptr merged_plane(new pcl::PointCloud<pcl::PointXYZL>);
-    // concatenate the point clouds
-    for(const int& label : indices){
-      pcl::PointCloud<pcl::PointXYZL>::Ptr c0=clusters.at(label);
-      *merged_plane += *c0;
-    }
-    const int& label = indices.at(0);
-
-    { // voxel filter after region growing
-      const float voxel_leaf = 0.1;
-      pcl::PointCloud<pcl::PointXYZL>::Ptr vout(new pcl::PointCloud<pcl::PointXYZL>);
-      pcl::VoxelGrid<pcl::PointXYZL> sor;
-      sor.setInputCloud(merged_plane);
-      sor.setLeafSize(voxel_leaf, voxel_leaf, voxel_leaf);
-      sor.filter(*vout);
-      merged_plane = vout; // replace
-    }
-
-    for(auto& pt : *merged_plane)
-      pt.label = label;
-    p_clusters[label] = merged_plane;
-  }
-  if(clusters.count(0))
-    p_clusters[0] = clusters.at(0);
   return;
 }
 
 size_t getNumberOfPointsBehindPlane(pcl::search::Search<pcl::PointXYZL>::Ptr sparse_tree,
-                                    const std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr >& p_clusters,
+                                    const std::map<u_int32_t, pcl::PointCloud<pcl::PointXYZL>::Ptr >& p_clusters,
                                     pcl::PointCloud<pcl::PointXYZL>::ConstPtr plane_cloud,
                                     const Eigen::Vector4f& coeff,
-                                    int plane_label,
+                                    u_int32_t plane_label,
                                     float distance_th){
   pcl::PointCloud<pcl::PointXYZL>::ConstPtr sparse_cloud = sparse_tree->getInputCloud();
   const float radius = 1.; // [meter]
@@ -294,8 +201,6 @@ size_t getNumberOfPointsBehindPlane(pcl::search::Search<pcl::PointXYZL>::Ptr spa
         continue;
       if(pt1.label < 1)
         continue;
-      if(p_clusters.at(pt1.label)->size() < 10)
-        continue;
       float d = coeff.dot(Eigen::Vector4f(pt1.x,pt1.y,pt1.z,1.));
       if(d + distance_th < 0.)
         n++;
@@ -304,9 +209,10 @@ size_t getNumberOfPointsBehindPlane(pcl::search::Search<pcl::PointXYZL>::Ptr spa
   return n;
 }
 
-void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clusters,
+#if 0
+void getFloorAndWall(std::map<u_int32_t, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clusters,
                      pcl::search::Search<pcl::PointXYZL>::Ptr p_tree,
-                     const EigenMap<int, Eigen::Vector4f>& p_coeffs,
+                     const EigenMap<u_int32_t, Eigen::Vector4f>& p_coeffs,
                      const cv::Mat marker,
                      const Eigen::Vector3f& floor_norm_prediction,
                      bool given_imu,
@@ -321,7 +227,7 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
   const float voxel_leaf = 0.1;
   std::set<int> outermost_planes;
   for(auto it_p : p_clusters){
-    const int& l = it_p.first;
+    const u_int32_t& l = it_p.first;
     if(l < 1) // Ignore too far outer points
       continue;
     const Eigen::Vector4f& p = p_coeffs.at(l);
@@ -338,15 +244,6 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
     if(is_outermost)
       outermost_planes.insert(l);
   }
-#if 1
-  for(const auto&l : outermost_planes){
-    std::vector<cv::Point> locations;
-    cv::findNonZero(marker == l, locations);
-    for (const auto& pt : locations)
-      mask.at<int32_t>(pt) = 2;  // OTHER_WALL 2
-  }
-
-#else
   const float distance_th = .15;
   int l_floor = -1;
   const float th_floor = given_imu?std::cos(M_PI/180.*20.):std::cos(M_PI/180.*40.);
@@ -398,42 +295,8 @@ void getFloorAndWall(std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
     for(int c=0; c<marker.cols; c++)
       if(marker.at<int32_t>(r,c) < 1)
         mask.at<int32_t>(r,c) = 3; // Non flat
-#endif
   return;
 }
-
-void projectClusters(pcl::PointCloud<pcl::PointXYZL>::Ptr merged_p_cloud,
-                     pcl::search::Search<pcl::PointXYZL>::Ptr merged_p_tree,
-                     pcl::PointCloud<pcl::PointXYZL>::Ptr dense_cloud,
-                     const std::vector<cv::Point2i>& uvs,
-                     cv::Mat& p_marker,
-                     cv::Mat& p_mask
-                    ){
-  float max_square_tolerance = .4; // [meter^2] TODO
-  max_square_tolerance *= max_square_tolerance;
-
-  std::vector<int> neighbors(1);
-  std::vector<float> square_distance(1);
-
-  for(int i=0; i<uvs.size(); i++){
-    const cv::Point2i& uv = uvs.at(i);
-    pcl::PointXYZL& pt = dense_cloud->at(i);
-    merged_p_tree->nearestKSearch(pt, 1, neighbors, square_distance);
-    if(square_distance.empty())
-      continue;
-    if(square_distance.at(0) > max_square_tolerance)
-      continue;
-    const pcl::PointXYZL& pt0 = merged_p_cloud->at(neighbors.at(0));
-    pt.label = pt0.label; // Labeling cloud
-    p_marker.at<int32_t>(uv.y,uv.x) = pt.label; // Project the label
-    if(pt.label < 1){ // pcl::PointXYZL.label은 uint, mask는 int
-      p_marker.at<int32_t>(uv.y,uv.x) = -1;
-      p_mask.at<int32_t>(uv.y,uv.x) = -1;;
-    }
-  }
-  return;
-}
-
 
 void EuclideanFilter(boost::shared_ptr<pcl::search::KdTree<pcl::PointXYZL> > sparse_tree,
                   float square_tolerance,
@@ -503,6 +366,102 @@ void EuclideanFilter(boost::shared_ptr<pcl::search::KdTree<pcl::PointXYZL> > spa
 }
 
 
+#endif
+
+void projectClusters(pcl::PointCloud<pcl::PointXYZL>::Ptr merged_p_cloud,
+                     pcl::search::Search<pcl::PointXYZL>::Ptr merged_p_tree,
+                     pcl::PointCloud<pcl::PointXYZL>::Ptr dense_cloud,
+                     int step,
+                     const std::vector<cv::Point2i>& uvs,
+                     cv::Mat& p_marker//, cv::Mat& p_mask
+                    ){
+  float max_square_tolerance = .4; // [meter^2] TODO
+  max_square_tolerance *= max_square_tolerance;
+
+  std::vector<int> neighbors(1);
+  std::vector<float> square_distance(1);
+  for(int i=0; i<uvs.size(); i++){
+    const cv::Point2i& uv = uvs.at(i);
+    pcl::PointXYZL& pt = dense_cloud->at(i);
+    if(pt.z > 10.)
+      continue;
+    merged_p_tree->nearestKSearch(pt, 1, neighbors, square_distance);
+    if(square_distance.empty())
+      continue;
+    if(square_distance.at(0) > max_square_tolerance)
+      continue;
+    const pcl::PointXYZL& pt0 = merged_p_cloud->at(neighbors.at(0));
+#if 1
+    int label = pt0.label > 0? pt0.label : -1; // Labeling cloud
+#else
+    int label = pt0.label; // Labeling cloud
+    if(label < 1){ // pcl::PointXYZL.label은 uint, mask는 int
+      continue;
+#endif
+    cv::rectangle(p_marker,cv::Rect(uv,uv+cv::Point2i(step,step)),label);
+  }
+  return;
+}
+
+void getBgMask(std::map<u_int32_t, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clusters,
+                  const EigenMap<u_int32_t, Eigen::Vector4f>& p_coeffs,
+                  pcl::search::Search<pcl::PointXYZL>::Ptr p_tree,
+                  const cv::Mat& plane_marker,
+                  const Eigen::Vector3f linear_acc,
+                  cv::Mat& bg_mask
+                 ){
+  Eigen::Vector3f gravity_dir = -linear_acc.normalized();
+  bool look_upper = gravity_dir.z() < 0.;
+  //ROS_INFO_STREAM("gdir="<<gravity_dir.transpose());
+  assert(look_upper); // TODO Test with look floor
+
+  std::set<u_int32_t> outermost_planes;
+  for(auto it_p : p_clusters){
+    const u_int32_t& l = it_p.first;
+    if(!p_coeffs.count(l))
+      continue;
+    const Eigen::Vector4f& p = p_coeffs.at(l);
+    if(look_upper && gravity_dir.dot(p.head<3>()) < -.7) // No floor when look upper at testbed
+      continue;
+    if( (!look_upper) && gravity_dir.dot(p.head<3>()) >.7)
+      continue;
+
+    std::vector<float> depths;
+    depths.reserve(it_p.second->size());
+    for(const auto& pt : *it_p.second)
+      depths.push_back(pt.z);
+    std::sort(depths.begin(),depths.end());
+    const float& median = depths.at(depths.size()/2);
+
+    float distance_th = .1*median;
+    if(gravity_dir.dot(p.head<3>()) > .7)
+      distance_th = .2*median; // Bended ceil of testbed.
+
+    int n = 0.2 * it_p.second->size() ;
+    bool is_outermost = n > getNumberOfPointsBehindPlane(p_tree,
+                                                         p_clusters,
+                                                         it_p.second,
+                                                         p,l,distance_th);
+    if(is_outermost)
+      outermost_planes.insert(l);
+  }
+
+  for(const auto&l : outermost_planes){
+    std::vector<cv::Point> locations;
+    cv::findNonZero(plane_marker == l, locations);
+    for (const auto& pt : locations)
+      bg_mask.at<int32_t>(pt) = 1;  // Wall
+  }
+  {
+    std::vector<cv::Point> locations;
+    cv::findNonZero(plane_marker == -1, locations);
+    for (const auto& pt : locations)
+      bg_mask.at<int32_t>(pt) = 2;  // Too far or none plane, outliers
+  }
+
+  return;
+}
+
 class BgDetector {
 public:
   BgDetector(ros::NodeHandle nh) :
@@ -562,8 +521,10 @@ public:
 
     pcl::PointCloud<pcl::PointXYZL>::Ptr dense_cloud; // the dense cloud
     std::vector<cv::Point2i> uvs;
-    Unproject(depth_, nu_map_, nv_map_, init_mask, dense_cloud, uvs);
-    pcl::PointCloud<pcl::PointXYZL>::Ptr voxel_cloud; {
+    int step = 2;
+    Unproject(depth_, nu_map_, nv_map_, init_mask, step, dense_cloud, uvs);
+    pcl::PointCloud<pcl::PointXYZL>::Ptr voxel_cloud;
+    {
       voxel_cloud = pcl::PointCloud<pcl::PointXYZL>::Ptr(new pcl::PointCloud<pcl::PointXYZL>);
       const float voxel_leaf=.02;
       pcl::VoxelGrid<pcl::PointXYZL> sor;
@@ -571,135 +532,74 @@ public:
       sor.setLeafSize(voxel_leaf, voxel_leaf, voxel_leaf);
       sor.filter(*voxel_cloud);
       for(auto& pt : *voxel_cloud)
-        pt.label = -1; // TODO should be 0, but bug..
+        pt.label = 0; // TODO should be 0, but bug..
     }
-#if 0
-    std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > rg_clusters;
-    std::map<int, pcl::PointXYZL> rg_means;
-    regionGrowing(voxel_cloud, rg_clusters, rg_means);
+
+    std::map<u_int32_t, pcl::PointCloud<pcl::PointXYZL>::Ptr > rg_clusters;
+    //std::map<u_int32_t, pcl::PointXYZL> rg_means;
+    regionGrowing(voxel_cloud, rg_clusters);
+
+    EigenMap<u_int32_t, Eigen::Vector4f> p_coeffs;
+    getPlanes(rg_clusters, p_coeffs);
 
     if(pub_rg_.getNumSubscribers() > 0) {
       sensor_msgs::PointCloud2 msg;
-      ColorizeSegmentation(rg_clusters,msg);
-      //ColorizeSegmentation(p_clusters,msg);
+      //std::map<int,pcl::PointCloud<pcl::PointXYZL>::Ptr> dst;
+      //if(rg_clusters.count(0))
+      //  dst[0] = rg_clusters.at(0);
+      //ColorizeSegmentation(dst, msg);
+      ColorizeSegmentation(rg_clusters, msg);
       msg.header.frame_id = frame_id_;
       pub_rg_.publish(msg);
     }
 
-    boost::shared_ptr<pcl::search::KdTree<pcl::PointXYZL> > sparse_tree(new pcl::search::KdTree<pcl::PointXYZL>());
-    // Euclidean cluster in more sparse voxel cloud (for computational cost)
-    // Erase outliers from voxel_cloud and rg_clusters
-    {
-      const float vvoxel_leaf=.1;
-      pcl::VoxelGrid<pcl::PointXYZL> sor;
-      sor.setInputCloud(voxel_cloud);
-      pcl::PointCloud<pcl::PointXYZL>::Ptr vvoxel_cloud = pcl::PointCloud<pcl::PointXYZL>::Ptr(new pcl::PointCloud<pcl::PointXYZL>);
-      sor.setLeafSize(vvoxel_leaf, vvoxel_leaf, vvoxel_leaf);
-      sor.filter(*vvoxel_cloud);
-      const float square_tolerance = 9.;
-      sparse_tree->setInputCloud(vvoxel_cloud);
-      EuclideanFilter(sparse_tree, square_tolerance, rg_clusters, voxel_cloud);
-    }
-
-
-#else
-    std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > rg_clusters;
-    std::map<int, pcl::PointXYZL> rg_means;
-    regionGrowing(voxel_cloud, rg_clusters, rg_means);
-
-    boost::shared_ptr<pcl::search::KdTree<pcl::PointXYZL> > sparse_tree(new pcl::search::KdTree<pcl::PointXYZL>());
-    // Euclidean cluster in more sparse voxel cloud (for computational cost)
-    // Erase outliers from voxel_cloud and rg_clusters
-    {
-      const float vvoxel_leaf=.1;
-      pcl::VoxelGrid<pcl::PointXYZL> sor;
-      sor.setInputCloud(voxel_cloud);
-      pcl::PointCloud<pcl::PointXYZL>::Ptr vvoxel_cloud = pcl::PointCloud<pcl::PointXYZL>::Ptr(new pcl::PointCloud<pcl::PointXYZL>);
-      sor.setLeafSize(vvoxel_leaf, vvoxel_leaf, vvoxel_leaf);
-      sor.filter(*vvoxel_cloud);
-      const float square_tolerance = 25.;
-      sparse_tree->setInputCloud(vvoxel_cloud);
-      EuclideanFilter(sparse_tree, square_tolerance, rg_clusters, voxel_cloud);
-    }
-
-    std::map<int, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clusters;
-    EigenMap<int, Eigen::Vector4f> p_coeffs;
-    planeCluster(rg_clusters,rg_means, p_clusters,p_coeffs);
-
-    // 4. Mapping bg plane on 2D image
+    // Mapping bg plane on 2D image
     pcl::PointCloud<pcl::PointXYZL>::Ptr merged_p_cloud(new pcl::PointCloud<pcl::PointXYZL>);
-    for(auto it : p_clusters)
-      *merged_p_cloud += *it.second;
     pcl::search::Search<pcl::PointXYZL>::Ptr merged_p_tree(new pcl::search::KdTree<pcl::PointXYZL>);
-    merged_p_tree->setInputCloud(merged_p_cloud);
-
-    cv::Mat p_marker = cv::Mat::zeros(depth_.rows,depth_.cols, CV_32SC1);
-    cv::Mat p_mask = cv::Mat::zeros(depth_.rows, depth_.cols, CV_32SC1);
-    projectClusters(merged_p_cloud,merged_p_tree, dense_cloud, uvs, p_marker, p_mask);
-
-    // 5. Get floor, bg candidates
-    bool given_imu = linear_acc_->norm() > 0.001;
-    Eigen::Vector3f floor_norm_prediction
-      = given_imu?linear_acc_->normalized().cast<float>():Eigen::Vector3f(0.,-.7,-.3).normalized();
-    std::vector<int> l_walls;
-    getFloorAndWall(p_clusters, merged_p_tree,
-                    p_coeffs,p_marker,floor_norm_prediction, given_imu, *linear_acc_,
-                    l_walls, p_mask);
-
-    if(pub_points_.getNumSubscribers() > 0) {
-      pcl::PCLPointCloud2 pcl_pts;
-      pcl::toPCLPointCloud2(*dense_cloud, pcl_pts);
-      sensor_msgs::PointCloud2 msg;
-      pcl_conversions::fromPCL(pcl_pts, msg);
-      msg.header.frame_id = frame_id_;
-      pub_points_.publish(msg);
-    }
-    if(pub_rg_.getNumSubscribers() > 0) {
-      sensor_msgs::PointCloud2 msg;
-      ColorizeSegmentation(rg_clusters,msg);
-      //ColorizeSegmentation(p_clusters,msg);
-      msg.header.frame_id = frame_id_;
-      pub_rg_.publish(msg);
-    }
+    cv::Mat plane_marker = cv::Mat::zeros(depth_.rows,depth_.cols, CV_32SC1);
+    cv::Mat bg_mask = cv::Mat::zeros(depth_.rows, depth_.cols, CV_32SC1);
     {
-      cv_bridge::CvImage cv_image;
-      cv_image.image = p_marker;
+      pcl::PointCloud<pcl::PointXYZL>::Ptr input(new pcl::PointCloud<pcl::PointXYZL>);
+      for(auto it : rg_clusters)
+        *input += *it.second;
+      const float voxel_leaf=.2;
+      pcl::VoxelGrid<pcl::PointXYZL> sor;
+      sor.setInputCloud(input);
+      sor.setLeafSize(voxel_leaf, voxel_leaf, voxel_leaf);
+      sor.filter(*merged_p_cloud);
+      merged_p_tree->setInputCloud(merged_p_cloud);
+      projectClusters(merged_p_cloud,merged_p_tree, dense_cloud, step, uvs, plane_marker);
+    }
+    getBgMask(rg_clusters,p_coeffs, merged_p_tree, plane_marker,linear_acc_->cast<float>(), bg_mask);
+
+    cv_bridge::CvImage cv_image;
+    {
+      cv_image.image = plane_marker;
       cv_image.encoding = sensor_msgs::image_encodings::TYPE_32SC1;
       sensor_msgs::ImagePtr msg = cv_image.toImageMsg();
       res.p_marker = *msg;
     }
     {
-      cv_bridge::CvImage cv_image;
-      cv_image.image = p_mask;
+      cv_image.image = bg_mask;
       cv_image.encoding = sensor_msgs::image_encodings::TYPE_32SC1;
       sensor_msgs::ImagePtr msg = cv_image.toImageMsg();
       res.p_mask = *msg;
     }
-
-    for(auto it : p_coeffs) {
-      ros_unet::Plane msg;
-      msg.id = it.first;
-      for(int i=0; i<4; i++)
-        msg.coeff[i] = it.second[i];
-      res.p_coeffs.push_back(msg);
-    }
-
     if(pub_planeseg_.getNumSubscribers() > 0){
-      cv::Mat dst = GetColoredLabel(p_marker);
-      HighlightBoundary(p_marker,dst);
+      cv::Mat dst = GetColoredLabel(plane_marker);
+      HighlightBoundary(plane_marker,dst);
       cv_bridge::CvImage cv_img;
       cv_img.encoding = sensor_msgs::image_encodings::TYPE_8UC3;
       cv_img.image    = dst;
       pub_planeseg_.publish(*cv_img.toImageMsg());
     }
     if(pub_bgmask_.getNumSubscribers() > 0){
-      cv::Mat dst = GetColoredLabel(p_mask);
+      cv::Mat dst = GetColoredLabel(bg_mask);
       cv_bridge::CvImage cv_img;
       cv_img.encoding = sensor_msgs::image_encodings::TYPE_8UC3;
       cv_img.image    = dst;
       pub_bgmask_.publish(*cv_img.toImageMsg());
     }
-#endif
     return true;
   }
 

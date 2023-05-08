@@ -250,4 +250,14 @@ void ColorizeSegmentation(const std::map<int, boost::shared_ptr<pcl::PointCloud<
   return;
 }
 
+void ColorizeSegmentation(const std::map<u_int32_t, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZL> > >& _clouds,
+                          sensor_msgs::PointCloud2& msg){
+  std::map<int, boost::shared_ptr<pcl::PointCloud<pcl::PointXYZL> > > clouds;
+  for(auto it:_clouds)
+    clouds[it.first] = it.second;
+  ColorizeSegmentation<pcl::PointXYZL>(clouds, msg);
+  return;
+}
+
+
 
