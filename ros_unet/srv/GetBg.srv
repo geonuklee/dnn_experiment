@@ -1,6 +1,7 @@
 sensor_msgs/Image rgb
 sensor_msgs/Image depth
 sensor_msgs/CameraInfo info
+sensor_msgs/Imu imu
 ---
 sensor_msgs/Image p_marker
 sensor_msgs/Image p_mask

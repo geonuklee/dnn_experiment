@@ -138,12 +138,11 @@ void ObbEstimator::GetSegmentedCloud(cv::Mat rgb,
                                      cv::Mat convex_edge,
                                      const ObbParam& param,
                                      std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& clouds,
-                                     std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds,
-                                     pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb
+                                     std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds
                                     ){
   const float max_depth = 10.; // TODO Helio2 depthmap API에 기술된 bit flag..
 
-  // Unproject xyzrgb, segmented_clouds, boundary_clouds
+  // Unproject segmented_clouds, boundary_clouds
 
   // Denote that each instance in mask must be detached.
   cv::Mat dist_transform; {
@@ -382,27 +381,6 @@ void ObbEstimator::GetSegmentedCloud(cv::Mat rgb,
     if(boundary_clouds.count(idx))
       boundary_clouds.erase(idx);
   }
-
-  if(xyzrgb.get()){
-    for(int r = 0; r < depth.rows; r++){
-      for(int c = 0; c < depth.cols; c++){
-        float z0 = depth.at<float>(r,c);
-        if(z0 < 0.000001 || z0 > max_depth)
-          continue;
-        cv::Point2f uv = GetUV(r,c);
-        Eigen::Vector3d Xc(uv.x * z0, uv.y*z0, z0);
-        // Eigen::Vector3d Xw = Twc * Xc;
-        pcl::PointXYZRGB pt;
-        //pt.x = Xw[0]; pt.y = Xw[1]; pt.z = Xw[2];
-        pt.x = Xc[0]; pt.y = Xc[1]; pt.z = Xc[2];
-        pt.b = rgb.at<cv::Vec3b>(r,c)[0];
-        pt.g = rgb.at<cv::Vec3b>(r,c)[1];
-        pt.r = rgb.at<cv::Vec3b>(r,c)[2];
-        pt.a = 1.;
-        xyzrgb->points.push_back(pt);
-      }
-    }
-  }
   return;
 }
 
@@ -579,7 +557,7 @@ int GetBoxInlier(const g2o::SE3Quat& Twl, const Eigen::Vector3d& whd,
 std_msgs::ColorRGBA GetColor(int id){
   const auto& color = colors.at(id%colors.size());
   std_msgs::ColorRGBA rgba;
-  rgba.a = 0.8;
+  rgba.a = 0.4;
   rgba.r = color[2]/255.;
   rgba.g = color[1]/255.;
   rgba.b = color[0]/255.;

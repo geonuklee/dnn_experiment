@@ -27,13 +27,12 @@ class Node:
                 #threshold_curvature=0.005)
         # Contrast filter - removing depth noise of ToF caused by high contrast.
         gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
-        #edges = cv2.Canny(gray, 240,255)
         edges = cv2.Canny(gray, 300, 350) # Over 300 for helio_2023-03-04-14-48-40
         k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         k10 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (10, 10))
         edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k5)
         edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN, k5)
-        input_x[0, edges>0] = 0. # Remove Hessian caused by contrast
+        #input_x[0, edges>0] = 0. # Remove Hessian caused by contrast
 
         input_x = torch.Tensor(input_x).unsqueeze(0)
         y1, y2, pred = self.model(input_x)
@@ -41,9 +40,9 @@ class Node:
         pred = pred.to('cpu')
         pred = self.model.spliter.restore(pred)
          # .9 for 22-05-06-20-11-00
-        mask = self.model.spliter.pred2mask(pred, th=.9)
+        mask = self.model.spliter.pred2mask(pred, th=.5)
         del pred
-        mask[edges>0] = 0
+        #mask[edges>0] = 0
 
         mask[depth < .001] = 1
         mask_convex = np.stack((mask==1,mask==2),axis=2).astype(mask.dtype)

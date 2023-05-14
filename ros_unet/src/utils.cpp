@@ -42,7 +42,7 @@ cv::Mat Overlap(cv::Mat bg, cv::Mat mask, float alpha, bool put_text) {
     colored_mask = mask;
   else
     colored_mask = GetColoredLabel(mask, put_text);
-  HighlightBoundary(mask,colored_mask);
+  //HighlightBoundary(mask,colored_mask);
   cv::Mat dst;
   cv::addWeighted(bg, alpha, colored_mask, 1.-alpha, 0., dst);
   return dst;

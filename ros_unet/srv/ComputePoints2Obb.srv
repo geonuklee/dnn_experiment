@@ -1,4 +1,5 @@
 float32[] xyz_clouds
 int32[] l_clouds
+string frame_id
 ---
 visualization_msgs/MarkerArray output

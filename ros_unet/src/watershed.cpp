@@ -233,6 +233,7 @@ void DistanceWatershed(const cv::Mat _dist_fromedge,
     std::vector<std::vector<cv::Point> > contours;
     std::vector<cv::Vec4i> hierarchy;
     cv::findContours(_fg,contours,hierarchy,mode,method);
+    const float margin_ratio = 1.4; // sqrt(2)
     for(i = 0; i < contours.size(); i++){
       const std::vector<cv::Point>& contour = contours.at(i);
 #if 0
@@ -249,7 +250,7 @@ void DistanceWatershed(const cv::Mat _dist_fromedge,
         ed = std::min(ed, _dist_fromedge.at<float>(ipt.y,ipt.x) );
       const cv::Point& pt = contours.at(i).at(0);
       const int& m = _marker.at<int>(pt.y,pt.x);
-      const int thick = 1+2*ed;
+      const int thick = 1+margin_ratio*2.*ed;
       cv::drawContours(_fg, contours, i, 1, thick);
 #endif
     }

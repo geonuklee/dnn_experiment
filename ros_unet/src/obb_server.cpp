@@ -56,7 +56,6 @@ public:
     obb_estimator_[cam_id] = std::make_shared<ObbEstimator>(camera);
     segment2d_[cam_id] = std::make_shared<Segment2DEdgeBased>(cam_id);
     obb_process_visualizer_[cam_id] = std::make_shared<ObbProcessVisualizer>(cam_id, frame_id, nh_);
-    pub_xyzrgb_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/xyzrgb",1);
     pub_clouds_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/clouds",1);
     pub_boundary_[cam_id] = nh_.advertise<sensor_msgs::PointCloud2>(cam_id+"/boundary",1);
     pub_vis_mask_[cam_id] = nh_.advertise<sensor_msgs::Image>(cam_id+"/vis_mask",1);
@@ -105,7 +104,6 @@ public:
     segment2d->Process(rgb, depth, instance_marker, convex_edge, ins2cls, verbose);
 
     std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr> segmented_clouds, boundary_clouds;
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb(new pcl::PointCloud<pcl::PointXYZRGB>());
 
 
     auto t0 = std::chrono::steady_clock::now();
@@ -114,7 +112,7 @@ public:
                                      instance_marker,
                                      convex_edge,
                                      param_,
-                                     segmented_clouds, boundary_clouds, xyzrgb);
+                                     segmented_clouds, boundary_clouds);
     auto t1 = std::chrono::steady_clock::now();
     //std::cout << "elapsed time for segment2d = "
     //  << std::chrono::duration_cast<std::chrono::milliseconds>(t1-t0).count() << "[ms]" << std::endl;
@@ -141,7 +139,6 @@ public:
 
     obb_process_visualizer->Visualize();
 
-    // TODO Future works : matching, publixh xyzrgb
     if(pub_filteredoutline.at(cam_id).getNumSubscribers() > 0 && !filtered_outline.empty() ){
       cv_bridge::CvImage msg;
       cv::Mat dst = cv::Mat::zeros(rgb.rows,rgb.cols,CV_8UC3);
@@ -160,20 +157,13 @@ public:
       pub_filteredoutline.at(cam_id).publish(msg.toImageMsg());
     }
     if(pub_vis_mask_.at(cam_id).getNumSubscribers() > 0) {
-      cv::Mat dst = Overlap(rgb, instance_marker,.5);
+      bool puttext = false;
+      cv::Mat dst = Overlap(rgb, instance_marker,.2, puttext);
       cv_bridge::CvImage msg;
       msg.encoding = sensor_msgs::image_encodings::TYPE_8UC3;
       msg.image    = dst;
       pub_vis_mask_.at(cam_id).publish(msg.toImageMsg());
     }
-    //if(pub_xyzrgb_.at(cam_id).getNumSubscribers() > 0)
-    {
-      sensor_msgs::PointCloud2 msg;
-      pcl::toROSMsg(*xyzrgb, msg);
-      msg.header.frame_id = frame_id;
-      pub_xyzrgb_.at(cam_id).publish(msg);
-    }
-
     if(pub_clouds_.at(cam_id).getNumSubscribers() > 0) {
       sensor_msgs::PointCloud2 msg;
       ColorizeSegmentation(segmented_clouds, msg);
@@ -209,7 +199,14 @@ private:
                 cv::Mat& valid_mask
                 ) {
     cv::Mat odepth = cv_bridge::toCvCopy(req.depth, sensor_msgs::image_encodings::TYPE_32FC1)->image;
-    cv::Mat orgb = cv_bridge::toCvCopy(req.rgb, sensor_msgs::image_encodings::TYPE_8UC3)->image;
+    cv::Mat orgb;
+    if(req.rgb.encoding == "8UC1"){
+      cv::Mat gray = cv_bridge::toCvCopy(req.rgb, sensor_msgs::image_encodings::TYPE_8UC1)->image;
+      cv::cvtColor(gray, orgb, cv::COLOR_GRAY2BGR);
+    }
+    else
+      orgb= cv_bridge::toCvCopy(req.rgb, sensor_msgs::image_encodings::TYPE_8UC3)->image;
+
     cv::Mat och[2]; {
       cv::Mat edges = cv_bridge::toCvCopy(req.edge, sensor_msgs::image_encodings::TYPE_8UC2)->image;
       cv::split(edges, och);
@@ -236,7 +233,7 @@ private:
   std::map<std::string, std::shared_ptr<Segment2DEdgeBased> > segment2d_;
   std::map<std::string, std::shared_ptr<ObbEstimator> > obb_estimator_;
   std::map<std::string, std::shared_ptr<ObbProcessVisualizer> > obb_process_visualizer_;
-  std::map<std::string, ros::Publisher> pub_xyzrgb_, pub_clouds_, pub_boundary_, pub_vis_mask_,
+  std::map<std::string, ros::Publisher> pub_clouds_, pub_boundary_, pub_vis_mask_,
     pub_filteredoutline;
   cv::Mat mx_, my_;
 };

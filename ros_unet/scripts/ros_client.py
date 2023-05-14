@@ -82,19 +82,33 @@ def convert_plane(pose, plane0):
     #import pdb; pdb.set_trace()
     return (nvec[0], nvec[1], nvec[2], d)
 
-def rectify(rgb_msg, depth_msg, mx, my, bridge):
+def rectify(rgb_msg, depth_msg, intensity_msg, mx, my, bridge):
     rgb = bridge.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
     depth = bridge.imgmsg_to_cv2(depth_msg, desired_encoding='32FC1')
+    if intensity_msg is not None:
+        intensity = bridge.imgmsg_to_cv2(intensity_msg, desired_encoding='mono8')
+    else:
+        intensity = None
     if mx is None:
         rect_rgb, rect_depth = rgb, depth
+        rect_intensity = intensity
     else:
         rect_rgb = cv2.remap(rgb,mx,my,cv2.INTER_NEAREST)
         rect_depth = cv2.remap(depth,mx,my,cv2.INTER_NEAREST)
+        if intensity is not None:
+            rect_intensity = cv2.remap(intensity,mx,my,cv2.INTER_NEAREST)
     rect_rgb_msg = bridge.cv2_to_imgmsg(rect_rgb,encoding='bgr8')
     rect_depth_msg = bridge.cv2_to_imgmsg(rect_depth,encoding='32FC1')
+    if rect_intensity is not None:
+        rect_intensity_msg = bridge.cv2_to_imgmsg(rect_intensity,encoding='mono8')
+    else:
+        rect_intensity_msg = None
     assert(rgb_msg.header.frame_id == depth_msg.header.frame_id)
-    rect_rgb_msg.header.frame_id = rect_depth_msg.header.frame_id = rgb_msg.header.frame_id
-    return rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb
+    rect_rgb_msg.header.frame_id = rect_depth_msg.header.frame_id \
+            = rgb_msg.header.frame_id
+    if rect_intensity_msg is not None:
+        rect_intensity_msg.header.frame_id = rgb_msg.header.frame_id
+    return rect_rgb_msg, rect_depth_msg, rect_intensity_msg, rect_depth, rect_rgb, rect_intensity
 
 #def get_Twc(cam_id):
 #    rate = rospy.Rate(2)
@@ -107,13 +121,15 @@ def rectify(rgb_msg, depth_msg, mx, my, bridge):
 #    return pose
 
 class Sub:
-    def __init__(self, rgb, depth, info, imu):
+    def __init__(self, rgb, depth, intensity, info, imu):
         self.sub_depth = rospy.Subscriber(depth, Image, self.cb_depth, queue_size=1)
         self.sub_rgb   = rospy.Subscriber(rgb, Image, self.cb_rgb, queue_size=1)
+        self.sub_intensity   = rospy.Subscriber(intensity, Image, self.cb_intensity, queue_size=1)
         self.sub_info  = rospy.Subscriber(info, CameraInfo, self.cb_info, queue_size=1)
         self.sub_imu   = rospy.Subscriber(imu, Imu, self.cb_imu, queue_size=1)
         self.depth = None
         self.rgb = None
+        self.intensity = None
         self.info = None
         self.imu = None
 
@@ -125,6 +141,9 @@ class Sub:
 
     def cb_rgb(self, msg):
         self.rgb = msg
+
+    def cb_intensity(self, msg):
+        self.intensity = msg
 
     def cb_info(self, msg):
         self.info = msg
@@ -177,7 +196,8 @@ if __name__=="__main__":
 
     bridge = CvBridge()
     cam_id = "cam0"
-    sub = Sub("~%s/rgb"%cam_id, "~%s/depth"%cam_id, "~%s/info"%cam_id, "~%s/imu"%cam_id)
+    sub = Sub("~%s/rgb"%cam_id, "~%s/depth"%cam_id, "~%s/intensity"%cam_id,
+            "~%s/info"%cam_id, "~%s/imu"%cam_id)
     rect_info_msgs = {}
 
     rate = rospy.Rate(hz=30)
@@ -198,7 +218,8 @@ if __name__=="__main__":
         fx, fy = rect_info_msg.K[0], rect_info_msg.K[4]
         rect_K = np.array(rect_info_msgs[cam_id].K,np.float).reshape((3,3))
         rect_D = np.array(rect_info_msgs[cam_id].D,np.float).reshape((-1,))
-        rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb = rectify(sub.rgb, sub.depth, mx, my, bridge)
+        rect_rgb_msg, rect_depth_msg, rect_intensity_msg, rect_depth, rect_rgb, rect_intensity\
+            = rectify(sub.rgb, sub.depth, sub.intensity, mx, my, bridge)
 
         '''
         foolr mask 대신 GetBg로 처리.

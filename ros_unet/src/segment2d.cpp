@@ -815,18 +815,30 @@ cv::Mat FilterOutlineEdges(const cv::Mat& outline, bool verbose) {
   cv::connectedComponentsWithStats(outline,labels,stats,centroids);
 #endif
 
+  const int margin = 50;
   std::set<int> inliers;
   for(int i = 0; i < stats.rows; i++){
     // left,top,width,height,area
     const int max_wh = std::max(stats.at<int>(i,2),stats.at<int>(i,3));
-    if(max_wh > 100)
+    if(max_wh > 50)
       inliers.insert(i);
+#if 0
+    else{
+      // 화면 구석에 위치했는지 여부.
+      const int& u0 = stats.at<int>(i,cv::CC_STAT_LEFT);
+      const int& v0 = stats.at<int>(i,cv::CC_STAT_TOP);
+      const int u1 = u0 + stats.at<int>(i,cv::CC_STAT_WIDTH);
+      const int v1 = v0 + stats.at<int>(i,cv::CC_STAT_HEIGHT);
+      if(u0 < margin || v0 < margin || u1 > outline.cols-margin || v1 > outline.rows-margin)
+        inliers.insert(i);
+    }
+#endif
   }
 
   cv::Mat output = cv::Mat::zeros(outline.rows, outline.cols, CV_8UC1);
   for(int r = 0; r < output.rows; r++){
     for(int c = 0; c < output.cols; c++){
-      if(outline.at<unsigned char>(r,c) < 200) // outline에 버그로 작은숫자의 노이즈 있음.
+      if(outline.at<unsigned char>(r,c) < 200) // dilate에 버그로 작은숫자의 노이즈 있음.
         continue;
       const int& l = labels.at<int>(r,c);
       unsigned char& i = output.at<unsigned char>(r,c);

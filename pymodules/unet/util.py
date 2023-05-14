@@ -9,22 +9,16 @@ from geometry_msgs.msg import PoseArray, Pose
 import cv2
 
 colors = (
-  (0,255,0),
   (0,180,0),
   (0,100,0),
   (255,0,255),
   (100,0,255),
-  (255,0,100),
   (100,0,100),
-  (0,0,255),
   (0,0,180),
   (0,0,100),
   (255,255,0),
   (100,255,0),
-  (255,100,0),
   (100,100,0),
-  (255,0,0),
-  (180,0,0),
   (100,0,0),
   (0,255,255),
   (0,100,255),
@@ -32,68 +26,67 @@ colors = (
   (0,100,100)
 )
 
-from math import ceil
+from math import ceil, floor
 
 class SplitAdapter:
     def __init__(self, wh=128, step=100):
-        self.wh, self.step = wh, step
+        # TODO Change input param as nr, nc
+        pass
 
     def put(self, x):
         assert(x.dim()==4)
         self.org_shape = x.shape
-        wh, step = self.wh, self.step
         b, ch, h, w = x.shape
-        dim_h, dim_w = 2, 3
-    
-        margin = int( (wh-step)/2 )
-        nr = ceil( (h-2*margin)/step )
-        nc = ceil( (w-2*margin)/step )
-        padded_x = torch.zeros([b, ch, nr*step+2*margin, nc*step+2*margin], dtype=x.dtype)
-        padded_x[:, :, :h, :w] = x
-    
-        # patches.shape = b, ch, nr, nc, w, h
-        patches = padded_x.unfold(dim_h,wh,step).unfold(dim_w,wh,step)
+
+        nr, nc = 3,3
+        self.border = 20
+        m = 2*self.border
+
+        wm = ceil( ( w+m*(nc-1) )/ nc )
+        hm = ceil( ( h+m*(nr-1) )/ nr )
         
-        batches = torch.zeros([b*nr*nc, ch, wh,wh], dtype=patches.dtype)
-        k = 0
-        self.rc_indices = []
-        self.b, self.nr, self.nc = b, nr, nc
-        for r in range(nr):
-            for c in range(nc):
-                batches[b*k:b*(k+1),:,:,:] = patches[:,:,r,c,:,:]
-                self.rc_indices.append((r,c))
-                k+=1
-        if len(self.rc_indices) == 1:
-            import pdb; pdb.set_trace()
+        self.tiles = []
+        for v0 in range(0,h-m,hm-m):
+            v1 = v0 + hm
+            if v1 > h:
+                dx = v1 -h
+                v0 -= dx
+                v1 -= dx
+            for u0 in range(0,w-m,wm-m):
+                u1 = u0 + wm
+                if u1 > w:
+                    dx = u1 -h
+                    u0 -= dx
+                    u1 -= dx
+                #print( "%3d:%3d, %3d:%3d"%(u0,u1, v0,v1) )
+                self.tiles.append( (v0,v1,u0,u1) )
+        batches = torch.zeros([b*len(self.tiles), ch, hm, wm], dtype=x.dtype)
+        for i, (v0,v1,u0,u1) in enumerate(self.tiles):
+            batches[b*i:b*(i+1),:,:,:] = x[:,:,v0:v1,u0:u1]
         return batches
-    
     
     def restore(self, patches):
         assert(patches.dim()==4)
-        wh, step, org_shape = self.wh, self.step, self.org_shape
-        margin = int( (wh-step)/2 )
-        nrnc_b, channels = patches.shape[:2]
-        b,nr,nc = self.b, self.nr, self.nc
-    
-        dst = torch.zeros([b, channels, nr*step+2*margin, nc*step+2*margin],dtype=patches.dtype)
-        _, _, h, w = dst.shape
-        for k, (r,c) in enumerate(self.rc_indices):
-            if r > 0:
-                dr = margin
-            else:
-                dr = 0
-            if c > 0:
-                dc = margin
-            else:
-                dc = 0
-            r0 = r*step+dr
-            r1 = min( r0+step+margin-dr, h )
-            c0 = c*step+dc
-            c1 = min( c0+step+margin-dc, w)
-            patch = patches[b*k:b*(k+1),:,dr:-margin, dc:-margin]
-            dst[:,:,r0:r1,c0:c1] = patch
-    
-        dst = dst[:,:,:org_shape[-2],:org_shape[-1]]
+        dst_shape = [self.org_shape[0], patches.shape[1], self.org_shape[2], self.org_shape[3]]
+        dst = torch.zeros(dst_shape, dtype=patches.dtype)
+        b, ch, h, w = dst.shape
+        for i, (v0,v1,u0,u1) in enumerate(self.tiles):
+            x0, y0, x1, y1 = 0, 0, patches.shape[3], patches.shape[2]
+            if u0 > 0:
+                u0 += self.border
+                x0 += self.border
+            if v0 > 0:
+                v0 += self.border
+                y0 += self.border
+            if u1 < w:
+                u1 -= self.border
+                x1 -= self.border
+            if v1 < h:
+                v1 -= self.border
+                y1 -= self.border
+            # Get inner area only
+            #print( "%3d:%3d, %3d:%3d"%(u0,u1, v0,v1) )
+            dst[:,:,v0:v1,u0:u1] = patches[b*i:b*i+b,:,y0:y1,x0:x1]
         return dst
 
     def pred2mask(self, pred, th=.9):
@@ -107,8 +100,8 @@ class SplitAdapter:
         else:
             outline = (pred[:,:,0] > th).numpy()
             convex_edges = (pred[:,:,1] > th).numpy()
-            mask[outline] = 1 # Overwrite outline edge on convex edge.
             mask[convex_edges] = 2
+            mask[outline] = 1 # Overwrite outline edge on convex edge.
         return mask
 
     def pred2dst(self, pred, np_rgb, th=.9):
@@ -118,23 +111,6 @@ class SplitAdapter:
         dst[mask==1,2] = 255
         dst[mask==2,1:] = 0
         dst[mask==2,0] = 255
-
-        margin = int( (self.wh-self.step)/2 )
-        h, w, _ = dst.shape
-        for k, (r,c) in enumerate(self.rc_indices):
-            if r > 0:
-                dr = margin
-            else:
-                dr = 0
-            if c > 0:
-                dc = margin
-            else:
-                dc = 0
-            r0 = r*self.step+dr
-            r1 = min( r0+self.step+margin-dr, h )
-            c0 = c*self.step+dc
-            c1 = min( c0+self.step+margin-dc, w)
-            dst = cv2.rectangle(dst, (c0,r0), (c1,r1), (50,50,50),1)
         gray = cv2.cvtColor(np_rgb, cv2.COLOR_BGR2GRAY)
         gray = np.stack((gray,gray,gray),axis=2)
         dst = cv2.addWeighted(dst, 0.9, gray, 0.1, 0.)

@@ -17,6 +17,8 @@ import cv2
 from cv_bridge import CvBridge
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import PoseArray, Pose
+from sensor_msgs.msg import PointCloud2, PointField, Image
+import sensor_msgs.point_cloud2 as pc2
 
 #from tf2_msgs.msg import TFMessage
 import tf2_ros
@@ -28,7 +30,7 @@ from collections import OrderedDict as Od
 from myadjust_text import myadjust_text
 from adjustText import adjust_text
 
-from evaluator import get_pkg_dir, get_pick, GetMarkerCenters, VisualizeGt, marker2box, FitAxis, GetSurfCenterPoint, get_topicnames
+from evaluator import get_pkg_dir, get_pick, GetMarkerCenters, VisualizeGt, marker2box, FitAxis, GetSurfCenterPoint, get_topicnames, GetNeighbors
 from Objectron import box, iou
 
 from ros_client import *
@@ -51,7 +53,7 @@ N_FIG = (5,3)
 FIG_TOP  = .95
 FONT_SIZE = 10
 FONT_WEIGHT = None # 'bold', None
-XLABEL_COORD = {'x':1., 'y':-0.08}
+XLABEL_COORD = {'x':1.05, 'y':-0.08}
 XLABEL_COORD2 = {'x':1., 'y':-0.08}
 LEGNED_ARGS={'fontsize':FONT_SIZE, 'bbox_to_anchor':(0.5, 1.3),'loc':'center'}
 
@@ -73,20 +75,23 @@ def get_topics(bridge, pkg_dir,gt_fn, pick):
     bag = rosbag.Bag(rosbag_fn)
     rgb_topics, depth_topics, info_topics = {},{},{}
     imu_topics = {}
+    info_msgs = {}
     rect_info_msgs = {}
-    remap_maps = {}
     cameras = [get_camid(gt_fn)] # For each file test.
     for cam_id in cameras:
         rgb_topics[cam_id], depth_topics[cam_id], info_topics[cam_id], imu_topics[cam_id] \
                 = get_topicnames(rosbag_fn, bag, given_camid=cam_id)
-        try:
-            _, rgb_msg, _ = bag.read_messages(topics=[rgb_topics[cam_id]]).next()
-            _, depth_msg, _ = bag.read_messages(topics=[depth_topics[cam_id]]).next()
-            _, info_msg, _= bag.read_messages(topics=[info_topics[cam_id]]).next()
-        except:
-            continue
-        rect_info_msgs[cam_id], mx, my = get_rectification(info_msg)
-        remap_maps[cam_id] = (mx, my)
+        _, rgb_msg, _ = bag.read_messages(topics=[rgb_topics[cam_id]]).next()
+        _, depth_msg, _ = bag.read_messages(topics=[depth_topics[cam_id]]).next()
+        _, info_msg, _= bag.read_messages(topics=[info_topics[cam_id]]).next()
+
+        if len(info_msg.D) == 0:
+            rect_info_msg = info_msg
+            mx, my = None,None
+        else:
+            rect_info_msg, mx, my = get_rectification(info_msg)
+        rect_info_msgs[cam_id] = rect_info_msg
+        info_msgs[cam_id] = info_msg
     rgb_msgs, depth_msgs, imu_msgs  = {}, {}, {}
     topic2cam = {}
     for k,v in rgb_topics.items():
@@ -102,26 +107,12 @@ def get_topics(bridge, pkg_dir,gt_fn, pick):
     set_depth = set(depth_topics.values())
     set_rgb = set(rgb_topics.values())
     set_imu = set(imu_topics.values())
-    fx, fy = rect_info_msgs[cam_id].K[0], rect_info_msgs[cam_id].K[4]
 
-    rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb = rectify(rgb_msg, depth_msg, mx, my, bridge)
-    #cvgt_fn = osp.join(pkg_dir,pick['cvgt_fn'])
-    #cv_gt = cv2.imread(cvgt_fn)
-    #max_z = 5.
-    #init_floormask = GetInitFloorMask(cv_gt)
-    #if init_floormask is None:
-    #    plane_c = (0., 0., 0., 99.)
-    #    floor = np.zeros((rect_depth_msg.height,rect_depth_msg.width),np.uint8)
-    #else:
-    #    floor_msg = compute_floor(rect_depth_msg, rect_rgb_msg, init_floormask)
-    #    plane_c  = floor_msg.plane
-    #    floor_mask = floor_msg.mask
-    #    floor = np.frombuffer(floor_mask.data, dtype=np.uint8).reshape(floor_mask.height, floor_mask.width)
-    #Twc = get_Twc(cam_id)
+    fx, fy = rect_info_msg.K[0], rect_info_msg.K[4]
 
     bag = rosbag.Bag(rosbag_fn)
     return bag, set_depth, set_rgb, set_imu, topic2cam, rgb_topics, depth_topics, imu_topics, rgb_msgs, depth_msgs, imu_msgs,\
-            rect_info_msgs, mx, my, fx, fy#, Twc, plane_c, floor
+            info_msgs, rect_info_msgs, mx,my, fx, fy#, Twc, plane_c, floor
 
 def visualize_scene(pick, eval_scene):
     gt_indices = np.unique(eval_scene['gidx'])
@@ -405,37 +396,21 @@ def GetMargin(eval_data, picks, normalized):
     minwidth_array = np.repeat(-1.,eval_data.shape)
     for base, pick in picks.items():
         gt_marker = pick['marker']
-        w,h = float(gt_marker.shape[1]), float(gt_marker.shape[0])
-        K = pick['K'] # TODO K? newK?
-        fx, fy, cx, cy = K[0,0], K[1,1], K[0,2], K[1,2]
-        if normalized:
-            r = round(fx/fy)
-            if fx != fy:
-                try:
-                    gt_marker = cv2.resize(gt_marker, (int(w), int(r*h)) )
-                except:
-                    import pdb; pdb.set_trace()
-            fx = fy
-        for gidx in np.unique(gt_marker):
+        gindices = np.unique(gt_marker)
+        for gidx in gindices:
             if gidx == 0:
                 continue
             indicies, = np.where(np.logical_and(eval_data['base']==base,eval_data['gidx']==gidx))
-            part = gt_marker==gidx
-            part[0,:] = part[:,0] = part[-1,:] = part[:,-1] = 0
-            dist_part = cv2.distanceTransform( part.astype(np.uint8),
-                    distanceType=cv2.DIST_L2, maskSize=5)
-            loc = np.unravel_index( np.argmax(dist_part,axis=None), gt_marker.shape)
-            dy = float(min(loc[0], h-loc[0]))
-            dx = float(min(loc[1], w-loc[1]))
-            d = min(dx, dy)
             if normalized:
-                assert(fx == fy)
-                margin_array[indicies] = d/fx
-                minwidth_array[indicies] = dist_part[loc]/fx
+                normalized_minwidth = pick['normalized_minwidths'][gidx]
+                normalized_margin   = pick['normalized_margins'][gidx]
+                minwidth_array[indicies] = normalized_minwidth
+                margin_array[indicies]   = normalized_margin
             else:
-                margin_array[indicies] = d
-                minwidth_array[indicies] = dist_part[loc]
-
+                minwidth = pick['minwidths'][gidx]
+                margin   = pick['margins'][gidx]
+                minwidth_array[indicies] = minwidth
+                margin_array[indicies]   = margin
     assert( (margin_array<0).sum() == 0)
     return margin_array, minwidth_array
 
@@ -451,17 +426,6 @@ def GetTags(eval_data, picks, tags):
             if key in tags:
                 tag_array[indicies] = tags[key]
     return tag_array
-
-    #valid = np.repeat(True,eval_data.shape)
-    #for base, pick in picks.items():
-    #    gt_marker = pick['marker']
-    #    for gidx in np.unique(gt_marker):
-    #        if gidx == 0:
-    #            continue
-    #        indicies, = np.where(np.logical_and(eval_data['base']==base,eval_data['gidx']==gidx))
-    #        if (base,gidx) in tags: # tag = tags[(base,gidx)]
-    #            valid[indicies] = False
-    #return valid
 
 def LabelHeight(ax, rects, form='%.2f'):
     fig = ax.get_figure()
@@ -503,7 +467,7 @@ def LabelHeight(ax, rects, form='%.2f'):
 def GetThickness(eval_data):
     thickness_array = np.repeat(-1.,eval_data.shape)
     for i,b1 in enumerate(eval_data['predbox']):
-        thickness_array[i] = b1.scale[0]
+        thickness_array[i] = b1.scale[2]
     return thickness_array
 
 def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
@@ -519,21 +483,26 @@ def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
     # TODO valid for each method
     valid = logical_ands([tags=='',
                           ourobb_data['iou']>min_iou,
-                          ourobb_data['valid_obb'],
-                          ~ourobb_data['overseg'],
-                          ~ourobb_data['underseg']
+                          ourobb_data['valid_obb']
                           ])
     ourobb_data = ourobb_data[valid]
+    minmargin=10.
     thresh_thick = 0.05
     datas = Od()
     if len(ourobb_data)>0:
+        margin, minwdith = GetMargin(ourobb_data, picks, normalized=False)
+        ourobb_data = ourobb_data[margin > minmargin]
         datas['OBB for all']                  = ourobb_data
         datas['OBB for observable side']      = ourobb_data[GetThickness(ourobb_data) > thresh_thick]
         datas['OBB for unobservable side']    = ourobb_data[GetThickness(ourobb_data) < thresh_thick]
     if len(mvbb_data)>0:
+        margin, minwdith = GetMargin(mvbb_data, picks, normalized=False)
+        mvbb_data = mvbb_data[margin > minmargin]
         datas['MVBB for observable side']     = mvbb_data[GetThickness(mvbb_data) > thresh_thick]
         datas['MVBB for unobservable side']   = mvbb_data[GetThickness(mvbb_data) < thresh_thick]
     if len(ransac_data)>0:
+        margin, minwdith = GetMargin(ransac_data, picks, normalized=False)
+        ransac_data = ransac_data[margin > minmargin]
         datas['RANSAC for observable side']   = ransac_data[GetThickness(ransac_data) > thresh_thick]
         datas['RANSAC for unobservable side'] = ransac_data[GetThickness(ransac_data) < thresh_thick]
 
@@ -625,58 +594,55 @@ def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
         show_underseg=False, show_overseg=False, show_sample=False):
     la = np.logical_and
     n_hist , bound    = np.histogram(margin[valid], num_bins,min_max)
-    tp_hist , _       = np.histogram(margin[
-        logical_ands([eval_data['iou']>min_iou,
-                      valid,
-                      ~eval_data['overseg'],
-                      ~eval_data['underseg'] ])], num_bins,min_max)
+
+    cond = [eval_data['iou']>min_iou, valid]
+    if show_overseg:
+        cond.append( ~eval_data['overseg'] )
+    if show_underseg:
+        cond.append( ~eval_data['underseg'] )
+    tp_hist , _       = np.histogram(margin[la.reduce(cond)], num_bins,min_max)
     underseg_hist , _ = np.histogram(margin[la(eval_data['underseg'],valid)], num_bins,min_max)
     overseg_hist , _  = np.histogram(margin[la(eval_data['overseg'],valid)], num_bins,min_max)
     no_samples = n_hist==0
     n_hist[no_samples] = 1 # To prevent divide by zero
-    nbar= 1
     if show_underseg:
         if underseg_hist.sum()==0:
             show_underseg = False
-        else:
-            nbar+=1
     if show_overseg:
         if overseg_hist.sum()==0:
             show_overseg = False
-        else:
-            nbar+=1
     tp_hist = tp_hist.astype(float) / n_hist.astype(float)
     underseg_hist = underseg_hist.astype(float) / n_hist.astype(float)
     overseg_hist  = overseg_hist.astype(float) / n_hist.astype(float)
     n_hist[no_samples] = 0
-    width = 1. / float(nbar) - .05
     x = np.arange(num_bins)
-    offset = float(nbar-1)*width/2.
+
     ap_label = 'AP(IoU >%.1f)'%min_iou
-    tp_hist[tp_hist==0.] = 1e-10 # For no missing label
-    rects = ax.bar(x-offset, width=width, height=tp_hist, alpha=.5, label=ap_label)
-    LabelHeight(ax, rects)
-    offset -= width
-    ncol = 1
-    if show_underseg:
-        underseg_hist[underseg_hist==0.] = 1e-10 # For no missing label
-        rects = ax.bar(x-offset, width=width, height=underseg_hist, alpha=.5, label='$p(\mathrm{under})$')
-        LabelHeight(ax, rects)
-        offset -= width
-        ncol += 1
+
+    hists = [(tp_hist,ap_label)]
     if show_overseg:
-        overseg_hist[overseg_hist==0.] = 1e-10 # For no missing label
-        rects = ax.bar(x-offset, width=width, height=overseg_hist, alpha=.5, label='$p(\mathrm{over})$')
+        hists.append( (overseg_hist,'$p(\mathrm{over})$') )
+    if show_underseg:
+        hists.append( (underseg_hist,'$p(\mathrm{under})$') )
+
+    b, r = float(len(hists)), .3
+    width = 1. / (r*(b+1.)+b)
+    offset = r * width
+
+    for i, (hist, label) in enumerate(hists):
+        hist[hist==0.] = 1e-10 # For no missing label
+        dx = offset + float(i)*(width+offset)
+        rects = ax.bar(x + dx , width=width, height=hist, alpha=.4, align='edge', label=label)
         LabelHeight(ax, rects)
-        offset -= width
-        ncol += 1
+
+    x = np.arange(len(x)+1)
     xlabels = []
-    for i in range(num_bins):
-        #msg = '%.f~%.f'%(bound[i],bound[i+1])
-        msg = _format%(bound[i],bound[i+1])
-        if show_sample:
-            msg += '\n%d'%n_hist[i]
+    for i in range(len(bound)):
+        msg = _format%(bound[i])
+        if i < len(n_hist) and show_sample:
+            msg += '\n%10d'%n_hist[i]
         xlabels.append(msg)
+    ax.set_xlim(x[0],  x[-1])
     ax.set_xlabel('%s'%unit_str,rotation=0, fontsize=FONT_SIZE, fontweight=FONT_WEIGHT)
     ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
@@ -684,8 +650,8 @@ def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
     ax.xaxis.set_label_coords(**XLABEL_COORD)
     ax.yaxis.set_label_coords(-0.08, 1.)
 
-    if nbar > 1:
-        ax.legend(ncol=ncol,**LEGNED_ARGS)
+    if len(hists) > 1:
+        ax.legend(ncol=len(hists),**LEGNED_ARGS)
     else:
         ax.set_ylabel(ap_label,rotation=0, fontsize=FONT_SIZE, fontweight=FONT_WEIGHT)
 
@@ -844,12 +810,6 @@ def Plot3dEval(eval_data, ax, ytype,
             stddevs[k].append(stddev)
             maes[k].append(mae)
 
-    nbar= 3
-    width = 1. / float(nbar) - .02
-    offset = float(nbar-1)*width/2.
-    x = np.arange(num_bins).astype(float)
-    #xlim = ax.get_xlim()
-    ax.set_xlim(x[0]-2.*offset,x[-1]+2.*offset)
 
     # https://stackoverflow.com/questions/11774822/matplotlib-histogram-with-errorbars
     #yvalues = rmses
@@ -857,31 +817,34 @@ def Plot3dEval(eval_data, ax, ytype,
         yvalues = medians
     elif ytype.lower() == 'mae':
         yvalues = maes
-    for k, v in yvalues.items():
-        if v == 0.:
-            yvalues[k] = 1e-10
+    #for k, v in yvalues.items():
+    #    if v == 0.:
+    #        yvalues[k] = 1e-10
 
-    rects = ax.bar(x-offset, width=width, height=yvalues['trans_err'],
-            alpha=.5, label='trans error')
-    LabelHeight(ax, rects, form='%.2f')
-    offset -= width
+    hists = []
+    hists.append( (yvalues['trans_err'],'trans error','%.2f') )
+    hists.append( (yvalues['max_wh_err'], 'size error','%.2f') )
+    hists.append( (yvalues['deg_err'], 'rotation error','%.1f') )
 
-    rects = ax.bar(x-offset, width=width, height=yvalues['max_wh_err'],
-            alpha=.5, label='size error')
-    LabelHeight(ax, rects, form='%.2f')
-    offset -= width
+    b, r = float(len(hists)), .2
+    width = 1. / (r*(b+1.)+b)
+    offset = r * width
 
-    rects = ax_deg.bar(x-offset, width=width, height=yvalues['deg_err'],
-            alpha=.5, label='rotation error', color='green')
-    LabelHeight(ax_deg, rects, form='%.1f')
-    offset -= width
+    x = np.arange(num_bins).astype(float)
+    for i, (hist, label, height_form) in enumerate(hists):
+        hist[hist==0.] = 1e-10 # For no missing label
+        dx = offset + float(i)*(width+offset)
+        rects = ax.bar(x + dx , width=width, height=hist, alpha=.4, align='edge', label=label)
+        LabelHeight(ax, rects, form=height_form)
 
+    x = np.arange(len(x)+1)
     xlabels = []
-    for i in range(num_bins):
-        msg = _format%(bound[i],bound[i+1])
-        if show_sample:
-            msg += '\n%d'%n_hist[i]
+    for i in range(len(bound)):
+        msg = _format%(bound[i])
+        if i < len(n_hist) and show_sample:
+            msg += '\n%10d'%n_hist[i]
         xlabels.append(msg)
+
     ax.set_xticks(x)
     ax.set_xticklabels(xlabels, rotation=0.,fontsize=FONT_SIZE)
     ax.set_xlabel('%s'%unit_str,rotation=0, fontsize=FONT_SIZE, fontweight=FONT_WEIGHT)
@@ -900,6 +863,7 @@ def Plot3dEval(eval_data, ax, ytype,
             'bbox_to_anchor':(1., 1.3),
             'loc':'center right'}
     ax_deg.legend(**legend_args)
+    ax.legend(ncol=len(hists),**LEGNED_ARGS)
 
     return
 
@@ -994,10 +958,52 @@ def GetErrorOfMvbb(gt_obb_markers, mvbb_resp):
         output23dlist.append( output+(True, t_err, deg_err, max_wh_err, b0,b1) )
     return output23dlist
 
+def UnprojectIntensity(rect_intensity, rect_depth, rect_K, rect_D, frame_id):
+    rect_rgb = cv2.cvtColor(rect_intensity, cv2.COLOR_GRAY2BGR)
+    marker = np.ones_like(rect_depth, dtype=np.int32)
+    xyzrgb, _ = UnprojectPointscloud(rect_rgb,rect_depth,marker,rect_K,rect_D,
+            leaf_xy=0.01,leaf_z=0.01, do_ecufilter=False)
+    # Define the fields of the point cloud message
+    fields = [PointField('x', 0, PointField.FLOAT32, 1),
+              PointField('y', 4, PointField.FLOAT32, 1),
+              PointField('z', 8, PointField.FLOAT32, 1),
+              PointField('r', 12, PointField.FLOAT32, 1),
+              PointField('g', 16, PointField.FLOAT32, 1),
+              PointField('b', 20, PointField.FLOAT32, 1)]
+    header = rospy.Header()
+    header.frame_id = frame_id
+    pointcloud_msg = pc2.create_cloud(header, fields, xyzrgb)
+    return pointcloud_msg
+
+def CaptureScreen(rect_rgb, obb_resp): #, vismarker_msg):
+    # Capture the screenshot of the region
+    x1,y1,w,h = 650, 200, 800, 700
+    capture = pyautogui.screenshot(region=(x1, y1, w,h))
+    # Convert the screenshot to a numpy array
+    capture = np.array(capture)
+    # Convert the color format from RGB to BGR (which is used by cv2)
+    capture = cv2.cvtColor(capture, cv2.COLOR_RGB2BGR)
+
+    height, width = rect_rgb.shape[:2]
+    rgb = np.frombuffer(rect_rgb.data, dtype=np.uint8)\
+            .reshape(height, width,-1)
+    outline = np.frombuffer(obb_resp.filtered_outline.data, dtype=np.uint8)\
+            .reshape(height, width)
+    marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32).reshape(height,width)
+    return {'marker':marker, 'outline':outline, 'capture':capture, 'rgb':rgb}
+
+class ImageSubscriber:
+    def __init__(self, topic):
+        self.img = None
+
+        # Subscribe to the image topic
+        self.sub = rospy.Subscriber(topic, Image, self.image_callback)
+        self.topic = topic
+
+    def image_callback(self, msg):
+        self.img = msg
+
 def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
-    #if osp.exists(screenshot_dir):
-    #    shutil.rmtree(screenshot_dir)
-    #makedirs(screenshot_dir)
     rospy.loginfo("Waiting PredictEdge")
     rospy.wait_for_service('~PredictEdge')
     predict_edge = rospy.ServiceProxy('~PredictEdge', ros_unet.srv.ComputeEdge)
@@ -1019,6 +1025,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
 
     pub_gt_obb = rospy.Publisher("~gt_obb", MarkerArray, queue_size=-1)
     pub_gt_pose = rospy.Publisher("~gt_pose", PoseArray, queue_size=1)
+    pub_xyzi = rospy.Publisher("~xyzi", PointCloud2, queue_size=5)
 
     pkg_dir = get_pkg_dir()
 
@@ -1045,12 +1052,14 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
     eval_data = None
     br = tf2_ros.StaticTransformBroadcaster()
 
+    elapsed_times=Od()
+    for m in methods:
+        elapsed_times[m] = []
     for i_file, gt_fn in enumerate(gt_files):
-        #print(gt_fn)
         pick = get_pick(gt_fn)
         base = osp.splitext(osp.basename(pick['rosbag_fn']))[0]
         bag, set_depth, set_rgb, set_imu, topic2cam, rgb_topics, depth_topics, imu_topics, rgb_msgs, depth_msgs, imu_msgs,\
-                rect_info_msgs, mx, my, fx, fy = \
+                info_msgs, rect_info_msgs, mx, my, fx, fy = \
                 get_topics(bridge,pkg_dir,gt_fn, pick)
         #Tfwc = convert2tf(Twc)
         gt_obbs = {}
@@ -1065,6 +1074,22 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
             for tf in msg.transforms:
                 transforms['%s-%s'%(tf.header.frame_id, tf.child_frame_id)] = tf
 
+        imu_topic_exists = True
+        try:
+            _, msg, _ = bag.read_messages(topics=imu_topics.values()).next()
+        except:
+            imu_msg = None
+            imu_topic_exists = False
+
+        rect_intensity_topic = '/cam0/helios2/intensity_rect' # TODO
+        try:
+            _, rect_intensity_msg, _ = bag.read_messages(topics=[rect_intensity_topic]).next()
+            rect_intensity = np.frombuffer(rect_intensity_msg.data, dtype=np.uint8)\
+                    .reshape(rect_intensity_msg.height, rect_intensity_msg.width)
+        except:
+            pass
+
+
         for topic, msg, t in bag.read_messages(topics=rgb_topics.values()\
                                                       +depth_topics.values()\
                                                       +imu_topics.values() ):
@@ -1075,23 +1100,37 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                 rgb_msgs[cam_id] = msg
             elif topic in set_imu:
                 imu_msgs[cam_id] = msg
-
-            rgb_msg, depth_msg, imu_msg = rgb_msgs[cam_id], depth_msgs[cam_id], imu_msgs[cam_id]
-            if depth_msg is None or rgb_msg is None or imu_msg is None:
-                continue
-            if gt_obb_markers is None:
-                cam_frame_id = rgb_msgs[cam_id].header.frame_id
-                gt_obb_poses, gt_obb_markers = VisualizeGt(gt_obbs, frame_id=cam_frame_id)
-                a = Marker()
-                a.action = Marker.DELETEALL
-                for arr in [gt_obb_markers]: # ,gt_infos
-                    arr.markers.append(a)
-                    arr.markers.reverse()
-
-            rect_rgb_msg, rect_depth_msg, rect_depth, rect_rgb = rectify(rgb_msg, depth_msg, mx, my, bridge)
+            rgb_msg, depth_msg = rgb_msgs[cam_id], depth_msgs[cam_id]
+            if imu_topic_exists:
+                imu_msg = imu_msgs[cam_id]
+            info_msg = info_msgs[cam_id]
             rect_info_msg = rect_info_msgs[cam_id]
-            rect_K = np.array(rect_info_msgs[cam_id].K,np.float).reshape((3,3))
-            rect_D = np.array(rect_info_msgs[cam_id].D,np.float).reshape((-1,))
+            if depth_msg is None or rgb_msg is None:
+                continue
+            if imu_msg is None and imu_topic_exists:
+                continue
+            if len(info_msg.D) == 0:
+                rect_info_msg = info_msg
+                rect_rgb_msg = rgb_msg
+                rect_depth_msg = depth_msg
+                rect_rgb = np.frombuffer(rect_rgb_msg.data, dtype=np.uint8)\
+                        .reshape(rect_rgb_msg.height, rect_rgb_msg.width, -1)
+            else:
+                rect_info_msg, mx, my = get_rectification(info_msg)
+                rgb = np.frombuffer(rgb_msg.data, dtype=np.uint8)\
+                            .reshape(rgb_msg.height, rgb_msg.width, -1)
+                intensity = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
+                intensity_msg = bridge.cv2_to_imgmsg(intensity, encoding='mono8')
+                intensity_msg.header.frame_id = rgb_msg.header.frame_id
+                rect_rgb_msg, rect_depth_msg, rect_intensity_msg, rect_depth, rect_rgb, rect_intensity\
+                        = rectify(rgb_msg, depth_msg, intensity_msg, mx, my, bridge)
+            if rect_rgb_msg.header.frame_id == 'arena_camera':
+                rect_rgb_msg.header.frame_id = rect_depth_msg.header.frame_id\
+                        = rect_intensity_msg.header.frame_id\
+                        = 'cam0_arena_camera'
+            rect_depth = bridge.imgmsg_to_cv2(rect_depth_msg, desired_encoding='passthrough')
+            rect_K = np.array(rect_info_msg.K,np.float).reshape((3,3))
+            rect_D = np.array(rect_info_msg.D,np.float).reshape((-1,))
 
             now = rospy.Time.now()
             tf_lists = []
@@ -1102,19 +1141,39 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                 tf.header.frame_id = v.header.frame_id
                 tf.header.stamp = now
                 tf.child_frame_id = v.child_frame_id
-                #tf.transform.translation= v.transform.translation
-                #tf.transform.rotation= v.transform.rotation
                 tf.transform = v.transform
                 tf_lists.append(tf)
             br.sendTransform(tf_lists)
 
-            t0 = time.time()
+            pointcloud_msg = UnprojectIntensity(rect_intensity, rect_depth, rect_K, rect_D, rect_depth_msg.header.frame_id)
+            pub_xyzi.publish(pointcloud_msg)
+
+            if gt_obb_markers is None:
+                cam_frame_id = rgb_msgs[cam_id].header.frame_id
+                gt_obb_poses, gt_obb_markers = VisualizeGt(gt_obbs, frame_id=cam_frame_id)
+                a = Marker()
+                a.action = Marker.DELETEALL
+                for arr in [gt_obb_markers]: # ,gt_infos
+                    arr.markers.append(a)
+                    arr.markers.reverse()
+
+            t0_myobb = time.time()
             edge_resp = predict_edge(rect_rgb_msg,rect_depth_msg, fx, fy)
             # TODO Need to publish 'tf' before get_bg
-            bg_res = get_bg(rect_rgb_msg,rect_depth_msg,rect_info_msg,imu_msg)
-            obb_resp = compute_obb(rect_depth_msg, rect_rgb_msg, edge_resp.edge, rect_info_msg,
-                    std_msgs.msg.String(cam_id), bg_res.p_mask)
-            t1 = time.time()
+            if imu_msg is None:
+                bg_mask = np.zeros((rect_rgb_msg.height,rect_rgb_msg.width),dtype=np.int32)
+                bg_mask = bridge.cv2_to_imgmsg(bg_mask,encoding='32SC1')
+            else:
+                bg_res = get_bg(rect_rgb_msg,rect_depth_msg,rect_info_msg,imu_msg)
+                bg_mask = bg_res.p_mask
+            try:
+                obb_resp = compute_obb(rect_depth_msg, rect_intensity_msg, edge_resp.edge, rect_info_msg, std_msgs.msg.String(cam_id), bg_mask)
+            except:
+                import pdb; pdb.set_trace()
+            t1_myobb = time.time()
+
+            t = (time.time()-t0_myobb) / float(len(obb_resp.output.markers))
+            elapsed_times['myobb'].append(t)
 
             if 'mvbb' in methods or 'ransac' in methods:
                 '''
@@ -1129,60 +1188,67 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                 marker = pick['marker'].copy()
                 dist = cv2.distanceTransform( (~pick['outline']).astype(np.uint8), distanceType=cv2.DIST_L2, maskSize=5)
                 marker[dist < 5.] = 0
-                xyzrgb, labels = UnprojectPointscloud(rect_rgb,rect_depth,marker,rect_K,rect_D,leaf_xy=0.02,leaf_z=0.01)
-                A = Tfwc.astype(xyzrgb.dtype)
-                B = np.hstack( (xyzrgb[:,:3], np.ones((xyzrgb.shape[0],1),xyzrgb.dtype))).T
-                xyzrgb[:,:3] = np.matmul(A,B).T
+                xyzrgb, labels = UnprojectPointscloud(rect_rgb,rect_depth,marker,rect_K,rect_D,
+                        leaf_xy=0.01,leaf_z=0.01)
                 xyz = xyzrgb[:,:3].reshape(-1,).tolist()
                 labels = labels.reshape(-1,).tolist()
                 resps = {}
                 if 'mvbb' in methods:
-                    resps['mvbb'] = cgal_compute_obb(xyz, labels)
+                    t0 = time.time()
+                    resps['mvbb'] = cgal_compute_obb(xyz, labels, rect_depth_msg.header.frame_id)
+                    t = (time.time()-t0) / float(len(resps['mvbb'].output.markers))
+                    elapsed_times['mvbb'].append(t)
                 if 'ransac' in methods:
-                    resps['ransac'] = ransac_compute_obb(xyz, labels)
+                    t0 = time.time()
+                    resps['ransac'] = ransac_compute_obb(xyz, labels, rect_depth_msg.header.frame_id)
+                    t = (time.time()-t0) / float(len(resps['ransac'].output.markers))
+                    elapsed_times['ransac'].append(t)
                 for method, resp in resps.items():
                     eval_23d = GetErrorOfMvbb(gt_obb_markers, resp)
                     for each in eval_23d:
-                        eval_scene.append( (base,i_file,nframe,method)+ each)
+                        eval_scene.append( (base,i_file,nframe,method)+each)
 
             if 'myobb' in methods:
                 # strict rule : 논문미팅 지도에 따라, 조그만 조각이라도 instace 나누면 overseg 판정.
-                eval_2d, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb, strict_rule=True)
+                eval_2d, dst = Evaluate2D(obb_resp, pick['marker'], rect_rgb, strict_rule=False)
                 eval_23d, dst3d = Evaluate3D(pick, gt_obb_markers, obb_resp, eval_2d)
                 for each in eval_23d:
                     eval_scene.append( (base,i_file,nframe,'myobb')+ each)
             pub_gt_obb.publish(gt_obb_markers)
 
-            cv2.imshow("frame", dst)
-            cv2.imshow("dst3d", dst3d)
-            if ord('q') == cv2.waitKey(1):
-                exit(1)
-            fn = osp.join(eval_dir, 'frame_%d_%s_%04d.png'%(i_file,base,nframe) )
+            capture = CaptureScreen(rect_rgb,obb_resp)
+            with open(osp.join(eval_dir,"capture_%d_%d.pick"%(i_file+1, nframe+1)),'wb') as f:
+                pickle.dump(capture, f, protocol=2)
+
+            fn = osp.join(eval_dir, 'frame_%d_%s_%04d.png'%(i_file+1,base,nframe+1) )
             cv2.imwrite(fn, dst)
             nframe += 1
             rospy.loginfo("Perform evaluation for %s, S[%d/%d], F[%d/%d]"\
                     %(base, i_file+1,len(gt_files), nframe,nframe_per_scene) )
-            depth_msg, rgb_msg = None, None
+            #depth_msg, rgb_msg = None, None
+            depth_msgs[cam_id], rgb_msgs[cam_id] = None, None
             if nframe >= nframe_per_scene:
                 break
-
         eval_scene = np.array(eval_scene, dtype)
         if eval_data is None:
             eval_data = eval_scene
         else:
             eval_data = np.hstack((eval_data,eval_scene) )
         dst = visualize_scene(pick,eval_scene)
-        cv2.imshow("scene%d"%i_file, dst)
-        if ord('q') == cv2.waitKey(1):
-            exit(1)
+        #cv2.imshow("latest scene", dst)
+        #if ord('q') == cv2.waitKey(1):
+        #    exit(1)
         fn = osp.join(eval_dir, 'scene_%d_%s.png'%(i_file,base) )
         cv2.imwrite(fn, dst)
 
     cv2.destroyAllWindows()
     with open(fn_evaldata,'wb') as f:
         np.save(f, eval_data)
+    fn = osp.join(eval_dir, 'elapsed_times.pick')
+    with open(fn,'wb') as f:
+        pickle.dump(elapsed_times, f, protocol=2)
 
-    return eval_data
+    return eval_data, elapsed_times
 
 def full_extent(ax, pad=0.0):
     """
@@ -1262,10 +1328,52 @@ def test_evaluation(rosbag_subnames, show_sample):
         gt_files += ls
     if not osp.exists(fn_evaldata):
         methods = rospy.get_param("~methods").split(',')
-        eval_data_allmethod = perform_test(eval_dir, gt_files, fn_evaldata, methods=methods)
+        eval_data_allmethod, elapsed_times = perform_test(eval_dir, gt_files, fn_evaldata, methods=methods)
     else:
         with open(fn_evaldata,'rb') as f:
             eval_data_allmethod = np.load(f, allow_pickle=True)
+        fn = osp.join(eval_dir, 'elapsed_times.pick')
+        with open(fn,'rb') as f:
+            elapsed_times = pickle.load(f)
+
+    captures = glob2.glob(osp.join(eval_dir,'capture_*_*.pick'),recursive=False)
+    sorted_captures = []marker
+    max_scene, max_frame = -1, -1
+    for fn in captures:
+        scene, frame = osp.splitext(osp.basename(fn))[0].split('_')[1:]
+        scene, frame = int(scene), int(frame)
+        sorted_captures.append( (scene,frame,fn) )
+        max_scene, max_frame = max(max_scene, scene), max(max_frame, frame)
+    sorted_captures = sorted(sorted_captures, key=lambda x: (x[0], x[1]))
+
+    fps = 5.
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # Specify the codec for WMV format
+    video_fn = osp.join(eval_dir,"output.mp4")
+    video_writer = None
+    font_face, font_scale, font_thick = cv2.FONT_HERSHEY_PLAIN, 2.,2
+    for scene, frame, fn in sorted_captures:
+        with open(fn,'rb') as f:
+            pick = pickle.load(f)
+        marker, outline, capture, rgb \
+                = pick['marker'], pick['outline'], pick['capture'], pick['rgb']
+        capture = cv2.resize(capture,(marker.shape[1],marker.shape[0]))
+
+        msg = "#s%2d/%d, #f%2d/%d"%(scene,max_scene,frame,max_frame)
+        w,h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        vis_marker = GetColoredLabel(marker,text=True)
+        vis_marker = cv2.addWeighted(rgb, .3, vis_marker, .7, 0.)
+        vis_marker[outline > 0, 2] = 255
+        vis_marker[outline > 0, :2] = 0
+        dst = np.hstack((capture, vis_marker))
+
+        cv2.putText(dst, msg,
+                (5,5+h), font_face, font_scale, (255,255,255), font_thick)
+        if video_writer is None:
+            video_writer =  cv2.VideoWriter(video_fn, fourcc, fps,
+                    (dst.shape[1], dst.shape[0]))
+        video_writer.write(dst)
+    video_writer.release()
+
     picks = {}
     for fn in gt_files:
         base = osp.splitext( osp.basename(fn) )[0]
@@ -1297,37 +1405,57 @@ def test_evaluation(rosbag_subnames, show_sample):
 
         fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
         valid = tags==''
+        voblique = oblique < 30.
         if normalized:
             vminwidth = minwidth > 10./500. # 0.02
             vmargin = margin > 20./500. # 0.04
             margin_minmax = (20./500., 120./500.)
             n_margin = 5
-            width_minmax = (20./500., 70./500.)
-            n_width = 5
+            width_minmax = (2./500., 70./500.)
+            n_width = 4
             img_unit = ''
-            img_format = '%.2f~%.2f'
+            img_format = '%.2f'
         else:
             vminwidth = minwidth > 10.
             vmargin = margin > 20.
             margin_minmax = (20., 100.)
             width_minmax = (20., 70.)
             img_unit = '[pixel]'
-            img_format = '%.f~%.f'
+            img_format = '%.f'
 
         vdistance = distance < 2.
-        min_iou = .6
-        Plot2dEval(eval_data, picks, margin, logical_ands([valid,vminwidth,vdistance]),
-                axes[0], num_bins=n_margin, min_max=margin_minmax, unit_str=img_unit, _format=img_format,
-                min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
-        Plot2dEval(eval_data, picks, minwidth,  logical_ands([valid,vmargin,vdistance]),
-                axes[1], num_bins=n_width, min_max=width_minmax, unit_str=img_unit, _format=img_format,
-                min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
-        Plot2dEval(eval_data, picks, oblique, logical_ands([valid,vminwidth,vmargin,vdistance]),
-                axes[2], num_bins=5, min_max=(0., 50.), unit_str='[deg]', _format='%.f~%.f',
-                min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
-        Plot2dEval(eval_data, picks, distance, logical_ands([valid,vminwidth,vmargin]),
-                axes[3], num_bins=4, min_max=(.5, 3.), unit_str='[m]', _format='%.2f~%.2f',
-                min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
+        min_iou = .7
+        limit_valid = True
+        show_underseg, show_overseg = True,True
+        if limit_valid:
+            Plot2dEval(eval_data, picks, margin, logical_ands([valid,vminwidth,vdistance,voblique]),
+                    axes[0], num_bins=n_margin, min_max=margin_minmax, unit_str=img_unit, _format=img_format,
+                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+
+            Plot2dEval(eval_data, picks, minwidth,  logical_ands([valid,vmargin,vdistance,voblique]),
+                    axes[1], num_bins=n_width, min_max=width_minmax, unit_str=img_unit, _format=img_format,
+                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+
+            Plot2dEval(eval_data, picks, oblique, logical_ands([valid,vminwidth,vmargin,vdistance]),
+                    axes[2], num_bins=5, min_max=(0., 50.), unit_str='[deg]', _format='%.f',
+                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+        else:
+            Plot2dEval(eval_data, picks, margin, logical_ands([valid,]),
+                    axes[0], num_bins=n_margin, min_max=margin_minmax, unit_str=img_unit, _format=img_format,
+                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+
+            Plot2dEval(eval_data, picks, minwidth,  logical_ands([valid,]),
+                    axes[1], num_bins=n_width, min_max=width_minmax, unit_str=img_unit, _format=img_format,
+                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+
+            Plot2dEval(eval_data, picks, oblique, logical_ands([valid,]),
+                    axes[2], num_bins=5, min_max=(0., 50.), unit_str='[deg]', _format='%.f',
+                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+
+
+        #Plot2dEval(eval_data, picks, distance, logical_ands([valid,vminwidth,vmargin]),
+        #        axes[3], num_bins=3, min_max=(5, 2.5), unit_str='[m]', _format='%.2f~%.2f',
+        #        min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
         axes[0].set_title('Margin-AP',fontsize=7).set_position( (.5, 1.42))
         axes[1].set_title('min(w,h)-AP',fontsize=7).set_position( (.5, 1.42))
         axes[2].set_title('Oblique-AP',fontsize=7).set_position( (.5, 1.42))
@@ -1353,10 +1481,10 @@ def test_evaluation(rosbag_subnames, show_sample):
                     unit_str=img_unit, _format=img_format, num_bins=7, min_max=width_minmax )
             Plot3dEval(eval_data, axes[n0+7], ytype,
                     oblique, logical_ands([valid,vmargin,vminwidth,vdistance]), show_sample=show_sample,
-                    unit_str ='[deg]', _format='%.1f~%.1f', num_bins=5, min_max=(0, 50.) )
+                    unit_str ='[deg]', _format='%.1f', num_bins=5, min_max=(0, 50.) )
             Plot3dEval(eval_data, axes[n0+8], ytype,
                     distance, logical_ands([valid,vmargin,vminwidth]), show_sample=show_sample,
-                    unit_str ='[m]', _format='%.1f~%.1f', num_bins=3, min_max=(.5, 3.) )
+                    unit_str ='[m]', _format='%.1f', num_bins=3, min_max=(.5, 3.) )
             axes[n0+5].set_title('Margin - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
             axes[n0+6].set_title('min(w,h) - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
             axes[n0+7].set_title('Oblique - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
@@ -1367,6 +1495,12 @@ def test_evaluation(rosbag_subnames, show_sample):
         for err_name, ax in axes.items():
             fn = 'test_pdf_%s.svg'% err_name
             fig.savefig(osp.join(eval_dir,fn), bbox_inches=full_extent(ax), transparent=True)
+
+        print("Etime per each OBB-----")
+        for method, etime in elapsed_times.items():
+            sec = np.mean(etime)
+            print("%s : %.1f [msec]" %  (method, sec*1000.) )
+        print("----------")
 
     #PlotEachScens(eval_data, picks, eval_dir, infotype='false_detection')
     return
@@ -1383,7 +1517,7 @@ def dist_evaluation():
         obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
         gt_files += glob2.glob(obbdatasetpath)
     if not osp.exists(fn_evaldata):
-        eval_data = perform_test(eval_dir, gt_files, fn_evaldata)
+        eval_data, elapsed_times = perform_test(eval_dir, gt_files, fn_evaldata)
     else:
         with open(fn_evaldata,'rb') as f:
             eval_data = np.load(f, allow_pickle=True)
@@ -1405,10 +1539,10 @@ def dist_evaluation():
     #PlotDistanceAp(eval_data, picks, distance, valid, ax, min_iou=.5,
     #        num_bins=5,min_max=(1.,2.5), show_underseg=True, show_overseg=True)
     Plot2dEval(eval_data, picks, distance,  valid, ax,
-            num_bins=5, min_max=(1., 2.5), unit_str='[m]', _format='%.2f~%.2f',
-            min_iou=.5, show_underseg=True,show_overseg=True)
+            num_bins=5, min_max=(1.5, 2.5), unit_str='[m]', _format='%.2f',
+            min_iou=.7, show_underseg=True,show_overseg=True,show_sample=True)
     fig.savefig(osp.join(eval_dir,'test_dist_ap.svg'), transparent=True, bbox_inches=full_extent(ax))
-    PlotEachScens(eval_data, picks, eval_dir, infotype='')
+    #PlotEachScens(eval_data, picks, eval_dir, infotype='')
     return
 
 def oblique_evaluation():
@@ -1423,7 +1557,7 @@ def oblique_evaluation():
         obbdatasetpath = osp.join(pkg_dir,'obb_dataset_%s'%usage,'*.pick')
         gt_files += glob2.glob(obbdatasetpath)
     if not osp.exists(fn_evaldata):
-        eval_data = perform_test(eval_dir, gt_files, fn_evaldata)
+        eval_data, elapsed_times = perform_test(eval_dir, gt_files, fn_evaldata)
     else:
         with open(fn_evaldata,'rb') as f:
             eval_data = np.load(f, allow_pickle=True)
@@ -1443,11 +1577,11 @@ def oblique_evaluation():
     ax = fig.add_subplot(N_FIG[0],N_FIG[1],1)
     ax.yaxis.set_major_locator(MultipleLocator(.5))
     Plot2dEval(eval_data, picks, oblique,  valid, ax,
-            num_bins=5, min_max=(0., 50.), unit_str='[deg]', _format='%.f~%.f',
-            min_iou=.5, show_underseg=True,show_overseg=True)
+            num_bins=5, min_max=(0., 50.), unit_str='[deg]', _format='%.f',
+            min_iou=.7, show_underseg=True,show_overseg=True)
 
     fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'), bbox_inches=full_extent(ax))
-    PlotEachScens(eval_data, picks, eval_dir, infotype='')
+    #PlotEachScens(eval_data, picks, eval_dir, infotype='')
     return
 
 if __name__=="__main__":

@@ -134,7 +134,7 @@ def FitAxis(b0, b1):
     whd = b1.scale[axis_index]
     w = box.Box()
     b = w.from_transformation( Rwb1, b1.translation, whd)
-    if np.min(b.scale) == 0.:
+    if (b.scale==0).sum() > 1:
         import pdb; pdb.set_trace()
         FitAxis(b0,b1)
     return b
@@ -704,7 +704,7 @@ class Evaluator:
                 all_oversegment_stats
 
 class SceneEval:
-    def __init__(self, pick, plane_c, max_z, cam_id, frame_id):
+    def __init__(self, pick,  max_z, cam_id, frame_id):
         self.gt_marker = pick['marker']
         self.pick = pick
 
@@ -717,25 +717,21 @@ class SceneEval:
         self.frame_id = frame_id
 
         gt_obbs = {}
-        plane_c = np.array(plane_c)
         for i, obj in enumerate(pick['obbs']):
             pose_msg = Posetuple2Rosmsg(obj['pose'])
             surf_cp, _ = GetSurfCenterPoint0(pose_msg, obj['scale'], daxis=0)
             if surf_cp[2] > max_z:
                 continue
             # Tcb -> Trc * Tcb
-            pose_cb = obj['pose']
-            tcb = np.array( pose_cb[:3]+(1.,)  ).reshape((-1,))
-            d = plane_c.dot(tcb)
-            if d < -.1:
-                continue
-            tcb = tcb[:3]
-            Rcb = rotation_util.from_quat([pose_cb[4], pose_cb[5], pose_cb[6], pose_cb[3] ])
-            Rwb = Rwc*Rcb
-            twb = np.matmul(Rwc.as_dcm(),tcb) + twc
-            q_xyzw = Rwb.as_quat()
-            pose_wb = (twb[0], twb[1], twb[2], q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2])
-            obj['pose_wb'] = pose_wb
+            #pose_cb = obj['pose']
+            #tcb = np.array( pose_cb[:3]+(1.,)  ).reshape((-1,))
+            #tcb = tcb[:3]
+            #Rcb = rotation_util.from_quat([pose_cb[4], pose_cb[5], pose_cb[6], pose_cb[3] ])
+            #Rwb = Rwc*Rcb
+            #twb = np.matmul(Rwc.as_dcm(),tcb) + twc
+            #q_xyzw = Rwb.as_quat()
+            #pose_wb = (twb[0], twb[1], twb[2], q_xyzw[3], q_xyzw[0], q_xyzw[1], q_xyzw[2])
+            #obj['pose_wb'] = pose_wb
             gt_obbs[obj['id']] = obj
         self.gt_obbs = gt_obbs
 
@@ -745,7 +741,6 @@ class SceneEval:
         #    xyz_qwxyz = gt_obb['pose_wb']
         #    centers[i,:] = np.array(xyz_qwxyz[:3]).reshape((1,3))
         #self.tree = KDTree(centers)
-
         self.pub_gt_obb = rospy.Publisher("~%s/gt_obb"%cam_id, MarkerArray, queue_size=-1)
         self.pub_gt_pose = rospy.Publisher("~%s/gt_pose"%cam_id, PoseArray, queue_size=1)
         self.pub_gt_info = rospy.Publisher("~%s/gt_info"%cam_id, MarkerArray, queue_size=1)
@@ -1178,7 +1173,7 @@ def GetSurfCenterPoint(marker, daxis):
     scale = (marker.scale.x, marker.scale.y, marker.scale.z)
     return GetSurfCenterPoint0(pose, scale, daxis)
 
-def VisualizeGt(gt_obbs, frame_id, posename='pose_wb'):
+def VisualizeGt(gt_obbs, frame_id, posename='pose'):
     poses = PoseArray()
     poses.header.frame_id = frame_id
     markers = MarkerArray()
@@ -1195,7 +1190,7 @@ def VisualizeGt(gt_obbs, frame_id, posename='pose_wb'):
         marker.scale.x         = obj['scale'][0]
         marker.scale.y         = obj['scale'][1]
         marker.scale.z         = obj['scale'][2]
-        quat = obj['pose_wb'][3:]
+        quat = obj[posename][3:]
         marker.pose.orientation.w = quat[0]
         marker.pose.orientation.x = quat[1]
         marker.pose.orientation.y = quat[2]
@@ -1326,11 +1321,10 @@ def onpress(event):
         keyevent = event
     return
 
-def GetNeighbors(marker, centers):
-    radius = 5
-    neighbors = _GetNeighbors(marker, radius=5)
-    if False: # verbose
-        print(neighbors)
+def GetNeighbors(marker, radius, centers=None):
+    neighbors = _GetNeighbors(marker, radius=radius)
+    if centers is not None: # verbose
+        #print(neighbors)
         dst = GetColoredLabel(marker)
         for marker_id, cp in centers.items():
             for nid in neighbors[marker_id]:
@@ -1349,9 +1343,10 @@ def GetNeighbors(marker, centers):
     return neighbors
 
 def GetObliqueError(obb0, obb1):
-    x,y,z, qw, qx, qy, qz = obb0['pose_wb']
+    #import pdb; pdb.set_trace() # pose_wb -> pose(_cb). No problem?
+    x,y,z, qw, qx, qy, qz = obb0['pose']
     rot0 = rotation_util.from_quat([qx, qy, qz, qw])
-    x,y,z, qw, qx, qy, qz = obb1['pose_wb']
+    x,y,z, qw, qx, qy, qz = obb1['pose']
     rot1 = rotation_util.from_quat([qx, qy, qz, qw])
     R0 = rot0.as_dcm()
     R1 = rot1.as_dcm()

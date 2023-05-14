@@ -15,25 +15,25 @@
   <arg     if="$(arg debug)" name="launch_prefix" value="gdb -ex run --args" />
 
   <!--node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/-->
-  <!--param name="/use_sim_time" value="true"/-->
+  <param name="/use_sim_time" value="true"/>
   <node name="rosbag" pkg="rosbag" type="play" args="-r 0.5 --loop --clock $(arg filename)" required="true" unless="$(eval filename=='')">
     <!--remap from="/cam0/helios2/camera_info_rect" to="/cam0/helios2/camera_info"/>
       <remap from="/cam0/helios2/depth_rect"       to="/cam0/helios2/depth/image_raw"/>
     <remap from="/cam0/helios2/rgb_rect"         to="/cam0/aligned/rgb_to_depth/image_raw"/-->
-    </node>
-    <include file="$(find rise_helios2)/launch/dip_stream.launch" if="$(eval filename=='')">
+  </node>
+  <include file="$(find rise_helios2)/launch/dip_stream.launch" if="$(eval filename=='')">
       <arg name="device_user_id" default="cam0" />
       <arg name="kinect_sensor_sn" default="" />
       <arg name="color_resolution" default="720P"/>
       <arg name="use_kinect"   default="true"/>
       <arg name="helios_fps"   default="15"/>
       <arg name="kinect_fps"   default="15"/>
-    </include>
+  </include>
 
     <arg name="bg_service" default="false"/>
     <node name="ros_bg"  pkg="ros_unet" type="ros_bg" output="screen" required="true" launch-prefix="$(arg launch_prefix)">
       <rosparam subst_value="True">
-        is_service: $(arg bg_service)
+        is_service: false
       </rosparam>
       <remap from="~rgb"   to="$(arg rgb)"   unless="$(arg bg_service)"/>
       <remap from="~depth" to="$(arg depth)" unless="$(arg bg_service)"/>

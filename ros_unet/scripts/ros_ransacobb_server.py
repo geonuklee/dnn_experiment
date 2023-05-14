@@ -26,6 +26,15 @@ class Node:
         pass
 
     def ComputeRansacObb(self, req):
+        #try:
+        #    res = self._ComputeRansacObb(req)
+        #except:
+        #    import pdb; pdb.set_trace()
+        #    res = self._ComputeRansacObb(req)
+        res = self._ComputeRansacObb(req)
+        return res
+
+    def _ComputeRansacObb(self, req):
         thresh = 0.01
         labels = np.array(req.l_clouds)
         xyz_all = np.array(req.xyz_clouds).reshape((labels.shape[0],-1))
@@ -41,10 +50,9 @@ class Node:
             if len(points) < 10:
                 continue
             cuboid = pyrsc.Cuboid()
-            try:
-                best_eq, best_inliers = cuboid.fit(points, thresh)
-            except:
-                import pdb; pdb.set_trace()
+            best_eq, best_inliers = cuboid.fit(points, thresh)
+            if len(best_eq) == 0:
+                continue
 
             # x축 기준, on plane 을 찾고, |x|< th points의 yz bounding box로 측정.
             Rbw = best_eq[:,:3] # box <- world
@@ -72,7 +80,7 @@ class Node:
             quat_wb = rotation_util.from_dcm(Rbw.T).as_quat()
             marker = Marker()
             marker.type = Marker.CUBE
-            marker.header.frame_id = 'robot'
+            marker.header.frame_id = req.frame_id
             color = colors[l % len(colors)]
             marker.color.a = .8
             marker.color.r = float(color[0])/255.

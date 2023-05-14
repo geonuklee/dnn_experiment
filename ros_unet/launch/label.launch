@@ -4,6 +4,7 @@
 <arg name="rosbag_subnames" default="test0523,"/>
 
 <!--node name="floor_detector" pkg="ros_unet" type="floor_detector" output="screen" required="true"/-->
+<param name="/use_sim_time" value="false"/>
 <node name="labeling" pkg="ros_unet" type="labeling.py" output="screen" required="true">
     <remap from="~FloorDetector/SetCamera"  to="/floor_detector/SetCamera" />
     <remap from="~FloorDetector/ComputeFloor"  to="/floor_detector/ComputeFloor" />

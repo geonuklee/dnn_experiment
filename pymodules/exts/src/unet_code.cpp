@@ -341,8 +341,8 @@ std::map<int, OBB> ComputeOBB(cv::Mat frontmarker,
   }
 
   // plane detection with frontpoints.
-  const float leaf_size = 0.005;
-  const float euclidean_tolerance = 0.01;
+  const float leaf_size = 0.01;
+  const float euclidean_tolerance = 0.1;
   for(auto it : frontpoints){
     pcl::PointCloud<pcl::PointXYZ>::Ptr front_cloud = it.second;
     pcl::PointCloud<pcl::PointXYZ>::Ptr all_cloud= allpoints.at(it.first);
@@ -986,7 +986,8 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
                                  py::array_t<float> _K,
                                  py::array_t<float> _D,
                                  const float leaf_xy,
-                                 const float leaf_z
+                                 const float leaf_z,
+                                 bool do_ecufilter
                             ) {
   py::buffer_info buf_rgb = _rgb.request();
   py::buffer_info buf_depth = _depth.request();
@@ -1059,7 +1060,8 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
         l_points.push_back(l);
       }
     }
-    cv::undistortPoints(uv_points, normalized_points, K, D);
+    if(!uv_points.empty())
+      cv::undistortPoints(uv_points, normalized_points, K, D);
     for(size_t i = 0; i < normalized_points.size(); i++){
       const cv::Point2f& xbar = normalized_points.at(i);
       const float& z = z_points.at(i);
@@ -1087,7 +1089,8 @@ py::tuple PyUnprojectPointscloud(py::array_t<unsigned char> _rgb,
     sor.setLeafSize(leaf_xy, leaf_xy, leaf_z);
     sor.filter(*cloud_filtered);
     *ptr = *cloud_filtered;
-    EuclideanCluster<pcl::PointXYZRGB>(euclidean_tolerance, ptr);
+    if(do_ecufilter)
+      EuclideanCluster<pcl::PointXYZRGB>(euclidean_tolerance, ptr);
     sum += ptr->size();
   }
 
@@ -1669,7 +1672,8 @@ PYBIND11_MODULE(unet_ext, m) {
         py::arg("depth"), py::arg("grad_sample_offset"), py::arg("grad_sample_width"),
         py::arg("fx"), py::arg("fy") );
   m.def("UnprojectPointscloud", &PyUnprojectPointscloud, "Get rgbxyz and xyzi points cloud",
-        py::arg("rgb"), py::arg("depth"), py::arg("labels"), py::arg("K"), py::arg("D"), py::arg("leaf_xy"), py::arg("leaf_z"));
+        py::arg("rgb"), py::arg("depth"), py::arg("labels"), py::arg("K"), py::arg("D"), py::arg("leaf_xy"), py::arg("leaf_z"),
+        py::arg("do_ecufilter") = true);
 
   m.def("ComputeOBB", &PyComputeOBB, "Compute OBB from given marker and depth map",
         py::arg("front_marker"),

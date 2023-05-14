@@ -61,10 +61,9 @@ public:
       }
     }
 
-    // TODO Compute OBB
     geometry_msgs::PoseArray poses_array;
     visualization_msgs::MarkerArray obbs;
-    poses_array.header.frame_id = "robot";
+    poses_array.header.frame_id = req.frame_id;
 
     for(auto it_cloud : clouds){
       const int& id = it_cloud.first;
@@ -133,8 +132,8 @@ public:
   
     if(poses_array.poses.size() > 0){
       pub_poses_.publish(poses_array);
-      pub_obbs_.publish(obbs);
     }
+    pub_obbs_.publish(obbs);
 
     if(pub_clouds_.getNumSubscribers() > 0) {
       sensor_msgs::PointCloud2 msg;

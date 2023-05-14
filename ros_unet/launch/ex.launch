@@ -9,6 +9,7 @@
   <arg name="do_eval" default="false"/>
   <arg name="rgb"   default="/cam0/aligned/rgb_to_depth/image_raw"/>
   <arg name="depth" default="/cam0/helios2/depth/image_raw"/>
+  <arg name="intensity" default="/cam0/helios2/intensity_rec"/>
   <arg name="info"  default="/cam0/helios2/camera_info"/>
   <arg name="imu"   default="/cam0/k4a/imu"/>
   <arg name="rviz_name" default="unet.rviz"/>
@@ -69,13 +70,14 @@
 
     <remap from="~cam0/rgb"    to="$(arg rgb)" />
     <remap from="~cam0/depth"  to="$(arg depth)" />
+    <remap from="~cam0/intensity"  to="$(arg intensity)" />
     <remap from="~cam0/info"   to="$(arg info)" />
     <remap from="~cam0/imu"    to="$(arg imu)" />
 
     <rosparam subst_value="True">
       do_eval: "$(arg do_eval)"
       filename: "$(arg filename)"
-      datasetnames: "obb_dataset_230303,obb_dataset_test0523"
+      datasetnames: "obb_dataset_230428,"
     </rosparam>
   </node>
 

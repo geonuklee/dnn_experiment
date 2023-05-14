@@ -1,3 +1,5 @@
+# roslaunch ros_unet helios.launch 와 함께 실행.
+
 #mkdir rosbag
 
 #rosbag record -o rosbag/k4a_scale --duration=5s \
@@ -8,7 +10,7 @@
 
 #mkdir rosbag_230303
 #roslaunch ros_unet label.launch target:=230303
-rosbag record -o rosbag_230318/helios --duration=5s \
+rosbag record -o rosbag_230428/helios --duration=5s \
   /cam0/helios2/depth_rect \
   /cam0/helios2/rgb_rect \
   /cam0/helios2/intensity_rect \

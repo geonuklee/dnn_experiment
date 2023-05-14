@@ -222,8 +222,7 @@ public:
                          cv::Mat convex_edge,
                          const ObbParam& param,
                          std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& segmented_clouds,
-                         std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds,
-                         pcl::PointCloud<pcl::PointXYZRGB>::Ptr xyzrgb
+                         std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& boundary_clouds
                         );
 
   void ComputeObbs(const std::map<int, pcl::PointCloud<pcl::PointXYZLNormal>::Ptr>& clouds,

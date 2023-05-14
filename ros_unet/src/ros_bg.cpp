@@ -408,6 +408,8 @@ void getBgMask(std::map<u_int32_t, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
                   pcl::search::Search<pcl::PointXYZL>::Ptr p_tree,
                   const cv::Mat& plane_marker,
                   const Eigen::Vector3f linear_acc,
+                  pcl::PointCloud<pcl::PointXYZL>::Ptr dense_cloud,
+                  const std::vector<cv::Point2i>& uvs,
                   cv::Mat& bg_mask
                  ){
   Eigen::Vector3f gravity_dir = -linear_acc.normalized();
@@ -423,8 +425,8 @@ void getBgMask(std::map<u_int32_t, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
     const Eigen::Vector4f& p = p_coeffs.at(l);
     if(look_upper && gravity_dir.dot(p.head<3>()) < -.7) // No floor when look upper at testbed
       continue;
-    if( (!look_upper) && gravity_dir.dot(p.head<3>()) >.7)
-      continue;
+    //if( (!look_upper) && gravity_dir.dot(p.head<3>()) >.7)
+    //  continue;
 
     std::vector<float> depths;
     depths.reserve(it_p.second->size());
@@ -459,6 +461,33 @@ void getBgMask(std::map<u_int32_t, pcl::PointCloud<pcl::PointXYZL>::Ptr > p_clus
       bg_mask.at<int32_t>(pt) = 2;  // Too far or none plane, outliers
   }
 
+  {
+    cv::Mat dist;
+    cv::distanceTransform(plane_marker<1, dist, cv::DIST_L2, cv::DIST_MASK_PRECISE);
+    std::vector<cv::Point> locations;
+    cv::findNonZero(dist > 4, locations);
+    for (const auto& pt : locations)
+      bg_mask.at<int32_t>(pt) = 3;
+  }
+  {
+    cv::Mat dist;
+    cv::distanceTransform(bg_mask<1, dist, cv::DIST_L2, cv::DIST_MASK_PRECISE);
+    std::vector<cv::Point> locations;
+#if 1
+    cv::findNonZero(dist < 4, locations);
+    for (const auto& pt : locations)
+      bg_mask.at<int32_t>(pt) = 1;
+#else
+    { // Just for debug
+      cv::Mat dst;
+      cv::bitwise_and(dist <4,  bg_mask < 1, dst);
+      cv::findNonZero(dst, locations);
+    }
+    for (const auto& pt : locations)
+      bg_mask.at<int32_t>(pt) = 4;
+#endif
+
+  }
   return;
 }
 
@@ -570,7 +599,15 @@ public:
       merged_p_tree->setInputCloud(merged_p_cloud);
       projectClusters(merged_p_cloud,merged_p_tree, dense_cloud, step, uvs, plane_marker);
     }
-    getBgMask(rg_clusters,p_coeffs, merged_p_tree, plane_marker,linear_acc_->cast<float>(), bg_mask);
+    getBgMask(rg_clusters,p_coeffs, merged_p_tree, plane_marker,linear_acc_->cast<float>(),
+              dense_cloud, uvs, bg_mask);
+
+    /*{
+      std::vector<cv::Point> locations;
+      cv::findNonZero(depth_ < .01, locations);
+      for (const auto& pt : locations)
+        bg_mask.at<int32_t>(pt) = 3;
+    }*/
 
     cv_bridge::CvImage cv_image;
     {
