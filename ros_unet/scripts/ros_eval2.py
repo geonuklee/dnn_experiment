@@ -358,18 +358,64 @@ def GetOblique(eval_data, picks):
         obbs = {}
         for each in pick['obbs']:
             obbs[each['id']] = each
-        gt_marker = pick['marker']
+        plane_marker       = pick['plane_marker']
+        p_indices, p_areas = np.unique(plane_marker, return_counts=True)
+        p_areas            = dict( zip(p_indices.tolist(), p_areas.tolist()) )
+        gt_marker            = pick['marker']
+        gt_indices, gt_areas = np.unique(gt_marker, return_counts=True)
+        gt_areas             = dict( zip(gt_indices.tolist(), gt_areas.tolist()) )
+        plane2coeff = pick['plane2coeff']
+        normalized_pcenters = pick['normalized_pcenters']
+
+        plane2gidx   = pick['plane2marker']
+        gidx2pindices = {}
+        for pidx, gidx in plane2gidx.items():
+            gt_area = gt_areas[gidx]
+            p_area  = p_areas[pidx]
+            if not pidx in plane2coeff:
+                continue
+            if not gidx in gidx2pindices:
+                gidx2pindices[gidx] = []
+            gidx2pindices[gidx].append( (pidx,float(p_area)) )
+        for gidx, pidx_areas in gidx2pindices.items():
+            sorted_list = sorted(pidx_areas, reverse=True, key=lambda x: x[1])
+            sum_area = 0.
+            for _, area in sorted_list:
+                sum_area += area
+            gidx2pindices[gidx] = list(map(lambda x:  (x[0], x[1] / sum_area), sorted_list))
+
         w,h = float(gt_marker.shape[1]), float(gt_marker.shape[0])
-        for gidx in np.unique(gt_marker):
+        dst = GetColoredLabel(plane_marker)
+        for gidx in gt_indices:
             if gidx == 0:
                 continue
+            ncp = pick['normalized_centers'][gidx]
+            ncp = np.array([ncp[0],ncp[1],1.])
+            ncp /= np.linalg.norm(ncp)
+            th1 = np.arccos( ncp.dot(np.array([0.,0.,1.])) )
+            th1 = np.rad2deg(th1)
+
+            th_incidence = 0.
+            for pidx,p_area in gidx2pindices[gidx]:
+                #if p_area < .1: # TODO .1, .3
+                #    break
+                ncp = normalized_pcenters[pidx]
+                vec0 = -np.array([ncp[0],ncp[1],1.])
+                vec0 /= np.linalg.norm(vec0)
+
+                coeff0 = plane2coeff[pidx] # ax + by + cz + d = 0
+                nvec   = np.array(coeff0[:3])
+                th = np.arccos( nvec.dot(vec0) )
+                th = np.rad2deg(th)
+                #th_incidence = max(th, th_incidence)
+                th_incidence += p_area*th
+
             indicies, = np.where(np.logical_and(eval_data['base']==base,eval_data['gidx']==gidx))
-            t_cb = obbs[gidx]['pose'][:3]
-            qw,qx,qy,qz = obbs[gidx]['pose'][3:] # w,x,y,z
-            rot_cb = rotation_util.from_quat([qx, qy, qz, qw])
-            nvec = rot_cb.as_dcm()[:,0]
-            deg = np.rad2deg(np.arccos(-nvec.dot(depthvec)))
-            oblique_array[indicies] = deg
+            oblique_array[indicies] = th_incidence
+            #oblique_array[indicies] = oblique
+        #cv2.imshow("dst", dst)
+        #if ord('q') == cv2.waitKey():
+        #    exit(1)
     assert( (oblique_array<0).sum() == 0)
     return oblique_array
 
@@ -427,6 +473,22 @@ def GetTags(eval_data, picks, tags):
                 tag_array[indicies] = tags[key]
     return tag_array
 
+latest_pick = (None,None)
+def LabelClicked(event,eval_dir,picks):
+    global latest_pick
+    if latest_pick == (event.artist, event.mouseevent.button):
+        return
+    latest_pick = (event.artist, event.mouseevent.button)
+    if event.mouseevent.button == 1: # Left click
+        print("Stop for over min_iou %.3f, colorize in bound"%event.artist.min_iou)
+        show_cases = event.artist.sucess
+    else:
+        print("Stop for less min_iou %.3f, colorize in bound"%event.artist.min_iou)
+        show_cases = ~event.artist.sucess
+    ShowCases(eval_dir, picks, event.artist.eval_data[show_cases],
+            event.artist.ydata_name, event.artist.valid[show_cases])
+    return
+
 def LabelHeight(ax, rects, form='%.2f'):
     fig = ax.get_figure()
     texts = []
@@ -439,7 +501,7 @@ def LabelHeight(ax, rects, form='%.2f'):
         x = rect.get_x()+.5*rect.get_width()
         va = 'bottom'
         txt = ax.text(x, y, form%value,
-                fontsize=FONT_SIZE, ha='center', va=va) #, bbox=dict(boxstyle='square,pad=.3'))
+                fontsize=FONT_SIZE-2, ha='center', va=va) #, bbox=dict(boxstyle='square,pad=.3'))
         xs.append(x)
         ys.append(y)
         texts.append(txt)
@@ -470,7 +532,8 @@ def GetThickness(eval_data):
         thickness_array[i] = b1.scale[2]
     return thickness_array
 
-def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
+def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou,
+        show_fig=True):
     ourobb_data = eval_data_allmethod[eval_data_allmethod['method']=='myobb']
     assert(len(ourobb_data)>0)
     mvbb_data = eval_data_allmethod[eval_data_allmethod['method']=='mvbb']
@@ -480,7 +543,6 @@ def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
     if len(ransac_data) == 0:
         rospy.logwarn("No samples for RANSAC test")
 
-    # TODO valid for each method
     valid = logical_ands([tags=='',
                           ourobb_data['iou']>min_iou,
                           ourobb_data['valid_obb']
@@ -523,6 +585,9 @@ def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
     table = tabulate(rows, tablefmt="latex",
             floatfmt=(None,'.3f', '.3f', '.3f','.3f','.2f','.2f') )
     print(table)
+
+    if not show_fig:
+        return
 
     datas = Od()
     if len(ourobb_data)>0:
@@ -589,20 +654,28 @@ def PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou):
     fig.tight_layout()
     return fig, axes
 
-def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
+def Plot2dEval(eval_data, picks, ydata_name, valid, ax, min_ious, num_bins, min_max,
         unit_str, _format,
         show_underseg=False, show_overseg=False, show_sample=False):
+    try:
+        ydata = eval_data[ydata_name]
+    except:
+        import pdb; pdb.set_trace()
     la = np.logical_and
-    n_hist , bound    = np.histogram(margin[valid], num_bins,min_max)
+    n_hist , bound    = np.histogram(ydata[valid], num_bins,min_max)
 
-    cond = [eval_data['iou']>min_iou, valid]
-    if show_overseg:
-        cond.append( ~eval_data['overseg'] )
-    if show_underseg:
-        cond.append( ~eval_data['underseg'] )
-    tp_hist , _       = np.histogram(margin[la.reduce(cond)], num_bins,min_max)
-    underseg_hist , _ = np.histogram(margin[la(eval_data['underseg'],valid)], num_bins,min_max)
-    overseg_hist , _  = np.histogram(margin[la(eval_data['overseg'],valid)], num_bins,min_max)
+    #if show_overseg:
+    #    cond.append( ~eval_data['overseg'] )
+    #if show_underseg:
+    #    cond.append( ~eval_data['underseg'] )
+
+    tp_hists = Od()
+    for min_iou in min_ious:
+        cond = [eval_data['iou']>min_iou, valid]
+        tp_hists[min_iou], _       = np.histogram(ydata[la.reduce(cond)], num_bins, min_max)
+
+    underseg_hist , _ = np.histogram(ydata[la(eval_data['underseg'],valid)], num_bins,min_max)
+    overseg_hist , _  = np.histogram(ydata[la(eval_data['overseg'],valid)], num_bins,min_max)
     no_samples = n_hist==0
     n_hist[no_samples] = 1 # To prevent divide by zero
     if show_underseg:
@@ -611,19 +684,22 @@ def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
     if show_overseg:
         if overseg_hist.sum()==0:
             show_overseg = False
-    tp_hist = tp_hist.astype(float) / n_hist.astype(float)
+    for min_iou, tp_hist in tp_hists.items():
+        tp_hists[min_iou] = tp_hist.astype(float) / n_hist.astype(float)
     underseg_hist = underseg_hist.astype(float) / n_hist.astype(float)
     overseg_hist  = overseg_hist.astype(float) / n_hist.astype(float)
     n_hist[no_samples] = 0
     x = np.arange(num_bins)
 
-    ap_label = 'AP(IoU >%.1f)'%min_iou
+    hists = []
+    for min_iou, tp_hist in tp_hists.items():
+        ap_label = 'AP(IoU >%.1f)'%min_iou
+        hists.append( (tp_hist,ap_label) )
 
-    hists = [(tp_hist,ap_label)]
-    if show_overseg:
-        hists.append( (overseg_hist,'$p(\mathrm{over})$') )
     if show_underseg:
         hists.append( (underseg_hist,'$p(\mathrm{under})$') )
+    if show_overseg:
+        hists.append( (overseg_hist,'$p(\mathrm{over})$') )
 
     b, r = float(len(hists)), .3
     width = 1. / (r*(b+1.)+b)
@@ -634,6 +710,18 @@ def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
         dx = offset + float(i)*(width+offset)
         rects = ax.bar(x + dx , width=width, height=hist, alpha=.4, align='edge', label=label)
         LabelHeight(ax, rects)
+        if i >= len(min_ious):
+            continue
+        min_iou = min_ious[i]
+        for ix, artist in enumerate(rects):
+            artist.ix = ix
+            cond = la.reduce([ydata>bound[ix], ydata<bound[ix+1] ])#, eval_data['iou']<min_iou])
+            artist.eval_data  = eval_data[cond]
+            artist.valid      = valid[cond]
+            artist.sucess     = (eval_data['iou']>min_iou)[cond]
+            artist.min_iou    = min_iou
+            artist.ydata_name = ydata_name
+            artist.set_picker(True)
 
     x = np.arange(len(x)+1)
     xlabels = []
@@ -649,6 +737,9 @@ def Plot2dEval(eval_data, picks, margin, valid, ax, min_iou, num_bins, min_max,
     ax.tick_params(axis='y', labelsize=FONT_SIZE)
     ax.xaxis.set_label_coords(**XLABEL_COORD)
     ax.yaxis.set_label_coords(-0.08, 1.)
+
+    #ax.set_yticks([0.,50.,100.])
+    ax.set_yticks([])
 
     if len(hists) > 1:
         ax.legend(ncol=len(hists),**LEGNED_ARGS)
@@ -975,7 +1066,7 @@ def UnprojectIntensity(rect_intensity, rect_depth, rect_K, rect_D, frame_id):
     pointcloud_msg = pc2.create_cloud(header, fields, xyzrgb)
     return pointcloud_msg
 
-def CaptureScreen(rect_rgb, obb_resp): #, vismarker_msg):
+def CaptureScreen(rect_rgb, rect_intensity, obb_resp): #, vismarker_msg):
     # Capture the screenshot of the region
     x1,y1,w,h = 650, 200, 800, 700
     capture = pyautogui.screenshot(region=(x1, y1, w,h))
@@ -985,12 +1076,13 @@ def CaptureScreen(rect_rgb, obb_resp): #, vismarker_msg):
     capture = cv2.cvtColor(capture, cv2.COLOR_RGB2BGR)
 
     height, width = rect_rgb.shape[:2]
-    rgb = np.frombuffer(rect_rgb.data, dtype=np.uint8)\
-            .reshape(height, width,-1)
+    rgb = np.frombuffer(rect_rgb.data, dtype=np.uint8).reshape(height, width,-1)
+    intensity = np.frombuffer(rect_intensity.data, dtype=np.uint8).reshape(height, width,-1)
     outline = np.frombuffer(obb_resp.filtered_outline.data, dtype=np.uint8)\
             .reshape(height, width)
     marker = np.frombuffer(obb_resp.marker.data, dtype=np.int32).reshape(height,width)
-    return {'marker':marker, 'outline':outline, 'capture':capture, 'rgb':rgb}
+    return {'marker':marker, 'outline':outline, 'capture':capture, 'rgb':rgb,
+            'intensity':intensity}
 
 class ImageSubscriber:
     def __init__(self, topic):
@@ -1027,6 +1119,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
     pub_gt_pose = rospy.Publisher("~gt_pose", PoseArray, queue_size=1)
     pub_xyzi = rospy.Publisher("~xyzi", PointCloud2, queue_size=5)
 
+    pub_rgb = rospy.Publisher("~rgb", Image, queue_size=-1)
     pkg_dir = get_pkg_dir()
 
     nframe_per_scene = rospy.get_param('~nframe_per_scene',-1)
@@ -1081,7 +1174,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
             imu_msg = None
             imu_topic_exists = False
 
-        rect_intensity_topic = '/cam0/helios2/intensity_rect' # TODO
+        rect_intensity_topic = '/cam0/helios2/intensity_rect'
         try:
             _, rect_intensity_msg, _ = bag.read_messages(topics=[rect_intensity_topic]).next()
             rect_intensity = np.frombuffer(rect_intensity_msg.data, dtype=np.uint8)\
@@ -1128,6 +1221,9 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                 rect_rgb_msg.header.frame_id = rect_depth_msg.header.frame_id\
                         = rect_intensity_msg.header.frame_id\
                         = 'cam0_arena_camera'
+
+            if pub_rgb.get_num_connections() > 0:
+                pub_rgb.publish(rect_rgb_msg)
             rect_depth = bridge.imgmsg_to_cv2(rect_depth_msg, desired_encoding='passthrough')
             rect_K = np.array(rect_info_msg.K,np.float).reshape((3,3))
             rect_D = np.array(rect_info_msg.D,np.float).reshape((-1,))
@@ -1159,7 +1255,6 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
 
             t0_myobb = time.time()
             edge_resp = predict_edge(rect_rgb_msg,rect_depth_msg, fx, fy)
-            # TODO Need to publish 'tf' before get_bg
             if imu_msg is None:
                 bg_mask = np.zeros((rect_rgb_msg.height,rect_rgb_msg.width),dtype=np.int32)
                 bg_mask = bridge.cv2_to_imgmsg(bg_mask,encoding='32SC1')
@@ -1189,7 +1284,7 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                 dist = cv2.distanceTransform( (~pick['outline']).astype(np.uint8), distanceType=cv2.DIST_L2, maskSize=5)
                 marker[dist < 5.] = 0
                 xyzrgb, labels = UnprojectPointscloud(rect_rgb,rect_depth,marker,rect_K,rect_D,
-                        leaf_xy=0.01,leaf_z=0.01)
+                        leaf_xy=0.01,leaf_z=0.01, do_ecufilter=False)
                 xyz = xyzrgb[:,:3].reshape(-1,).tolist()
                 labels = labels.reshape(-1,).tolist()
                 resps = {}
@@ -1216,12 +1311,16 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
                     eval_scene.append( (base,i_file,nframe,'myobb')+ each)
             pub_gt_obb.publish(gt_obb_markers)
 
-            capture = CaptureScreen(rect_rgb,obb_resp)
+            capture = CaptureScreen(rect_rgb,rect_intensity_msg,obb_resp)
             with open(osp.join(eval_dir,"capture_%d_%d.pick"%(i_file+1, nframe+1)),'wb') as f:
                 pickle.dump(capture, f, protocol=2)
+            fn = osp.join(eval_dir, 'capture_%d_%d_%s.png'%(i_file+1,nframe+1,base))
+            cv2.imwrite(fn, capture['capture'])
+            #cv2.imshow('capture', capture['capture'])
 
             fn = osp.join(eval_dir, 'frame_%d_%s_%04d.png'%(i_file+1,base,nframe+1) )
             cv2.imwrite(fn, dst)
+
             nframe += 1
             rospy.loginfo("Perform evaluation for %s, S[%d/%d], F[%d/%d]"\
                     %(base, i_file+1,len(gt_files), nframe,nframe_per_scene) )
@@ -1235,9 +1334,6 @@ def perform_test(eval_dir, gt_files,fn_evaldata, methods=['myobb']):
         else:
             eval_data = np.hstack((eval_data,eval_scene) )
         dst = visualize_scene(pick,eval_scene)
-        #cv2.imshow("latest scene", dst)
-        #if ord('q') == cv2.waitKey(1):
-        #    exit(1)
         fn = osp.join(eval_dir, 'scene_%d_%s.png'%(i_file,base) )
         cv2.imwrite(fn, dst)
 
@@ -1276,12 +1372,169 @@ def full_extent(ax, pad=0.0):
     return bbox.expanded(1.0 + pad, 1.0 + pad)
 
 def logical_ands(list_of_arrays):
-    valid = list_of_arrays[0]
-    for i, arr in enumerate(list_of_arrays):
-        if i == 0:
-            continue
-        valid = np.logical_and(valid, arr)
-    return valid
+    return np.logical_and.reduce(list_of_arrays)
+    #valid = list_of_arrays[0]
+    #for i, arr in enumerate(list_of_arrays):
+    #    if i == 0:
+    #        continue
+    #    valid = np.logical_and(valid, arr)
+    #return valid
+
+def captures2video(eval_dir, captures):
+    sorted_captures = []
+    max_scene, max_frame = -1, -1
+    for fn in captures:
+        scene, frame = osp.splitext(osp.basename(fn))[0].split('_')[1:]
+        scene, frame = int(scene), int(frame)
+        sorted_captures.append( (scene,frame,fn) )
+        max_scene, max_frame = max(max_scene, scene), max(max_frame, frame)
+    sorted_captures = sorted(sorted_captures, key=lambda x: (x[0], x[1]))
+
+    fps = 2.
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # Specify the codec for WMV format
+    video_fn = osp.join(eval_dir,"output.mp4")
+    video_writer = None
+    font_face, font_scale, font_thick = cv2.FONT_HERSHEY_PLAIN, 2.,2
+    wait = False
+    for scene, frame, fn in sorted_captures:
+        with open(fn,'rb') as f:
+            pick = pickle.load(f)
+        marker, outline, capture, _, intensity \
+                = pick['marker'], pick['outline'], pick['capture'], pick['rgb'],pick['intensity']
+        rgb = cv2.cvtColor(intensity, cv2.COLOR_GRAY2BGR)
+        capture = cv2.resize(capture,(marker.shape[1],marker.shape[0]))
+
+        msg = "#s %2d/%d, #f %2d/%d"%(scene,max_scene,frame,max_frame)
+        w,h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
+        vis_marker = GetColoredLabel(marker,text=False)
+        vis_marker = cv2.addWeighted(rgb, .3, vis_marker, .7, 0.)
+
+        bg = marker==0
+        vis_marker[bg,:] = rgb[bg,:]
+
+        #dst_outline = cv2.addWeighted(rgb, .3, dst_outline, .7, 0.)
+        #vis_marker = cv2.addWeighted(vis_marker, .3, dst_outline, .7, 0.)
+
+        #vis_marker[outline > 0, 2] = 255
+        #vis_marker[outline > 0, :2] = 0
+        vis_marker = vis_marker.astype(np.int32)
+        vis_marker[outline > 0, :]  -= 50
+        vis_marker[vis_marker>255]  = 255
+        vis_marker[vis_marker<0]  = 0
+        vis_marker = vis_marker.astype(np.uint8)
+
+        #boundary = GetBoundary(marker,2)
+        #vis_marker[boundary>0,:] = 0
+
+        dst = np.hstack((vis_marker, capture))
+        cv2.imwrite(osp.join(eval_dir,'capture_%d_%d.png'%(scene,frame)), dst)
+        if wait:
+            cv2.imshow("dst", dst)
+            c = cv2.waitKey()
+            if ord('q') == c:
+                exit(1)
+            elif ord('b') == c:
+                wait = False
+
+        cv2.putText(dst, msg,
+                (5,5+h), font_face, font_scale, (255,255,255), font_thick)
+        if video_writer is None:
+            video_writer =  cv2.VideoWriter(video_fn, fourcc, fps,
+                    (dst.shape[1], dst.shape[0]))
+        video_writer.write(dst)
+    video_writer.release()
+
+def JoinStructuredArray(arr1, arr2):
+    # Create a new dtype that includes fields from both arrays
+    new_dtype = arr1.dtype.descr + arr2.dtype.descr
+
+    # Create an empty array with the new dtype
+    joined_array = np.empty(arr1.shape, dtype=new_dtype)
+
+    # Assign values from arr1 and arr2 to the new array
+    for field in arr1.dtype.fields:
+        joined_array[field] = arr1[field]
+
+    for field in arr2.dtype.fields:
+        joined_array[field] = arr2[field]
+
+    return joined_array
+
+
+def ShowCases(eval_dir, picks, eval_data, ydata_name, valid):
+    if len(eval_data) == 0:
+        return
+    eval_data = JoinStructuredArray(eval_data,valid.astype([('valid',valid.dtype)]) )
+    samples = eval_data
+
+    unique_scenes = np.sort(np.unique(samples[['base','sidx']]), order='sidx')
+    quit_flag = False
+    for each_scene in unique_scenes:
+        if quit_flag:
+            break
+        sidx, base = each_scene[['sidx','base']]
+        sidx_eq = samples['sidx']==sidx
+        frames_at_scene = np.unique( samples[sidx_eq]['fidx'] )
+        pick = picks[base] 
+        obbs = {}
+        for obb in pick['obbs']:
+            obbs[obb['id']] = obb
+
+        for fidx in frames_at_scene:
+            fidx_eq = samples['fidx']==fidx
+            fn = osp.join(eval_dir,'frame_%d_%s_%04d.png'%(sidx+1,base,fidx+1) )
+            all_gindices = samples[ np.logical_and.reduce([sidx_eq, fidx_eq]) ]['gidx']
+            gindices = np.unique(all_gindices)
+            mask = []
+            for gidx in gindices:
+                mask.append(pick['marker']==gidx)
+            mask = np.logical_or.reduce( mask )
+            src = cv2.imread(fn)
+            frame_dst = src[:,:mask.shape[1],:]
+            gt_dst    = GetColoredLabel(pick['marker'],True)
+            gray_dst = (pick['marker']>0).astype(np.uint8)*200
+            gray_dst = cv2.cvtColor(gray_dst,cv2.COLOR_GRAY2BGR)
+            dst      = gray_dst.copy()
+            dst[mask,:] = gt_dst[mask,:]
+            dst = np.hstack( (dst,frame_dst) )
+
+            font_face, font_scale, font_thick = cv2.FONT_HERSHEY_PLAIN, 1.,1
+            x,y,o = 5,5,5
+            nvalid = 0
+            for gidx in gindices:
+                gidx_eq = samples['gidx']==gidx
+                val = samples[np.logical_and.reduce([sidx_eq,fidx_eq,gidx_eq])]
+                assert(len(val)==1)
+                val = val[0]
+                msg = 'g#%2d, p#%2d: '%(gidx, val['pidx'])
+                msg += 'IoU=%.2f, '%val['iou']
+                # TODO 이거 대신 JoinStructuredArray 결과물
+                msg += '%s=%.3f, '%(ydata_name,val[ydata_name])
+                msg += 'dist=%3.2f, '%val['distance']
+                msg += 'min(w,h)=%2.1f, '%val['minwidth']
+                msg += 'margin=%3.3f, '%val['margin']
+                msg += 'oblique=%2.1f, '%val['oblique']
+                y += o+cv2.getTextSize(msg, font_face,font_scale,font_thick)[0][1]
+                if val['valid']:
+                    nvalid += 1
+                    color = (255,255,255)
+                else:
+                    color = (0,0,255)
+                cv2.putText(dst, msg, (x,y), font_face, font_scale, color, font_thick)
+
+            #cv2.imshow("src", GetColoredLabel(pick['marker'],True) )
+            cv2.imshow("dst", dst)
+            if nvalid > 0:
+                t = -1
+            else:
+                t = 1
+            quit_flag = ord('q') == cv2.waitKey(t)
+            if quit_flag:
+                break
+    cv2.destroyWindow("dst")
+    #cv2.destroyWindow("src")
+    #cv2.destroyAllWindows()
+    return
 
 def test_evaluation(rosbag_subnames, show_sample):
     pkg_dir = get_pkg_dir()
@@ -1332,47 +1585,20 @@ def test_evaluation(rosbag_subnames, show_sample):
     else:
         with open(fn_evaldata,'rb') as f:
             eval_data_allmethod = np.load(f, allow_pickle=True)
+        if(osp.basename(eval_dir) == 'eval_230428'):
+            # 너무 오래걸리는 ransac, mvbb obb 불러오기.
+            with open(osp.join(eval_dir+'_ransac', 'eval_data.npy'),'rb') as f:
+                eval_other = np.load(f, allow_pickle=True)
+                l1 = eval_other['method']=='ransac'
+                l2 = eval_other['method']=='mvbb'
+                eval_other = eval_other[np.logical_or(l1,l2)]
+        eval_data_allmethod = np.concatenate((eval_data_allmethod, eval_other), axis=0)
         fn = osp.join(eval_dir, 'elapsed_times.pick')
         with open(fn,'rb') as f:
             elapsed_times = pickle.load(f)
 
     captures = glob2.glob(osp.join(eval_dir,'capture_*_*.pick'),recursive=False)
-    sorted_captures = []marker
-    max_scene, max_frame = -1, -1
-    for fn in captures:
-        scene, frame = osp.splitext(osp.basename(fn))[0].split('_')[1:]
-        scene, frame = int(scene), int(frame)
-        sorted_captures.append( (scene,frame,fn) )
-        max_scene, max_frame = max(max_scene, scene), max(max_frame, frame)
-    sorted_captures = sorted(sorted_captures, key=lambda x: (x[0], x[1]))
-
-    fps = 5.
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # Specify the codec for WMV format
-    video_fn = osp.join(eval_dir,"output.mp4")
-    video_writer = None
-    font_face, font_scale, font_thick = cv2.FONT_HERSHEY_PLAIN, 2.,2
-    for scene, frame, fn in sorted_captures:
-        with open(fn,'rb') as f:
-            pick = pickle.load(f)
-        marker, outline, capture, rgb \
-                = pick['marker'], pick['outline'], pick['capture'], pick['rgb']
-        capture = cv2.resize(capture,(marker.shape[1],marker.shape[0]))
-
-        msg = "#s%2d/%d, #f%2d/%d"%(scene,max_scene,frame,max_frame)
-        w,h = cv2.getTextSize(msg, font_face,font_scale,font_thick)[0]
-        vis_marker = GetColoredLabel(marker,text=True)
-        vis_marker = cv2.addWeighted(rgb, .3, vis_marker, .7, 0.)
-        vis_marker[outline > 0, 2] = 255
-        vis_marker[outline > 0, :2] = 0
-        dst = np.hstack((capture, vis_marker))
-
-        cv2.putText(dst, msg,
-                (5,5+h), font_face, font_scale, (255,255,255), font_thick)
-        if video_writer is None:
-            video_writer =  cv2.VideoWriter(video_fn, fourcc, fps,
-                    (dst.shape[1], dst.shape[0]))
-        video_writer.write(dst)
-    video_writer.release()
+    captures2video(eval_dir, captures)
 
     picks = {}
     for fn in gt_files:
@@ -1385,10 +1611,15 @@ def test_evaluation(rosbag_subnames, show_sample):
     la = np.logical_and
     eval_data = eval_data_allmethod[eval_data_allmethod['method']=='myobb']
     oblique = GetOblique(eval_data, picks)
-    normalized = True
+    normalized = False
     margin, minwidth = GetMargin(eval_data, picks, normalized)
     distance = GetDistance(eval_data, picks)
     tags   = GetTags(eval_data, picks, tags)
+
+    eval_data = JoinStructuredArray(eval_data, oblique.astype([('oblique',oblique.dtype)]) )
+    eval_data = JoinStructuredArray(eval_data, margin.astype([('margin',margin.dtype)]) )
+    eval_data = JoinStructuredArray(eval_data, minwidth.astype([('minwidth',minwidth.dtype)]) )
+    eval_data = JoinStructuredArray(eval_data, distance.astype([('distance',distance.dtype)]) )
     show = True
 
     if True:
@@ -1405,10 +1636,11 @@ def test_evaluation(rosbag_subnames, show_sample):
 
         fig.subplots_adjust(**FIG_SUBPLOT_ADJUST)
         valid = tags==''
-        voblique = oblique < 30.
+        voblique = oblique < 40.
+        #import pdb; pdb.set_trace()
         if normalized:
-            vminwidth = minwidth > 10./500. # 0.02
-            vmargin = margin > 20./500. # 0.04
+            vminwidth = minwidth > 30./500. # 0.02
+            vmargin = margin > 100./500. # 0.04
             margin_minmax = (20./500., 120./500.)
             n_margin = 5
             width_minmax = (2./500., 70./500.)
@@ -1416,46 +1648,57 @@ def test_evaluation(rosbag_subnames, show_sample):
             img_unit = ''
             img_format = '%.2f'
         else:
-            vminwidth = minwidth > 10.
-            vmargin = margin > 20.
+            vminwidth = minwidth > 50.
+            vmargin = margin > 70. # TODO 30, 100
             margin_minmax = (20., 100.)
             width_minmax = (20., 70.)
+            n_margin = 5
+            width_minmax = 2., 70.
+            n_width = 4
             img_unit = '[pixel]'
             img_format = '%.f'
-
-        vdistance = distance < 2.
-        min_iou = .7
+        vdistance = distance < 1.5
         limit_valid = True
         show_underseg, show_overseg = True,True
+        min_ious = [.6, .7]
+
         if limit_valid:
-            Plot2dEval(eval_data, picks, margin, logical_ands([valid,vminwidth,vdistance,voblique]),
+            Plot2dEval(eval_data, picks, 'margin', logical_ands([valid,vminwidth,vdistance,voblique]),
                     axes[0], num_bins=n_margin, min_max=margin_minmax, unit_str=img_unit, _format=img_format,
-                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+                    min_ious=min_ious, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
 
-            Plot2dEval(eval_data, picks, minwidth,  logical_ands([valid,vmargin,vdistance,voblique]),
+            Plot2dEval(eval_data, picks, 'minwidth',  logical_ands([valid,vmargin,vdistance,voblique]),
                     axes[1], num_bins=n_width, min_max=width_minmax, unit_str=img_unit, _format=img_format,
-                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+                    min_ious=min_ious, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
 
-            Plot2dEval(eval_data, picks, oblique, logical_ands([valid,vminwidth,vmargin,vdistance]),
-                    axes[2], num_bins=5, min_max=(0., 50.), unit_str='[deg]', _format='%.f',
-                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+            Plot2dEval(eval_data, picks, 'oblique',
+                    logical_ands([valid,vminwidth,vmargin,vdistance]),
+                    axes[2], num_bins=4, min_max=(0., 60.), unit_str='[deg]', _format='%.f',
+                    min_ious=min_ious, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+
+            Plot2dEval(eval_data, picks, 'distance', logical_ands([valid,vminwidth,vmargin,voblique]),
+                    axes[3], num_bins=4, min_max=(1., 1.8), unit_str='[m]', _format='%.2f',
+                    min_ious=min_ious, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+
         else:
-            Plot2dEval(eval_data, picks, margin, logical_ands([valid,]),
+            Plot2dEval(eval_data, picks, 'margin', logical_ands([valid,]),
                     axes[0], num_bins=n_margin, min_max=margin_minmax, unit_str=img_unit, _format=img_format,
-                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+                    min_ious=min_ious, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
 
-            Plot2dEval(eval_data, picks, minwidth,  logical_ands([valid,]),
+            Plot2dEval(eval_data, picks, 'minwidth',  logical_ands([valid,]),
                     axes[1], num_bins=n_width, min_max=width_minmax, unit_str=img_unit, _format=img_format,
-                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+                    min_ious=min_ious, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
 
-            Plot2dEval(eval_data, picks, oblique, logical_ands([valid,]),
+            Plot2dEval(eval_data, picks, 'oblique', logical_ands([valid,]),
                     axes[2], num_bins=5, min_max=(0., 50.), unit_str='[deg]', _format='%.f',
-                    min_iou=min_iou, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
+                    min_ious=min_ious, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
 
+            Plot2dEval(eval_data, picks, 'distance', logical_ands([valid,]),
+                    axes[3], num_bins=3, min_max=(0.5, 2.5), unit_str='[m]', _format='%.2f',
+                    min_ious=min_ious, show_underseg=show_underseg, show_overseg=show_overseg, show_sample=show_sample)
 
-        #Plot2dEval(eval_data, picks, distance, logical_ands([valid,vminwidth,vmargin]),
-        #        axes[3], num_bins=3, min_max=(5, 2.5), unit_str='[m]', _format='%.2f~%.2f',
-        #        min_iou=min_iou, show_underseg=True, show_overseg=False, show_sample=show_sample)
+        fig.canvas.mpl_connect('pick_event', lambda event:LabelClicked(event, eval_dir,picks) )
+
         axes[0].set_title('Margin-AP',fontsize=7).set_position( (.5, 1.42))
         axes[1].set_title('min(w,h)-AP',fontsize=7).set_position( (.5, 1.42))
         axes[2].set_title('Oblique-AP',fontsize=7).set_position( (.5, 1.42))
@@ -1466,6 +1709,8 @@ def test_evaluation(rosbag_subnames, show_sample):
         fig.savefig(osp.join(eval_dir,'test_oblique_ap.svg'),  transparent=True, bbox_inches=full_extent(axes[2]))
         fig.savefig(osp.join(eval_dir,'test_distance_ap.svg'), transparent=True, bbox_inches=full_extent(axes[3]))
 
+        # TODO min_iou?
+        min_iou = min_ious[0]
         valid = tags==''
         valid = la(valid, eval_data['iou']>min_iou)
         valid = la(valid, ~eval_data['underseg'])
@@ -1490,11 +1735,15 @@ def test_evaluation(rosbag_subnames, show_sample):
             axes[n0+7].set_title('Oblique - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
             axes[n0+8].set_title('Distance - Err %s'%ytype,fontsize=7).set_position( (.5, 1.42))
 
+        show_fig = False
         # Only valid 2D segmentations are counted for 3D evaluation
-        fig, axes = PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou)
-        for err_name, ax in axes.items():
-            fn = 'test_pdf_%s.svg'% err_name
-            fig.savefig(osp.join(eval_dir,fn), bbox_inches=full_extent(ax), transparent=True)
+        res = PlotLengthOblique(picks, eval_data_allmethod, tags, min_iou,
+                show_fig=show_fig)
+        if show_fig:
+            fig, axes = res
+            for err_name, ax in axes.items():
+                fn = 'test_pdf_%s.svg'% err_name
+                fig.savefig(osp.join(eval_dir,fn), bbox_inches=full_extent(ax), transparent=True)
 
         print("Etime per each OBB-----")
         for method, etime in elapsed_times.items():
@@ -1521,6 +1770,8 @@ def dist_evaluation():
     else:
         with open(fn_evaldata,'rb') as f:
             eval_data = np.load(f, allow_pickle=True)
+    captures = glob2.glob(osp.join(eval_dir,'capture_*_*.pick'),recursive=False)
+    captures2video(eval_dir, captures)
     picks = {}
     for fn in gt_files:
         base = osp.splitext( osp.basename(fn) )[0]
@@ -1538,7 +1789,7 @@ def dist_evaluation():
     ax.yaxis.set_major_locator(MultipleLocator(.5))
     #PlotDistanceAp(eval_data, picks, distance, valid, ax, min_iou=.5,
     #        num_bins=5,min_max=(1.,2.5), show_underseg=True, show_overseg=True)
-    Plot2dEval(eval_data, picks, distance,  valid, ax,
+    Plot2dEval(eval_data, picks, 'distance',  valid, ax,
             num_bins=5, min_max=(1.5, 2.5), unit_str='[m]', _format='%.2f',
             min_iou=.7, show_underseg=True,show_overseg=True,show_sample=True)
     fig.savefig(osp.join(eval_dir,'test_dist_ap.svg'), transparent=True, bbox_inches=full_extent(ax))
@@ -1561,6 +1812,8 @@ def oblique_evaluation():
     else:
         with open(fn_evaldata,'rb') as f:
             eval_data = np.load(f, allow_pickle=True)
+    captures = glob2.glob(osp.join(eval_dir,'capture_*_*.pick'),recursive=False)
+    captures2video(eval_dir, captures)
     picks = {}
     for fn in gt_files:
         base = osp.splitext( osp.basename(fn) )[0]

@@ -12,8 +12,10 @@
 <arg name="rosbag_subnames" default="test0523,"/>
 <arg name="nframe_per_scene" default="20"/>
 
-<arg name="weight_file" value="$(find ros_unet)/weights/iternet_9000.pth"/>
-<!--arg name="weight_file" value="$(find ros_unet)/weights/iternet_6500.pth"/-->
+<!--arg name="weight_file" value="$(find ros_unet)/weights/iternet_9000.pth" if="$(eval target=='test')"/-->
+<!--arg name="weight_file" value="$(find ros_unet)/weights/iternet_min.pth"  if="$(eval target!='test')"/-->
+<arg name="weight_file" value="$(find ros_unet)/weights/iternet_min.pth"/>
+<!--arg name="weight_file" value="$(find ros_unet)/weights100_abort/iternet_min.pth"/-->
 
 <node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
     <rosparam subst_value="True">

@@ -17,7 +17,7 @@ import geometry_msgs
 import cv2
 from cv_bridge import CvBridge
 from scipy.spatial.transform import Rotation as rotation_util
-from evaluator import VisualizeGt, Evaluator, SceneEval, FrameEval # TODO change file
+from evaluator import VisualizeGt, Evaluator, SceneEval # TODO change file
 from ros_eval import *
 
 from tkinter import * 
@@ -80,12 +80,39 @@ def ShowObb(scen_eval, pub_marker,pub_edges,pub_planes,pub_rgb, pick):
         rate.sleep()
     return
 
+def GetPCenter(_rect_plane_marker, _rectK):
+    p_marker = _rect_plane_marker.copy()
+    K = _rectK.copy()
+    w,h = float(p_marker.shape[1]), float(p_marker.shape[0])
+    fx, fy, cx, cy = K[0,0], K[1,1], K[0,2], K[1,2]
+    r = round(fx/fy)
+    if fx != fy:
+        try:
+            p_marker = cv2.resize(p_marker, (int(w), int(r*h)) )
+        except:
+            import pdb; pdb.set_trace()
+    fy = fx
+    cy = r*cy
+    pindices = np.unique(p_marker)
+    normalized_pcenters = {}
+    for pidx in pindices:
+        if pidx == 0:
+            continue
+        part = p_marker==pidx
+        part[0,:] = part[:,0] = part[-1,:] = part[:,-1] = 0
+        dist_part = cv2.distanceTransform( part.astype(np.uint8),
+                distanceType=cv2.DIST_L2, maskSize=5)
+        loc = np.unravel_index( np.argmax(dist_part,axis=None), p_marker.shape)
+        #centers[gidx] = (loc[1],loc[0])
+        normalized_pcenter  = (float(loc[1]-cx)/fx, float(loc[0]-cy)/fy)
+        normalized_pcenters[pidx] = normalized_pcenter
+    return normalized_pcenters
+
 
 def GetMargin(_rect_gt_marker, _rectK):
     gt_marker = _rect_gt_marker.copy()
     K = _rectK.copy()
     w,h = float(gt_marker.shape[1]), float(gt_marker.shape[0])
-    K = pick['K'] # TODO K? newK?
     fx, fy, cx, cy = K[0,0], K[1,1], K[0,2], K[1,2]
     r = round(fx/fy)
     if fx != fy:
@@ -97,7 +124,7 @@ def GetMargin(_rect_gt_marker, _rectK):
     cy = r*cy
     gindices = np.unique(gt_marker)
     minwidths, margins = {}, {}
-    normalized_minwidths, normalized_margins = {}, {}
+    normalized_minwidths, normalized_margins, normalized_centers = {}, {}, {}
     for gidx in gindices:
         if gidx == 0:
             continue
@@ -113,11 +140,14 @@ def GetMargin(_rect_gt_marker, _rectK):
         minwidth = dist_part[loc]
         normalized_margin = margin/fx
         normalized_minwidth = minwidth/fx
+        normalized_center  = (float(loc[1]-cx)/fx, float(loc[0]-cy)/fy)
+
         margins[gidx]              = margin
         minwidths[gidx]            = minwidth
         normalized_margins[gidx]   = normalized_margin
         normalized_minwidths[gidx] = normalized_minwidth
-    return margins, minwidths, normalized_margins, normalized_minwidths
+        normalized_centers[gidx]   = normalized_center
+    return margins, minwidths, normalized_margins, normalized_minwidths, normalized_centers
 
 if __name__=="__main__":
     rospy.init_node('labeling', anonymous=True)
@@ -232,8 +262,10 @@ if __name__=="__main__":
                                     cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
                 except:
                     callout = subprocess.call(['kolourpaint', label_fn] )
-                pick['margins'], pick['minwidths'], pick['normalized_margins'], pick['normalized_minwidths']\
+                pick['margins'], pick['minwidths'], pick['normalized_margins'], \
+                    pick['normalized_minwidths'], pick['normalized_centers']\
                         = GetMargin(pick['marker'], newK)
+                pick['normalized_pcenters'] = GetPCenter(pick['plane_marker'], newK)
 
                 try:
                     scene_eval = SceneEval(pick, max_z, cam_id, frame_id=cam_frame_id)
@@ -269,8 +301,10 @@ if __name__=="__main__":
                     (pick['plane_marker'], pick['plane2marker'], pick['plane2coeff'])\
                     = ParseGroundTruth(cv_gt, cv_rect_rgb,
                             cv_rect_depth, pick['newK'], None, fullfn, obb_max_depth)
-            pick['margins'], pick['minwidths'], pick['normalized_margins'], pick['normalized_minwidths']\
+            pick['margins'], pick['minwidths'], pick['normalized_margins'],\
+                pick['normalized_minwidths'], pick['normalized_centers']\
                     = GetMargin(pick['marker'], newK)
+            pick['normalized_pcenters'] = GetPCenter(pick['plane_marker'], newK)
 
             # 3) show obb
             scene_eval = SceneEval(pick, max_z, cam_id, frame_id=cam_frame_id)

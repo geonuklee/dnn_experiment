@@ -20,7 +20,7 @@
 
 
   <!--arg name="weight_file" value="$(find ros_unet)/weights_big/iternet_9000.pth"/-->
-  <arg name="weight_file" value="$(find ros_unet)/weights/iternet_9000.pth"/>
+  <arg name="weight_file" value="$(find ros_unet)/weights/iternet_min.pth"/>
 
   <node name="unet_server" pkg="ros_unet" type="ros_unet_server.py" output="screen" required="true">
     <rosparam subst_value="True">
@@ -77,7 +77,7 @@
     <rosparam subst_value="True">
       do_eval: "$(arg do_eval)"
       filename: "$(arg filename)"
-      datasetnames: "obb_dataset_230428,"
+      datasetnames: "obb_dataset_230428,obb_dataset_aligneddist"
     </rosparam>
   </node>
 
