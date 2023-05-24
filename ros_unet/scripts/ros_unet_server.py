@@ -12,6 +12,28 @@ import ros_unet.srv
 
 import ros_numpy
 
+def getMask(rough_mask):
+    r = 10
+    dist0 = cv2.distanceTransform( (rough_mask>0).astype(np.uint8),
+            distanceType=cv2.DIST_L2, maskSize=5)
+    thick_parts = (dist0 > r).astype(np.uint8)
+    dist1 = cv2.distanceTransform( (thick_parts<1).astype(np.uint8),
+            distanceType=cv2.DIST_L2, maskSize=5)
+    thin_edges = np.logical_and(dist0>0, dist1 > r+1).astype(np.uint8)
+
+    #cv2.imshow("dist0", 0.01*dist0)
+    #cv2.imshow("dist1", 0.01*dist1)
+    ##cv2.imshow("rgb", rgb)
+    #cv2.imshow("m0", 255*rough_mask)
+    #cv2.imshow("m1", 255*thick_parts.astype(np.uint8))
+    #cv2.imshow("m2", 255*thin_edges)
+    #dst = 255*np.stack((thin_edges, np.zeros_like(rough_mask), rough_mask),axis=2)
+    #cv2.imshow("dst", dst)
+    #if ord('q') == cv2.waitKey(1):
+    #    exit(1)
+    return thin_edges
+
+
 class Node:
     def __init__(self, model):
         self.model = model
@@ -24,23 +46,17 @@ class Node:
         rgb = np.frombuffer(req.rgb.data, dtype=np.uint8).reshape(req.rgb.height, req.rgb.width,3)
         #input_x, grad, hessian, outline, convex_edge = Convert2IterInput(depth,req.fx,req.fy,rgb=rgb)
         input_x, grad, hessian, outline, convex_edge = Convert2IterInput(depth,req.fx,req.fy)
-                #threshold_curvature=0.005)
-        # Contrast filter - removing depth noise of ToF caused by high contrast.
-        gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, 300, 350) # Over 300 for helio_2023-03-04-14-48-40
-        k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        k10 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (10, 10))
-        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k5)
-        edges = cv2.morphologyEx(edges, cv2.MORPH_OPEN, k5)
-        #input_x[0, edges>0] = 0. # Remove Hessian caused by contrast
-
         input_x = torch.Tensor(input_x).unsqueeze(0)
         y1, y2, pred = self.model(input_x)
         del y1, y2, input_x
         pred = pred.to('cpu')
         pred = self.model.spliter.restore(pred)
          # .9 for 22-05-06-20-11-00
-        mask = self.model.spliter.pred2mask(pred, th=.5)
+        mask0 = self.model.spliter.pred2mask(pred, th=.4) == 1
+        mask0 = getMask(mask0.astype(np.uint8) )
+        mask1 = self.model.spliter.pred2mask(pred, th=.9)
+        mask = mask1.copy()
+        mask[mask0>0] = 1
         del pred
         #mask[edges>0] = 0
 
@@ -55,13 +71,24 @@ class Node:
             dst1[outline==1,2] = 255
             th_edge_msg = ros_numpy.msgify(Image, dst1, encoding='8UC3')
             self.pub_th_edge.publish(th_edge_msg)
-            dst1[edges>0,1]=255
-            cany_msg = ros_numpy.msgify(Image, dst1, encoding='8UC3')
+
+            dst2 = (rgb/2).astype(np.uint8)
+            dst2[mask0==1,:] = 0
+            dst2[mask0==1,0] = 255
+
+            dst2[mask1==1,:] = 0
+            dst2[mask1==1,2] = 255
+            #cv2.imwrite("/home/geo/ws/dnn_experiment/ros_unet/tmp.png", dst2)
+            cany_msg = ros_numpy.msgify(Image, dst2, encoding='8UC3')
             self.pub_canyedges.publish(cany_msg)
         if self.pub_unet_edge.get_num_connections() > 0:
             dst2 = (rgb/2).astype(np.uint8)
+            #dst2[mask0==1,:] = 0
+            #dst2[mask0==1,0] = 255
+            #dst2[mask1==1,2] = 255
             dst2[mask==1,2] = 255
             dst2[mask==2,0] = 255
+
             unet_edge_msg = ros_numpy.msgify(Image, dst2, encoding='8UC3')
             self.pub_unet_edge.publish(unet_edge_msg)
         return output_msg

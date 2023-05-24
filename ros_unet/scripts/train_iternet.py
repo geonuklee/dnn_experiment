@@ -110,7 +110,7 @@ def train():
     validset = ObbDataset('obb_dataset_alignedroll',augment=False,max_frame_per_scene=3)
     evaluator = TrainEvaluator(validset, model)
 
-    n_epoch = 5
+    n_epoch = 2
     for model.epoch in range(model.epoch+1, n_epoch):  # loop over the dataset multiple times
         dataset = ObbDataset('obb_dataset_train',augment=True)
         dataloader = DataLoader(dataset, batch_size=1, shuffle=True)

@@ -200,7 +200,7 @@ private:
                 ) {
     cv::Mat odepth = cv_bridge::toCvCopy(req.depth, sensor_msgs::image_encodings::TYPE_32FC1)->image;
     cv::Mat orgb;
-    if(req.rgb.encoding == "8UC1"){
+    if(req.rgb.encoding == "mono8" || req.rgb.encoding == "8UC1"){
       cv::Mat gray = cv_bridge::toCvCopy(req.rgb, sensor_msgs::image_encodings::TYPE_8UC1)->image;
       cv::cvtColor(gray, orgb, cv::COLOR_GRAY2BGR);
     }

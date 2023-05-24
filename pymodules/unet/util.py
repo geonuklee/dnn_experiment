@@ -38,8 +38,8 @@ class SplitAdapter:
         self.org_shape = x.shape
         b, ch, h, w = x.shape
 
-        nr, nc = 3,3
-        self.border = 20
+        nr, nc = 2,3
+        self.border = 50
         m = 2*self.border
 
         wm = ceil( ( w+m*(nc-1) )/ nc )
@@ -105,20 +105,27 @@ class SplitAdapter:
         return mask
 
     def pred2dst(self, pred, np_rgb, th=.9):
-        mask = self.pred2mask(pred, th)
+        #mask = self.pred2mask(pred, th)
+        mask0 = self.pred2mask(pred, th=.5)
+        mask1 = self.pred2mask(pred, th=.9)
+
         dst = (np_rgb/2).astype(np.uint8)
-        dst[mask==1,:2] = 0
-        dst[mask==1,2] = 255
-        dst[mask==2,1:] = 0
-        dst[mask==2,0] = 255
-        gray = cv2.cvtColor(np_rgb, cv2.COLOR_BGR2GRAY)
-        gray = np.stack((gray,gray,gray),axis=2)
-        dst = cv2.addWeighted(dst, 0.9, gray, 0.1, 0.)
+        dst[mask0==1,:] = 0
+        dst[mask0==1,0] = 255
+        dst[mask1==1,2] = 255
+
+        #dst[mask==1,:2] = 0
+        #dst[mask==1,2] = 255
+        #dst[mask==2,1:] = 0
+        #dst[mask==2,0] = 255
+        #gray = cv2.cvtColor(np_rgb, cv2.COLOR_BGR2GRAY)
+        #gray = np.stack((gray,gray,gray),axis=2)
+        #dst = cv2.addWeighted(dst, 0.9, gray, 0.1, 0.)
         return dst
 
 def Convert2IterInput(depth, fx, fy, rgb=None, threshold_curvature=20.):
-    dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.01)
-    fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=5)
+    dd_edge = cpp_ext.GetDiscontinuousDepthEdge(depth, threshold_depth=0.02)
+    fd = cpp_ext.GetFilteredDepth(depth, dd_edge, sample_width=10)
     grad, valid = cpp_ext.GetGradient(fd, sample_offset=0.01, fx=fx,fy=fy)
     hessian = cpp_ext.GetHessian(depth, grad, valid, fx=fx, fy=fy)
 
@@ -241,6 +248,7 @@ def GetColoredLabel(marker, text=False):
             cv2.rectangle(dst,(cp[0]-2,cp[1]+5),(cp[0]+w+2,cp[1]-h-5),(255,255,255),-1)
             cv2.rectangle(dst,(cp[0]-2,cp[1]+5),(cp[0]+w+2,cp[1]-h-5),(100,100,100),1)
             cv2.putText(dst, msg, (cp[0],cp[1]), cv2.FONT_HERSHEY_PLAIN, 1.5, (0,0,0), 2)
+    dst = cv2.cvtColor(dst, cv2.COLOR_RGB2BGR)
     return dst
 
 def Overlap(marker, rgb, text=False):

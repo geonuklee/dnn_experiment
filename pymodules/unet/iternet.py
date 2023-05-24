@@ -276,6 +276,7 @@ class IterNetInterface(nn.Module):
 
         #fn_w, fp_w = get_w_from_pixel_distribution(target, lamb=100.)
         fn_w, fp_w = 300., 1.
+        #fn_w, fp_w = 150., 1.
 
         target = target.float()
         loss1 = self.ComputeEachLoss( y1, target, validmask, outline_dist, fn_w, fp_w)
@@ -309,7 +310,7 @@ class IterNetInterface(nn.Module):
         return fn_loss+fnp_loss
 
     def CreateOptimizer(self):
-        return optim.SGD(self.iternet.parameters(), lr=0.01, momentum=0.9)
+        return optim.SGD(self.iternet.parameters(), lr=0.001, momentum=0.9)
 
 
 class WeightedIterNetInterface(IterNetInterface):
@@ -360,9 +361,8 @@ class WeightedIterNetInterface(IterNetInterface):
 class BigIterNetInterface(IterNetInterface):
     def __init__(self, input_ch):
         super(BigIterNetInterface, self).__init__(input_ch)
-        #self.spliter = SplitAdapter(256, 200)
-        #self.spliter = SplitAdapter(440, 400)
         self.spliter = SplitAdapter(312, 300)
+        #self.spliter = SplitAdapter(126, 100)
 
 class WeighteBigdIterNetInterface(WeightedIterNetInterface):
     def __init__(self):
