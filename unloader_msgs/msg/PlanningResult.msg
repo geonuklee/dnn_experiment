@@ -1,0 +1,8 @@
+std_msgs/Header header
+uint32 num_obj
+float32 time_adjacency
+float32 time_planning
+float32 distance
+unloader_msgs/ObjectArray target
+visualization_msgs/MarkerArray objects
+visualization_msgs/MarkerArray sequence
