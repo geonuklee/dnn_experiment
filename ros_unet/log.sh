@@ -8,9 +8,9 @@
 #/cam0/aligned/depth_to_rgb/image_rect \
 #/cam0/k4a/rgb/camera_info \
 
-#mkdir rosbag_230303
+mkdir rosbag_230517
 #roslaunch ros_unet label.launch target:=230303
-rosbag record -o rosbag_230428/helios --duration=5s \
+rosbag record -o rosbag_230517/helios --duration=5s \
   /cam0/helios2/depth_rect \
   /cam0/helios2/rgb_rect \
   /cam0/helios2/intensity_rect \

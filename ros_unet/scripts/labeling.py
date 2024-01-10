@@ -125,6 +125,14 @@ def GetMargin(_rect_gt_marker, _rectK):
     gindices = np.unique(gt_marker)
     minwidths, margins = {}, {}
     normalized_minwidths, normalized_margins, normalized_centers = {}, {}, {}
+
+    bounds = np.ones((int(h),int(w)),dtype=np.uint8)
+    bounds[:,0] = 0
+    bounds[:,-1] = 0
+    bounds[0,:] = 0
+    bounds[-1,:] = 0
+    bounds_dist = cv2.distanceTransform( bounds, distanceType=cv2.DIST_L2, maskSize=5)
+
     for gidx in gindices:
         if gidx == 0:
             continue
@@ -135,12 +143,14 @@ def GetMargin(_rect_gt_marker, _rectK):
         loc = np.unravel_index( np.argmax(dist_part,axis=None), gt_marker.shape)
         dy = float(min(loc[0], h-loc[0]))
         dx = float(min(loc[1], w-loc[1]))
-        #centers[gidx] = (loc[1],loc[0])
-        margin = min(dx, dy)
+
         minwidth = dist_part[loc]
-        normalized_margin = margin/fx
         normalized_minwidth = minwidth/fx
         normalized_center  = (float(loc[1]-cx)/fx, float(loc[0]-cy)/fy)
+
+        #margin = min(dx, dy)
+        margin = np.min( bounds_dist[part] )
+        normalized_margin = margin/fx
 
         margins[gidx]              = margin
         minwidths[gidx]            = minwidth
